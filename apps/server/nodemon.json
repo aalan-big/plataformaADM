@@ -1,0 +1,10 @@
+{
+  "watch": [
+    "src",
+    "../../packages/database/src",
+    "../../packages/schemas/src"
+  ],
+  "ext": "ts,json",
+  "ignore": ["**/*.spec.ts", "**/dist/**"],
+  "exec": "node -r dotenv/config -r @swc-node/register src/main.ts"
+}

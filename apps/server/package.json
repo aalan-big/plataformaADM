@@ -1,0 +1,35 @@
+{
+  "name": "@startbig/server",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "nodemon",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@nestjs/common": "*",
+    "@nestjs/core": "*",
+    "@nestjs/platform-express": "*",
+    "@startbig/database": "*",
+    "@startbig/schemas": "*",
+    "bcryptjs": "*",
+    "dotenv": "*",
+    "jsonwebtoken": "*",
+    "nodemailer": "*",
+    "reflect-metadata": "*",
+    "rxjs": "*",
+    "stripe": "*",
+    "zod": "*"
+  },
+  "devDependencies": {
+    "@swc-node/register": "^1.10.9",
+    "@swc/core": "^1.10.0",
+    "@types/bcryptjs": "*",
+    "@types/jsonwebtoken": "*",
+    "@types/node": "*",
+    "@types/nodemailer": "*",
+    "nodemon": "^3.0.0",
+    "typescript": "^5.0.0"
+  }
+}

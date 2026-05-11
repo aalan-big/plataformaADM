@@ -1,0 +1,29 @@
+{
+  "name": "@startbig/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@startbig/database": "*",
+    "@startbig/schemas": "*",
+    "@startbig/ui": "*",
+    "clsx": "*",
+    "lucide-react": "*",
+    "next": "*",
+    "react": "*",
+    "react-dom": "*",
+    "tailwind-merge": "*",
+    "zod": "*"
+  },
+  "devDependencies": {
+    "@types/node": "*",
+    "@types/react": "*",
+    "@types/react-dom": "*",
+    "typescript": "^5.0.0"
+  }
+}

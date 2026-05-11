@@ -1,0 +1,17 @@
+/* Animação botão Sair */
+.btn-sair {
+  transition: background 0.2s, color 0.2s, padding-left 0.3s;
+}
+.btn-sair:hover {
+  padding-left: 20px;
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.1);
+}
+.btn-sair .icon-sair {
+  transition: transform 0.3s ease;
+}
+.btn-sair:hover .icon-sair {
+  transform: translateX(6px);
+}
+
+/* Esconde scrollbar globalmente mantendo o scroll funcional */

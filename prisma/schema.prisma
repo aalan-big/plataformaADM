@@ -6,19 +6,262 @@ datasource db {
   provider = "postgresql"
 }
 
+enum StatusLicenca {
+  AGUARDANDO
+  ATIVA
+  SUSPENSA
+  REVOGADA
+  BLOQUEADA
+  VENCIDA
+}
 
-//Tabela Usuario
+enum TipoTransacao {
+  RECEITA
+  CREDITO
+  REEMBOLSO
+  AJUSTE
+  PAGAMENTO_RECEBIDO
+}
+
+// ── Plano ─────────────────────────────────────────────────────────────────────
+model Plano {
+  id                       String    @id @default(uuid())
+  nome                     String    @unique
+  limiteUsuario            Int       @default(1)
+  precoMensal              Decimal   @db.Decimal(10, 2)
+  precoTrimestral          Decimal?  @db.Decimal(10, 2)
+  precoAnual               Decimal?  @db.Decimal(10, 2)
+  valorLicencaAdicional    Decimal?  @db.Decimal(10, 2)
+  descontoTrimestral       Decimal?  @db.Decimal(5, 2)
+  descontoAnual            Decimal?  @db.Decimal(5, 2)
+  stripePriceIdMensal      String?
+  stripePriceIdTrimestral  String?
+  stripePriceIdAnual       String?
+  status                   String    @default("ATIVO")
+  criadoEm                 DateTime  @default(now())
+
+  licencas                 Licenca[]
+
+  @@map("planos")
+}
+
+// ── Parceiro ──────────────────────────────────────────────────────────────────
+model Parceiro {
+  id                 String    @id @default(uuid())
+  nomeParceiro       String
+  documento          String?
+  comissaoPercentual Decimal?  @db.Decimal(5, 2)
+  contatoCelular     String?
+  cidadeBase         String?
+  criadoEm           DateTime  @default(now())
+
+  clientes           Cliente[]
+
+  @@map("parceiros")
+}
+
+// ── Usuario ───────────────────────────────────────────────────────────────────
 model Usuario {
-  id        String   @id @default(uuid()) 
-  nome      String
-  email     String   @unique
-  senha     String
-  cargo     String   @default("ADMIN")
-  ativo     Boolean  @default(true)
-  criadoEm  DateTime @default(now())
+  id           String    @id @default(uuid())
+  nome         String
+  email        String    @unique
+  senha        String
+  tipoUsuario  String    @default("ADMIN")
+  ativo        Boolean   @default(true)
+  criadoEm     DateTime  @default(now())
+
+  clientes     Cliente[]
+  logs         Log[]
 
   @@map("usuarios")
 }
 
+// ── Cliente ───────────────────────────────────────────────────────────────────
+model Cliente {
+  id              String    @id @default(uuid())
+  tipo            String
+  email           String
+  usuarioId       String
+  parceiroId      String?
+  criadoEm        DateTime  @default(now())
+  dataAtualizacao DateTime  @updatedAt
 
-//Tabela Cliente ...
+  pf              ClientePF?
+  pj              ClientePJ?
+  enderecos       Endereco[]
+  dispositivos    Licenca[]
+  pagamentos      Pagamento[]
+  transacoes      TransacaoHistorico[]
+
+  usuario         Usuario   @relation(fields: [usuarioId],  references: [id])
+  parceiroObj     Parceiro? @relation(fields: [parceiroId], references: [id])
+
+  @@index([email])
+  @@index([usuarioId])
+  @@index([parceiroId])
+  @@map("clientes")
+}
+
+// ── ClientePF ─────────────────────────────────────────────────────────────────
+model ClientePF {
+  id             String    @id @default(uuid())
+  clienteId      String    @unique
+  nomeCompleto   String
+  cpf            String
+  rg             String?
+  dataNascimento DateTime?
+
+  cliente        Cliente   @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@map("clientes_pf")
+}
+
+// ── ClientePJ ─────────────────────────────────────────────────────────────────
+model ClientePJ {
+  id                String  @id @default(uuid())
+  clienteId         String  @unique
+  razaoSocial       String
+  cnpj              String
+  nomeFantasia      String?
+  inscricaoEstadual String?
+  responsavel       String?
+
+  cliente           Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@map("clientes_pj")
+}
+
+// ── Endereco ──────────────────────────────────────────────────────────────────
+model Endereco {
+  id          String   @id @default(uuid())
+  clienteId   String
+  cep         String
+  logradouro  String
+  numero      String
+  complemento String?
+  bairro      String
+  cidade      String
+  estado      String
+  tipo        String   @default("PRINCIPAL")
+  criadoEm    DateTime @default(now())
+
+  cliente     Cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@map("enderecos")
+}
+
+// ── Licenca ───────────────────────────────────────────────────────────────────
+model Licenca {
+  id                  String        @id @default(uuid())
+  clienteId           String
+  planoId             String
+  chaveAtivacao       String        @unique
+  nomeDispositivo     String?
+  status              StatusLicenca @default(AGUARDANDO)
+  totalUsuarios       Int           @default(0)
+  usuariosExtras      Int           @default(0)
+  isTrial             Boolean       @default(false)
+  diasCortesia        Int           @default(0)
+  ultimoPagamento     DateTime?
+  dataVencimento      DateTime?
+  ultimoHeartbeat     DateTime?
+  ultimaSincronizacao DateTime?
+  stripeSubscriptionId String?
+  criadoEm            DateTime      @default(now())
+  dataAtivacao        DateTime?
+  chaveOrigem         String        @default("MANUAL")
+  atualizadoEm        DateTime      @updatedAt
+
+  cliente             Cliente       @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  plano               Plano         @relation(fields: [planoId],   references: [id])
+  historico           LicencaHistorico[]
+  pagamentos          Pagamento[]
+  transacoes          TransacaoHistorico[]
+
+  @@index([clienteId])
+  @@index([status])
+  @@map("licencas")
+}
+
+// ── LicencaHistorico ──────────────────────────────────────────────────────────
+model LicencaHistorico {
+  id             String    @id @default(uuid())
+  licencaId      String
+  tipo           String    // TRIAL | RENOVACAO | BLOQUEIO | DESBLOQUEIO
+  chaveAtivacao  String
+  meses          Int?
+  dataVencimento DateTime?
+  observacao     String?
+  criadoEm       DateTime  @default(now())
+
+  licenca        Licenca   @relation(fields: [licencaId], references: [id], onDelete: Cascade)
+
+  @@index([licencaId])
+  @@index([criadoEm])
+  @@map("licencas_historico")
+}
+
+// ── Pagamento ─────────────────────────────────────────────────────────────────
+model Pagamento {
+  id           String   @id @default(uuid())
+  licencaId    String
+  clienteId    String
+  valor        Decimal  @db.Decimal(10, 2)
+  meses        Int      @default(1)
+  status       String   @default("PAGO")
+  gateway      String   @default("MANUAL")
+  transacaoId  String?  @unique
+  observacao   String?
+  criadoEm     DateTime @default(now())
+
+  licenca      Licenca               @relation(fields: [licencaId], references: [id])
+  cliente      Cliente               @relation(fields: [clienteId], references: [id])
+  transacoes   TransacaoHistorico[]
+
+  @@index([licencaId])
+  @@index([clienteId])
+  @@index([criadoEm])
+  @@map("pagamentos")
+}
+
+// ── TransacaoHistorico ────────────────────────────────────────────────────────
+model TransacaoHistorico {
+  id          String        @id @default(uuid())
+  clienteId   String
+  licencaId   String?
+  pagamentoId String?
+  tipo        TipoTransacao
+  valor       Decimal       @db.Decimal(10, 2)
+  origem      String        @default("MANUAL")
+  descricao   String?
+  criadoEm    DateTime      @default(now())
+
+  cliente     Cliente       @relation(fields: [clienteId], references: [id])
+  licenca     Licenca?      @relation(fields: [licencaId], references: [id])
+  pagamento   Pagamento?    @relation(fields: [pagamentoId], references: [id])
+
+  @@index([clienteId])
+  @@index([licencaId])
+  @@index([pagamentoId])
+  @@index([criadoEm])
+  @@map("transacoes_historico")
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────────
+model Log {
+  id           String   @id @default(uuid())
+  dataHora     DateTime @default(now())
+  usuarioId    String?
+  acao         String
+  entidadeNome String
+  entidadeId   String?
+  descricao    String?
+  ipAddress    String?
+
+  usuario      Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([usuarioId])
+  @@index([entidadeNome, entidadeId])
+  @@index([dataHora])
+  @@map("logs")
+}

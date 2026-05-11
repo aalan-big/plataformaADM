@@ -1,41 +1,26 @@
 {
-  "name": "meu-projeto-fullstack",
+  "name": "startbig-monorepo",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
-  },
-  "dependencies": {
-    "@libsql/client": "^0.17.2",
-    "@prisma/adapter-better-sqlite3": "^7.6.0",
-    "@prisma/adapter-libsql": "^7.6.0",
-    "@prisma/adapter-pg": "^7.7.0",
-    "@prisma/client": "^7.6.0",
-    "@supabase/auth-helpers-nextjs": "^0.15.0",
-    "@supabase/supabase-js": "^2.103.3",
-    "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^12.8.0",
-    "jsonwebtoken": "^9.0.3",
-    "next": "16.2.2",
-    "pg": "^8.20.0",
-    "prisma": "^7.6.0",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "dev": "npm run dev --workspace=apps/web",
+    "dev:server": "npm run dev --workspace=apps/server",
+    "build": "npm run build --workspace=apps/web",
+    "start": "npm run start --workspace=apps/web",
+    "lint": "npm run lint --workspace=apps/web",
+    "db:push": "dotenv -e apps/server/.env -- prisma db push",
+    "db:generate": "prisma generate"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/bcryptjs": "^2.4.6",
-    "@types/jsonwebtoken": "^9.0.10",
-    "@types/node": "^25.6.0",
-    "@types/pg": "^8.20.0",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.2",
-    "tailwindcss": "^4",
-    "tsx": "^4.21.0"
+    "dotenv-cli": "^7.0.0",
+    "prisma": "*",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "rxjs": "^7.8.2"
   }
 }
