@@ -1,0 +1,24 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+
+//Tabela Usuario
+model Usuario {
+  id        String   @id @default(uuid()) 
+  nome      String
+  email     String   @unique
+  senha     String
+  cargo     String   @default("ADMIN")
+  ativo     Boolean  @default(true)
+  criadoEm  DateTime @default(now())
+
+  @@map("usuarios")
+}
+
+
+//Tabela Cliente ...
