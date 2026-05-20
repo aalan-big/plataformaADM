@@ -24,6 +24,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
       ? exception.getStatus()
       : HttpStatus.INTERNAL_SERVER_ERROR
 
+    if (!(exception instanceof HttpException)) {
+      console.error('[ERROR]', req.method, req.url, exception)
+    }
+
     const rawResponse = exception instanceof HttpException
       ? exception.getResponse()
       : 'Erro interno do servidor'
