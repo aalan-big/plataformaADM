@@ -52,6 +52,52 @@ export class EmailService {
     this.logger.log(`Chave de ativação enviada para ${dados.email}`)
   }
 
+  async enviarRenovacao(dados: {
+    email:           string
+    nomeCliente:     string
+    dataVencimento:  Date
+    nomeDispositivo: string
+  }) {
+    const vencimento = dados.dataVencimento.toLocaleDateString('pt-BR', {
+      day: '2-digit', month: 'long', year: 'numeric',
+    })
+
+    await this.transporter.sendMail({
+      from:    `"StartBig ERP" <${process.env.SMTP_USER}>`,
+      to:      dados.email,
+      subject: 'Renovação confirmada — StartBig ERP',
+      html:    `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0f172a;font-family:Arial,sans-serif;">
+  <div style="max-width:540px;margin:40px auto;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;">
+    <div style="background:#1e3a5f;padding:28px 36px;text-align:center;">
+      <p style="margin:0;color:#fff;font-size:20px;font-weight:700;letter-spacing:1px;">StartBig ERP</p>
+      <p style="margin:4px 0 0;color:#94a3b8;font-size:12px;">Renovação Confirmada</p>
+    </div>
+    <div style="padding:32px 36px;">
+      <p style="color:#e2e8f0;font-size:15px;margin:0 0 6px;">Olá, <strong>${dados.nomeCliente}</strong></p>
+      <p style="color:#94a3b8;font-size:13px;margin:0 0 28px;line-height:1.7;">
+        Seu pagamento foi confirmado e sua licença foi renovada com sucesso. O sistema continua funcionando normalmente com a mesma chave de ativação.
+      </p>
+      <div style="background:#0f172a;border:1px solid #22c55e;border-radius:10px;padding:22px;text-align:center;margin-bottom:24px;">
+        <p style="margin:0 0 10px;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:2px;">Nova validade</p>
+        <p style="margin:0;color:#4ade80;font-size:22px;font-weight:700;">${vencimento}</p>
+        <p style="margin:10px 0 0;color:#94a3b8;font-size:12px;">Dispositivo: ${dados.nomeDispositivo}</p>
+      </div>
+      <p style="color:#475569;font-size:12px;line-height:1.6;margin:0;border-top:1px solid #334155;padding-top:20px;">
+        Não é necessário nenhuma ação. Em caso de dúvidas, entre em contato com o suporte.
+      </p>
+    </div>
+  </div>
+</body>
+</html>`,
+    })
+
+    this.logger.log(`Confirmação de renovação enviada para ${dados.email}`)
+  }
+
   async enviarAvisoVencimento(dados: {
     email:           string
     nomeCliente:     string

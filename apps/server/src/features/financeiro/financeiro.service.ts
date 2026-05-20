@@ -347,7 +347,8 @@ export class FinanceiroService {
     const dataVencimento = new Date(base)
     dataVencimento.setMonth(dataVencimento.getMonth() + meses)
 
-    const chaveAtivacao = `START-${randomUUID().replace(/-/g, '').substring(0, 8).toUpperCase()}`
+    // Mantém a mesma chave — o ERP não precisa ser reconfigurado a cada renovação
+    const chaveAtivacao = licenca.chaveAtivacao
 
     await renovarLicencaComHistorico(licenca.id, { chaveAtivacao, dataVencimento, meses, ultimoPagamento: new Date() })
 
@@ -355,9 +356,9 @@ export class FinanceiroService {
     await criarTransacao({ clienteId: licenca.clienteId, licencaId: licenca.id, pagamentoId: pagamento.id, tipo: 'PAGAMENTO_RECEBIDO', valor, origem, descricao })
 
     try {
-      await this.emailService.enviarChaveAtivacao({ email: licenca.cliente.email, nomeCliente, chave: chaveAtivacao, dataVencimento, nomeDispositivo: licenca.nomeDispositivo ?? 'Dispositivo' })
+      await this.emailService.enviarRenovacao({ email: licenca.cliente.email, nomeCliente, dataVencimento, nomeDispositivo: licenca.nomeDispositivo ?? 'Dispositivo' })
     } catch (err) {
-      console.warn('[email] falha ao enviar chave (webhook Stripe):', err instanceof Error ? err.message : err)
+      console.warn('[email] falha ao enviar confirmação de renovação:', err instanceof Error ? err.message : err)
     }
 
     return { chaveAtivacao, dataVencimento }
