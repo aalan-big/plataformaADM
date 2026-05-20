@@ -1,8 +1,6 @@
 'use client'
 
-export const dynamic = 'force-dynamic'
-
-import { useEffect, useState, useCallback } from 'react'
+import { Suspense, useEffect, useState, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Cpu, AlertCircle, Loader2, ShieldCheck, Calendar, Zap } from 'lucide-react'
 
@@ -32,16 +30,18 @@ function formatarReais(valor: number) {
   return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
-export default function RenovarPage() {
+// ── Conteúdo real da página (usa useSearchParams) ─────────────────────────────
+
+function RenovarConteudo() {
   const params    = useSearchParams()
   const licencaId = params.get('licencaId')
 
-  const [dados,        setDados]        = useState<PlanoPagamento | null>(null)
-  const [carregando,   setCarregando]   = useState(true)
-  const [erro,         setErro]         = useState('')
-  const [opcaoSelecionada, setOpcao]    = useState<number>(1)
-  const [processando,  setProcessando]  = useState(false)
-  const [erroCobranca, setErroCobranca] = useState('')
+  const [dados,            setDados]        = useState<PlanoPagamento | null>(null)
+  const [carregando,       setCarregando]   = useState(true)
+  const [erro,             setErro]         = useState('')
+  const [opcaoSelecionada, setOpcao]        = useState<number>(1)
+  const [processando,      setProcessando]  = useState(false)
+  const [erroCobranca,     setErroCobranca] = useState('')
 
   const carregar = useCallback(async () => {
     if (!licencaId) { setErro('Link inválido. Verifique se o endereço está correto.'); setCarregando(false); return }
@@ -105,7 +105,6 @@ export default function RenovarPage() {
   return (
     <div className="w-full max-w-lg space-y-4">
 
-      {/* Header do produto */}
       <div className="bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden">
         <div className="relative bg-linear-to-br from-slate-800 to-blue-950/60 px-6 py-5">
           <div
@@ -135,7 +134,6 @@ export default function RenovarPage() {
         )}
       </div>
 
-      {/* Opções de plano */}
       <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-3">
         <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Escolha o período</p>
 
@@ -183,7 +181,6 @@ export default function RenovarPage() {
         })}
       </div>
 
-      {/* Resumo + botão */}
       <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4">
         {opcao && (
           <div className="flex items-center justify-between text-sm pb-4 border-b border-slate-800">
@@ -221,5 +218,20 @@ export default function RenovarPage() {
       </div>
 
     </div>
+  )
+}
+
+// ── Página exportada — envolve o conteúdo em Suspense ─────────────────────────
+
+export default function RenovarPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex flex-col items-center gap-3 text-slate-400">
+        <Loader2 size={28} className="animate-spin text-blue-400" />
+        <p className="text-sm">Carregando...</p>
+      </div>
+    }>
+      <RenovarConteudo />
+    </Suspense>
   )
 }
