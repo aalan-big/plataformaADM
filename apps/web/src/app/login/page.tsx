@@ -18,7 +18,7 @@ export default function LoginPage() {
           <LoginForm />
         </div>
         <div className="px-8 pb-6 text-center">
-          <p className="text-slate-500 text-xs">© 2024 StartBig. Todos os direitos reservados.</p>
+          <p className="text-slate-500 text-xs">© 2026 StartBig. Todos os direitos reservados.</p>
         </div>
       </div>
     </div>
