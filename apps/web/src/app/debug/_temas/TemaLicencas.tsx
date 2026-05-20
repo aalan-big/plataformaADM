@@ -481,10 +481,19 @@ function SecaoGerenciarLicencas() {
 // ---------------------------------------------------------------------------
 // SIMULAR ERP (endpoints públicos que o software local chama)
 // ---------------------------------------------------------------------------
-type Aba = 'conectar' | 'validar' | 'desconectar' | 'heartbeat'
+type Aba = 'auto-cadastro' | 'conectar' | 'validar' | 'desconectar' | 'heartbeat'
 
 function SecaoSimularERP() {
-  const [aba, setAba] = useState<Aba>('conectar')
+  const [aba, setAba] = useState<Aba>('auto-cadastro')
+
+  // Auto-Cadastro
+  const [acDocumento, setAcDocumento] = useState('')
+  const [acTipo, setAcTipo]       = useState<'PF'|'PJ'>('PJ')
+  const [acNome, setAcNome]       = useState('')
+  const [acEmail, setAcEmail]     = useState('')
+  const [loadAc, setLoadAc]       = useState(false)
+  const [resultAc, setResultAc]   = useState<ApiResponse | null>(null)
+  const tokenAc = (resultAc?.payload as any)?.token as string | undefined
 
   // Conectar
   const [chaveConectar, setChaveConectar]   = useState('')
@@ -509,6 +518,15 @@ function SecaoSimularERP() {
   const [totalUsuariosHb, setTotalUsuariosHb]     = useState('')
   const [loadHb, setLoadHb]                       = useState(false)
   const [resultHb, setResultHb]                   = useState<ApiResponse | null>(null)
+
+  const autoCadastro = async () => {
+    setLoadAc(true); setResultAc(null)
+    const payload = { tipo: acTipo, documento: acDocumento, nomeOuRazao: acNome, email: acEmail }
+    const r = await api('/api/licenca/auto-cadastro', { method: 'POST', body: JSON.stringify(payload) })
+    setLoadAc(false); setResultAc(r)
+    const chv = (r.payload as any)?.chaveAtivacao
+    if (chv) setChaveConectar(chv) // preenche automático
+  }
 
   const conectar = async () => {
     setLoadConectar(true); setResultConectar(null)
@@ -541,6 +559,7 @@ function SecaoSimularERP() {
   }
 
   const abas: { id: Aba; label: string; metodo: string; rota: string; cor: string }[] = [
+    { id: 'auto-cadastro', label: 'Auto-Cadastro', metodo: 'POST', rota: '/api/licenca/auto-cadastro', cor: 'fuchsia'},
     { id: 'conectar',    label: 'Conectar',    metodo: 'POST', rota: '/api/licenca/conectar',    cor: 'emerald' },
     { id: 'validar',     label: 'Validar',     metodo: 'POST', rota: '/api/licenca/validar',     cor: 'sky'     },
     { id: 'desconectar', label: 'Desconectar', metodo: 'POST', rota: '/api/licenca/desconectar', cor: 'orange'  },
@@ -548,6 +567,7 @@ function SecaoSimularERP() {
   ]
 
   const corMap: Record<string, { btn: string; border: string; bg: string }> = {
+    fuchsia: { btn: 'border-fuchsia-600 text-fuchsia-300 bg-fuchsia-600/20', border: 'border-fuchsia-700/60', bg: 'bg-fuchsia-950/10' },
     emerald: { btn: 'border-emerald-600 text-emerald-300 bg-emerald-600/20', border: 'border-emerald-700/60', bg: 'bg-emerald-950/10' },
     sky:     { btn: 'border-sky-600 text-sky-300 bg-sky-600/20',             border: 'border-sky-700/60',     bg: 'bg-sky-950/10'     },
     orange:  { btn: 'border-orange-600 text-orange-300 bg-orange-600/20',    border: 'border-orange-700/60',  bg: 'bg-orange-950/10'  },
@@ -586,12 +606,46 @@ function SecaoSimularERP() {
         <div className="flex items-center gap-2 mb-4">
           <RotaBadge metodo={abaAtual.metodo} rota={abaAtual.rota} />
           <span className="text-xs text-slate-500">
+            {aba === 'auto-cadastro' && '→ bate na Receita Federal, emite trial e retorna JWT'}
             {aba === 'conectar'    && '→ valida chave, emite JWT (expira em min(7d, dias até vencimento))'}
             {aba === 'validar'     && '→ verifica licença, renova JWT, atualiza totalUsuarios'}
             {aba === 'desconectar' && '→ encerra sessão (sem decremento — modelo por usuários)'}
             {aba === 'heartbeat'   && '→ buffer em memória, flush a cada 30s, atualiza totalUsuarios'}
           </span>
         </div>
+
+        {/* Auto-Cadastro */}
+        {aba === 'auto-cadastro' && (
+          <div className="space-y-3">
+            <Field label="Tipo *">
+              <select className={`${ic} focus:border-fuchsia-500`} value={acTipo} onChange={e => setAcTipo(e.target.value as 'PF'|'PJ')}>
+                <option value="PJ">PJ (CNPJ)</option>
+                <option value="PF">PF (CPF)</option>
+              </select>
+            </Field>
+            <Field label="Documento *">
+              <input className={`${ic} focus:border-fuchsia-500 font-mono`}
+                placeholder="CNPJ ou CPF (Será checado na Receita!)"
+                value={acDocumento} onChange={e => setAcDocumento(e.target.value)} />
+            </Field>
+            <Field label="Nome ou Razão Social *">
+              <input className={`${ic} focus:border-fuchsia-500`}
+                placeholder="Ex: StartBig LTDA"
+                value={acNome} onChange={e => setAcNome(e.target.value)} />
+            </Field>
+            <Field label="E-mail *">
+              <input type="email" className={`${ic} focus:border-fuchsia-500`}
+                placeholder="admin@empresa.com"
+                value={acEmail} onChange={e => setAcEmail(e.target.value)} />
+            </Field>
+            <button onClick={autoCadastro} disabled={loadAc || !acDocumento || !acNome || !acEmail}
+              className="w-full bg-fuchsia-700 hover:bg-fuchsia-600 disabled:bg-slate-600 text-white font-bold py-2 rounded transition">
+              {loadAc ? 'Cadastrando e Gerando Trial...' : 'POST /licenca/auto-cadastro'}
+            </button>
+            {tokenAc && <TokenDisplay token={tokenAc} />}
+            {resultAc && <Console response={resultAc} />}
+          </div>
+        )}
 
         {/* Conectar */}
         {aba === 'conectar' && (

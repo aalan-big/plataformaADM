@@ -1,12 +1,22 @@
+/**
+ * ============================================================================
+ * NOME DO ARQUIVO: stripe.service.ts
+ * MÓDULO: CORE/GERAL
+ * ============================================================================
+ * O QUE ESTE ARQUIVO FAZ:
+ * Contém o "coração" e a Lógica de Negócio do módulo de CORE/GERAL. Aqui é onde
+ * as regras são aplicadas, contas são feitas, e a comunicação direta com o
+ * Banco de Dados (Prisma) acontece.
+ * 
+ * O QUE ELE CONTÉM:
+ * - Funções de criação, leitura, atualização e exclusão (CRUD).
+ * - Regras de negócio complexas (ex: validação de limites, cálculos financeiros).
+ * - Comunicação com bibliotecas externas (ex: Stripe, Envio de E-mails).
+ * ============================================================================
+ */
 import { Injectable, Logger, BadRequestException } from '@nestjs/common'
 import Stripe from 'stripe'
 
-// Mapeamento de meses → Price ID configurado no dashboard do Stripe
-const PRICE_MAP: Record<number, string | undefined> = {
-  1:  process.env.STRIPE_PRICE_MENSAL,
-  3:  process.env.STRIPE_PRICE_TRIMESTRAL,
-  12: process.env.STRIPE_PRICE_ANUAL,
-}
 
 export type CheckoutResult  = { url: string; sessionId: string }
 
@@ -30,12 +40,13 @@ export type EventoParsed =
       tipo:  'customer.subscription.deleted'
       dados: { subscriptionId: string }
     }
-  | { tipo: string }
+  | { tipo: Exclude<string, 'checkout.session.completed' | 'invoice.payment_succeeded' | 'customer.subscription.deleted'> }
 
 @Injectable()
 export class StripeService {
   private readonly logger = new Logger(StripeService.name)
-  private readonly stripe: Stripe
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private readonly stripe: any
 
   constructor() {
     const key = process.env.STRIPE_SECRET_KEY
@@ -44,36 +55,33 @@ export class StripeService {
     this.logger.log('StripeService iniciado')
   }
 
-  priceIdParaMeses(meses: number): string {
-    const id = PRICE_MAP[meses]
-    if (!id) throw new BadRequestException(
-      `Price ID para ${meses} meses não configurado. Verifique STRIPE_PRICE_MENSAL / TRIMESTRAL / ANUAL no .env`
-    )
-    return id
-  }
-
   async criarCheckoutSession(dados: {
-    meses:     number
-    licencaId: string
-    email:     string
+    meses:         number
+    licencaId:     string
+    email:         string
+    totalCentavos: number   // já com descontos aplicados, em centavos
   }): Promise<CheckoutResult> {
-    const priceId = this.priceIdParaMeses(dados.meses)
-    const appUrl  = process.env.APP_URL ?? 'http://localhost:3000'
+    const appUrl = process.env.APP_URL ?? 'http://localhost:3000'
+    const label  = dados.meses === 1 ? '1 mês' : `${dados.meses} meses`
 
     const session = await this.stripe.checkout.sessions.create({
-      payment_method_types: ['card', 'boleto'],
-      line_items:  [{ price: priceId, quantity: 1 }],
-      mode:        'subscription',
+      payment_method_types: ['card'],
+      line_items: [{
+        price_data: {
+          currency:     'brl',
+          product_data: { name: `Licença StartBig — ${label}` },
+          unit_amount:  dados.totalCentavos,
+        },
+        quantity: 1,
+      }],
+      mode:           'payment',
       customer_email: dados.email,
-      success_url: `${appUrl}/pagamento/sucesso?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url:  `${appUrl}/pagamento/cancelado`,
-      metadata:    { licencaId: dados.licencaId, meses: String(dados.meses) },
-      subscription_data: {
-        metadata:  { licencaId: dados.licencaId, meses: String(dados.meses) },
-      },
+      success_url:    `${appUrl}/pagamento/sucesso?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url:     `${appUrl}/pagamento/cancelado`,
+      metadata:       { licencaId: dados.licencaId, meses: String(dados.meses) },
     })
 
-    this.logger.log(`Checkout Session criada: ${session.id} → licença ${dados.licencaId}`)
+    this.logger.log(`Checkout Session criada: ${session.id} → licença ${dados.licencaId} (${label})`)
     return { url: session.url!, sessionId: session.id }
   }
 
@@ -84,7 +92,7 @@ export class StripeService {
     const event = this.stripe.webhooks.constructEvent(rawBody, signature, secret)
 
     if (event.type === 'checkout.session.completed') {
-      const s = event.data.object as Stripe.Checkout.Session
+      const s = event.data.object as any
       return {
         tipo:  'checkout.session.completed',
         dados: {
@@ -99,7 +107,7 @@ export class StripeService {
     }
 
     if (event.type === 'invoice.payment_succeeded') {
-      const inv = event.data.object as Stripe.Invoice
+      const inv = event.data.object as any
       return {
         tipo:  'invoice.payment_succeeded',
         dados: {
@@ -111,7 +119,7 @@ export class StripeService {
     }
 
     if (event.type === 'customer.subscription.deleted') {
-      const sub = event.data.object as Stripe.Subscription
+      const sub = event.data.object as any
       return { tipo: 'customer.subscription.deleted', dados: { subscriptionId: sub.id } }
     }
 

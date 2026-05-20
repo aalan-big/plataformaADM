@@ -17,9 +17,10 @@ export async function editarClientePF(clienteId: string, dados: EditarClientePFI
 
   if (cliente.tipo !== 'PF') throw new Error('Cliente não é Pessoa Física.')
 
-  if (dados.licencas !== undefined && dados.licencas < cliente.usuariosAtivos) {
+  const usuariosAtivos = (cliente as any).usuariosAtivos ?? 0
+  if (dados.licencas !== undefined && dados.licencas < usuariosAtivos) {
     throw new Error(
-      `Não é possível reduzir para ${dados.licencas} licença(s) — o cliente possui ${cliente.usuariosAtivos} usuário(s) ativo(s).`
+      `Não é possível reduzir para ${dados.licencas} licença(s) — o cliente possui ${usuariosAtivos} usuário(s) ativo(s).`
     )
   }
 

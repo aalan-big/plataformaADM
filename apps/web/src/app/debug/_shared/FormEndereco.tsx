@@ -1,25 +1,108 @@
 'use client'
 
-/*
- * ARQUIVO: Formulário de Endereço Reutilizável (FormEndereco.tsx)
- * POSIÇÃO: src/app/debug/_shared/FormEndereco.tsx
- *
- * Componente de formulário de endereço compartilhado entre TemaClientes e
- * TemaEnderecos na página /debug. Suporta busca automática de CEP via ViaCEP.
- *
- * Campos: ID (modo edição), CEP, Tipo, Logradouro, Número, Complemento,
- *         Bairro, Cidade e UF.
- *
- * Comportamentos especiais:
- *   - `modoEdicao=true` : exibe o campo ID do endereço (UUID) para edições.
- *   - A cor do tema (`cor`) é dinâmica — muda bordas e labels por módulo
- *     (ex: 'rose' para clientes, 'sky' para endereços).
- *   - A busca de CEP dispara ao perder foco no campo (`onBlur`) ou pressionar Enter.
- *   - Se o CEP for inválido ou não encontrado, exibe mensagem de erro abaixo.
- *
- * Exports:
- *   - `FormEndereco`   : o componente em si
- *   - `EnderecoForm`   : tipo TypeScript do objeto de formulário
- *   - `enderecoVazio`  : factory que retorna um objeto EnderecoForm zerado
- */
 import { useState, type ChangeEvent, type KeyboardEvent } from 'react'
+
+export interface EnderecoForm {
+  id: string
+  cep: string
+  tipo: string
+  logradouro: string
+  numero: string
+  complemento: string
+  bairro: string
+  cidade: string
+  uf: string
+}
+
+export function enderecoVazio(): EnderecoForm {
+  return { id: '', cep: '', tipo: 'RESIDENCIAL', logradouro: '', numero: '', complemento: '', bairro: '', cidade: '', uf: '' }
+}
+
+const TIPOS = ['RESIDENCIAL', 'COMERCIAL', 'COBRANCA', 'ENTREGA', 'OUTRO']
+const UFS   = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO']
+
+interface Props {
+  form: EnderecoForm
+  onChange: (f: EnderecoForm) => void
+  modoEdicao?: boolean
+  cor?: string
+}
+
+export function FormEndereco({ form, onChange, modoEdicao = false, cor = 'cyan' }: Props) {
+  const [buscandoCep, setBuscandoCep] = useState(false)
+  const [erroCep, setErroCep]         = useState('')
+
+  function set(field: keyof EnderecoForm, value: string) {
+    onChange({ ...form, [field]: value })
+  }
+
+  async function buscarCep() {
+    const cep = form.cep.replace(/\D/g, '')
+    if (cep.length !== 8) { setErroCep('CEP deve ter 8 dígitos.'); return }
+    setBuscandoCep(true); setErroCep('')
+    try {
+      const res  = await fetch(`https://viacep.com.br/ws/${cep}/json/`)
+      const data = await res.json()
+      if (data.erro) { setErroCep('CEP não encontrado.'); return }
+      onChange({ ...form, logradouro: data.logradouro ?? '', bairro: data.bairro ?? '', cidade: data.localidade ?? '', uf: data.uf ?? '' })
+    } catch { setErroCep('Falha ao buscar CEP.') }
+    finally { setBuscandoCep(false) }
+  }
+
+  function onCepKey(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') buscarCep()
+  }
+
+  const inp = 'w-full bg-slate-800 border border-slate-700 text-slate-200 placeholder-slate-600 text-xs rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-cyan-500/50'
+
+  return (
+    <div className="space-y-2">
+      {modoEdicao && (
+        <input value={form.id} onChange={e => set('id', e.target.value)} placeholder="UUID do endereço" className={inp} />
+      )}
+
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <input
+            value={form.cep}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => set('cep', e.target.value)}
+            onBlur={buscarCep}
+            onKeyDown={onCepKey}
+            placeholder="CEP (somente números)"
+            className={inp}
+          />
+          {erroCep && <p className="text-red-400 text-[10px] mt-0.5">{erroCep}</p>}
+        </div>
+        <button
+          type="button"
+          onClick={buscarCep}
+          disabled={buscandoCep}
+          className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded-lg transition-colors disabled:opacity-50"
+        >
+          {buscandoCep ? '...' : 'Buscar'}
+        </button>
+      </div>
+
+      <select value={form.tipo} onChange={e => set('tipo', e.target.value)} className={inp}>
+        {TIPOS.map(t => <option key={t} value={t}>{t}</option>)}
+      </select>
+
+      <input value={form.logradouro} onChange={e => set('logradouro', e.target.value)} placeholder="Logradouro" className={inp} />
+
+      <div className="flex gap-2">
+        <input value={form.numero} onChange={e => set('numero', e.target.value)} placeholder="Número" className={`${inp} w-24`} />
+        <input value={form.complemento} onChange={e => set('complemento', e.target.value)} placeholder="Complemento" className={`${inp} flex-1`} />
+      </div>
+
+      <input value={form.bairro} onChange={e => set('bairro', e.target.value)} placeholder="Bairro" className={inp} />
+
+      <div className="flex gap-2">
+        <input value={form.cidade} onChange={e => set('cidade', e.target.value)} placeholder="Cidade" className={`${inp} flex-1`} />
+        <select value={form.uf} onChange={e => set('uf', e.target.value)} className={`${inp} w-20`}>
+          <option value="">UF</option>
+          {UFS.map(u => <option key={u} value={u}>{u}</option>)}
+        </select>
+      </div>
+    </div>
+  )
+}

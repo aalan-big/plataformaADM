@@ -6,12 +6,14 @@ export async function findClientePFByCpf(cpf: string) {
 }
 
 export async function createClientePF(dados: CriarClientePFInput) {
-  const { nomeCompleto, cpf, rg, dataNascimento, ...base } = dados
+  const { nomeCompleto, cpf, rg, dataNascimento, usuarioId, parceiroId, email } = dados
 
   return prisma.cliente.create({
     data: {
-      ...base,
-      tipo: 'PF',
+      tipo:    'PF',
+      email:   email as string,
+      usuario: { connect: { id: usuarioId } },
+      ...(parceiroId ? { parceiroObj: { connect: { id: parceiroId } } } : {}),
       pf: {
         create: {
           nomeCompleto,

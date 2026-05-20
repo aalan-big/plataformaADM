@@ -23,10 +23,13 @@ export const conectarSchema = z.object({
 
 export const desconectarSchema = z.object({
   chave: z.string().min(1),
+  hwid:  z.string().optional(),
 })
 
 export const heartbeatSchema = z.object({
-  licencaId: z.string().uuid(),
+  licencaId:     z.string().uuid(),
+  hwid:          z.string().optional(),
+  totalUsuarios: z.number().int().min(0).optional(),
 })
 
 export const validarSchema = z.object({

@@ -83,6 +83,7 @@ model Cliente {
   email           String
   usuarioId       String
   parceiroId      String?
+  ativo           Boolean   @default(true)
   criadoEm        DateTime  @default(now())
   dataAtualizacao DateTime  @updatedAt
 
@@ -118,15 +119,21 @@ model ClientePF {
 
 // ── ClientePJ ─────────────────────────────────────────────────────────────────
 model ClientePJ {
-  id                String  @id @default(uuid())
-  clienteId         String  @unique
-  razaoSocial       String
-  cnpj              String
-  nomeFantasia      String?
-  inscricaoEstadual String?
-  responsavel       String?
+  id                 String  @id @default(uuid())
+  clienteId          String  @unique
+  razaoSocial        String
+  cnpj               String
+  nomeFantasia       String?
+  inscricaoEstadual  String?
+  inscricaoMunicipal String?
+  regimeTributario   String?
+  responsavel        String?
+  telefone           String?
+  celular            String?
+  setorAtividade     String?
+  logo               String?
 
-  cliente           Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  cliente            Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
 
   @@map("clientes_pj")
 }
@@ -177,6 +184,7 @@ model Licenca {
   historico           LicencaHistorico[]
   pagamentos          Pagamento[]
   transacoes          TransacaoHistorico[]
+  sessoes             LicencaSessao[]
 
   @@index([clienteId])
   @@index([status])
@@ -264,4 +272,18 @@ model Log {
   @@index([entidadeNome, entidadeId])
   @@index([dataHora])
   @@map("logs")
+}
+
+// ── LicencaSessao ─────────────────────────────────────────────────────────────
+model LicencaSessao {
+  id              String   @id @default(uuid())
+  licencaId       String
+  hwid            String   
+  ultimoHeartbeat DateTime @default(now())
+
+  licenca         Licenca  @relation(fields: [licencaId], references: [id], onDelete: Cascade)
+
+  @@unique([licencaId, hwid])
+  @@index([ultimoHeartbeat])
+  @@map("licencas_sessoes")
 }

@@ -1,22 +1,44 @@
+/**
+ * ============================================================================
+ * NOME DO ARQUIVO: dispositivo.service.ts
+ * MÓDULO: DISPOSITIVOS
+ * ============================================================================
+ * O QUE ESTE ARQUIVO FAZ:
+ * Contém o "coração" e a Lógica de Negócio do módulo de DISPOSITIVOS. Aqui é onde
+ * as regras são aplicadas, contas são feitas, e a comunicação direta com o
+ * Banco de Dados (Prisma) acontece.
+ * 
+ * O QUE ELE CONTÉM:
+ * - Funções de criação, leitura, atualização e exclusão (CRUD).
+ * - Regras de negócio complexas (ex: validação de limites, cálculos financeiros).
+ * - Comunicação com bibliotecas externas (ex: Stripe, Envio de E-mails).
+ * ============================================================================
+ */
 import { Injectable, NotFoundException, BadRequestException, OnModuleInit, Logger } from '@nestjs/common'
-import { ZodError } from 'zod'
-import { randomUUID } from 'crypto'
-import jwt from 'jsonwebtoken'
+import { generateKeyPairSync }                                                        from 'crypto'
+import { ZodError }                                                                   from 'zod'
+import { randomUUID }                                                                 from 'crypto'
+import jwt                                                                            from 'jsonwebtoken'
 import {
   findLicencaById,
   findLicencasByClienteId,
   findAllLicencas,
+  findLicencasExpirandoOuVencidas,
   criarLicenca,
   renovarLicencaComHistorico,
+  registrarEventoLicenca,
   findHistoricoByLicenca,
   findAllPlanos,
   updateLicenca,
   findLicencaByChave,
-  incrementarConexao,
-  decrementarConexao,
   resetarConexoes,
   batchAtualizarHeartbeat,
   resetarSessoesInativas,
+  deletarLicenca as deletarLicencaRepo,
+  upsertLicencaSessao,
+  countSessoesAtivas,
+  deletarSessao,
+  deletarTodasSessoesDaLicenca
 } from '@startbig/database'
 import {
   renovarLicencaSchema,
@@ -25,26 +47,86 @@ import {
   desconectarSchema,
   heartbeatSchema,
   validarSchema,
+  validarCpf,
+  validarCnpj
 } from '@startbig/schemas'
 import { EmailService } from '../../core/email/email.service'
+import { z } from 'zod'
 
-const HEARTBEAT_TIMEOUT_MS = 5  * 60 * 1000
-const CLEANUP_INTERVAL_MS  = 3  * 60 * 1000
-const FLUSH_INTERVAL_MS    = 30 * 1000
+export const autoCadastroSchema = z.object({
+  tipo: z.enum(['PF', 'PJ']),
+  documento: z.string().transform(s => s.replace(/\D/g, '')),
+  nomeOuRazao: z.string().min(2),
+  email: z.string().email(),
+  hwid: z.string().optional(),
+  
+  // Campos extras PF
+  rg: z.string().optional(),
+  dataNascimento: z.string().optional(),
+
+  // Campos extras PJ
+  nomeFantasia: z.string().optional(),
+  inscricaoEstadual: z.string().optional(),
+  inscricaoMunicipal: z.string().optional(),
+  regimeTributario: z.string().optional(),
+  telefone: z.string().optional(),
+  celular: z.string().optional(),
+  setorAtividade: z.string().optional(),
+  logo: z.string().optional(),
+  responsavel: z.string().optional(),
+
+  // Endereço
+  endereco: z.object({
+    cep: z.string(),
+    logradouro: z.string(),
+    numero: z.string(),
+    complemento: z.string().optional(),
+    bairro: z.string(),
+    cidade: z.string(),
+    estado: z.string()
+  }).optional()
+})
+
+const HEARTBEAT_TIMEOUT_MS = 35 * 60 * 1000   // sessão morta se sem heartbeat por 35 min
+const CLEANUP_INTERVAL_MS  = 10 * 60 * 1000   // verifica sessões inativas a cada 10 min
+const FLUSH_INTERVAL_MS    = 30 * 1000         // flush do buffer no banco a cada 30s
 const GRACE_PERIOD_DIAS    = 7
 
+// ── Carrega ou gera par de chaves RSA ────────────────────────────────────────
+function carregarChaves(): { privateKey: string; publicKey: string } {
+  const envPriv = process.env.LICENCA_PRIVATE_KEY
+  const envPub  = process.env.LICENCA_PUBLIC_KEY
+
+  if (envPriv && envPub) {
+    return {
+      privateKey: Buffer.from(envPriv, 'base64').toString('utf8'),
+      publicKey:  Buffer.from(envPub,  'base64').toString('utf8'),
+    }
+  }
+
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+    modulusLength:      2048,
+    publicKeyEncoding:  { type: 'spki',  format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  })
+
+  console.warn('\n[LICENÇA] Chaves RS256 não configuradas — par temporário gerado para desenvolvimento.')
+  console.warn('[LICENÇA] Adicione ao apps/server/.env para persistir entre reinicializações:\n')
+  console.warn(`LICENCA_PRIVATE_KEY="${Buffer.from(privateKey).toString('base64')}"`)
+  console.warn(`LICENCA_PUBLIC_KEY="${Buffer.from(publicKey).toString('base64')}"\n`)
+
+  return { privateKey, publicKey }
+}
+
+const { privateKey: RSA_PRIVATE_KEY, publicKey: RSA_PUBLIC_KEY } = carregarChaves()
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 @Injectable()
-export class DispositivoService implements OnModuleInit {
+export class DispositivoService {
   private readonly logger   = new Logger(DispositivoService.name)
-  private readonly hbBuffer = new Set<string>()
 
   constructor(private readonly emailService: EmailService) {}
-
-  onModuleInit() {
-    setInterval(() => this.flushHeartbeats(),       FLUSH_INTERVAL_MS)
-    setInterval(() => this.limparSessoesInativas(), CLEANUP_INTERVAL_MS)
-    this.logger.log('Sistema de heartbeat iniciado (flush: 30s | cleanup: 3min)')
-  }
 
   // ── Helpers privados ──────────────────────────────────────────────────────
 
@@ -59,15 +141,32 @@ export class DispositivoService implements OnModuleInit {
   }
 
   private assinarToken(params: {
-    licencaId:      string
-    hwid:           string | null
-    plano?:         string | null
-    limite:         number
+    licencaId:       string
+    hwid:            string | null
+    plano?:          string | null
+    limite:          number
     dataVencimento?: Date | null
-  }): { token: string; ultimaSincronizacao: Date; gracePeriodDias: number } {
-    const agora  = new Date()
-    const secret = process.env.LICENCA_JWT_SECRET ?? process.env.JWT_SECRET ?? 'chave-secreta-de-desenvolvimento'
-    const token  = jwt.sign(
+  }): { token: string; ultimaSincronizacao: Date; gracePeriodDias: number; proximaValidacaoEm: Date } {
+    const agora = new Date()
+
+    // expiresIn = min(7 dias, segundos restantes até vencimento)
+    const maxExpS = GRACE_PERIOD_DIAS * 24 * 60 * 60
+    let expiresIn = maxExpS
+    if (params.dataVencimento) {
+      const restantesS = Math.floor((params.dataVencimento.getTime() - agora.getTime()) / 1000)
+      expiresIn = Math.min(maxExpS, Math.max(60, restantesS))
+    }
+
+    // ERP deve revalidar em: min(24h, 1h antes do vencimento da licença)
+    // Isso garante que o JWT nunca expira enquanto o ERP está rodando
+    let proximaValidacaoEm = new Date(agora.getTime() + 24 * 60 * 60 * 1000)
+    if (params.dataVencimento) {
+      const umHoraAntes = new Date(params.dataVencimento.getTime() - 60 * 60 * 1000)
+      if (umHoraAntes < proximaValidacaoEm) proximaValidacaoEm = umHoraAntes
+    }
+    if (proximaValidacaoEm <= agora) proximaValidacaoEm = new Date(agora.getTime() + 60_000)
+
+    const token = jwt.sign(
       {
         licencaId:           params.licencaId,
         hwid:                params.hwid,
@@ -76,29 +175,20 @@ export class DispositivoService implements OnModuleInit {
         dataVencimento:      params.dataVencimento?.toISOString(),
         ultimaSincronizacao: agora.toISOString(),
         gracePeriodDias:     GRACE_PERIOD_DIAS,
+        proximaValidacaoEm:  proximaValidacaoEm.toISOString(),
       },
-      secret,
-      { expiresIn: `${GRACE_PERIOD_DIAS}d` },
+      RSA_PRIVATE_KEY,
+      { algorithm: 'RS256', expiresIn },
     )
-    return { token, ultimaSincronizacao: agora, gracePeriodDias: GRACE_PERIOD_DIAS }
+
+    return { token, ultimaSincronizacao: agora, gracePeriodDias: GRACE_PERIOD_DIAS, proximaValidacaoEm }
   }
 
-  // ── Intervals ─────────────────────────────────────────────────────────────
-
-  private async flushHeartbeats() {
-    if (this.hbBuffer.size === 0) return
-    const ids = [...this.hbBuffer]
-    this.hbBuffer.clear()
-    await batchAtualizarHeartbeat(ids)
-    this.logger.debug(`Heartbeat flush: ${ids.length} sessões`)
+  getPublicKey(): string {
+    return RSA_PUBLIC_KEY
   }
 
-  private async limparSessoesInativas() {
-    const antes  = new Date(Date.now() - HEARTBEAT_TIMEOUT_MS)
-    const result = await resetarSessoesInativas(antes)
-    if (result.count > 0)
-      this.logger.log(`Sessões inativas resetadas: ${result.count}`)
-  }
+
 
   // ── Queries ───────────────────────────────────────────────────────────────
 
@@ -135,35 +225,115 @@ export class DispositivoService implements OnModuleInit {
       nomeDispositivo: dados.nomeDispositivo,
       dias:            dados.dias,
     })
+
+    // Envia chave de ativação trial por email
+    const licencaCompleta = await findLicencaById(licenca.id)
+    if (licencaCompleta) {
+      const nomeCliente = licencaCompleta.cliente.tipo === 'PF'
+        ? (licencaCompleta.cliente.pf?.nomeCompleto ?? licencaCompleta.cliente.email)
+        : (licencaCompleta.cliente.pj?.razaoSocial  ?? licencaCompleta.cliente.email)
+
+      try {
+        await this.emailService.enviarChaveAtivacao({
+          email:           licencaCompleta.cliente.email,
+          nomeCliente,
+          chave:           licenca.chaveAtivacao,
+          dataVencimento:  licenca.dataVencimento!,
+          nomeDispositivo: licenca.nomeDispositivo ?? 'Seu dispositivo',
+        })
+      } catch (err) {
+        this.logger.warn(`[email] Falha ao enviar trial para ${licencaCompleta.cliente.email}: ${err instanceof Error ? err.message : err}`)
+      }
+    }
+
     return { msg: 'Licença trial criada com sucesso', data: licenca }
   }
 
   async bloquear(licencaId: string) {
     const licenca = await findLicencaById(licencaId)
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
-    await updateLicenca(licencaId, { status: 'BLOQUEADA' })
+    await deletarTodasSessoesDaLicenca(licencaId)
+    await updateLicenca(licencaId, { status: 'BLOQUEADA', totalUsuarios: 0 })
+    await registrarEventoLicenca(licencaId, { tipo: 'BLOQUEIO', chaveAtivacao: licenca.chaveAtivacao, observacao: 'Bloqueado pelo administrador' })
     return { msg: 'Licença bloqueada com sucesso.' }
+  }
+
+  async suspender(licencaId: string) {
+    const licenca = await findLicencaById(licencaId)
+    if (!licenca) throw new NotFoundException('Licença não encontrada.')
+    await deletarTodasSessoesDaLicenca(licencaId)
+    await updateLicenca(licencaId, { status: 'SUSPENSA', totalUsuarios: 0 })
+    await registrarEventoLicenca(licencaId, { tipo: 'SUSPENSAO', chaveAtivacao: licenca.chaveAtivacao, observacao: 'Suspenso pelo administrador' })
+    return { msg: 'Licença suspensa com sucesso.' }
+  }
+
+  async revogar(licencaId: string) {
+    const licenca = await findLicencaById(licencaId)
+    if (!licenca) throw new NotFoundException('Licença não encontrada.')
+    await deletarTodasSessoesDaLicenca(licencaId)
+    await updateLicenca(licencaId, { status: 'REVOGADA', totalUsuarios: 0 })
+    await registrarEventoLicenca(licencaId, { tipo: 'REVOGACAO', chaveAtivacao: licenca.chaveAtivacao, observacao: 'Revogado pelo administrador' })
+    return { msg: 'Licença revogada com sucesso.' }
   }
 
   async reativar(licencaId: string) {
     const licenca = await findLicencaById(licencaId)
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
     await updateLicenca(licencaId, { status: 'ATIVA' })
+    await registrarEventoLicenca(licencaId, { tipo: 'REATIVACAO', chaveAtivacao: licenca.chaveAtivacao, observacao: 'Reativado pelo administrador' })
     return { msg: 'Licença reativada com sucesso.' }
   }
 
-  async resetarSessoes(licencaId: string) {
+  async resetarContadorUsuarios(licencaId: string) {
     const licenca = await findLicencaById(licencaId)
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
+    await deletarTodasSessoesDaLicenca(licencaId)
     await resetarConexoes(licencaId)
-    return { msg: 'Sessões resetadas com sucesso.' }
+    return { msg: 'Contador de usuários zerado com sucesso.' }
+  }
+
+  async adicionarUsuarioExtra(licencaId: string) {
+    const licenca = await findLicencaById(licencaId)
+    if (!licenca) throw new NotFoundException('Licença não encontrada.')
+    const novoExtra = (licenca.usuariosExtras ?? 0) + 1
+    await updateLicenca(licencaId, { usuariosExtras: novoExtra })
+    return { msg: 'Usuário extra adicionado.', usuariosExtras: novoExtra }
+  }
+
+  async removerUsuarioExtra(licencaId: string) {
+    const licenca = await findLicencaById(licencaId)
+    if (!licenca) throw new NotFoundException('Licença não encontrada.')
+    if ((licenca.usuariosExtras ?? 0) <= 0)
+      throw new BadRequestException('Não há usuários extras para remover.')
+    const novoExtra = (licenca.usuariosExtras ?? 0) - 1
+    await updateLicenca(licencaId, { usuariosExtras: novoExtra })
+    return { msg: 'Usuário extra removido.', usuariosExtras: novoExtra }
   }
 
   async trocarDispositivo(licencaId: string) {
     const licenca = await findLicencaById(licencaId)
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
+    await deletarTodasSessoesDaLicenca(licencaId)
     await resetarConexoes(licencaId)
-    return { msg: 'Dispositivo desvinculado. O cliente pode conectar de uma nova máquina.' }
+    return { msg: 'Sessões encerradas. O cliente pode conectar de uma nova máquina.' }
+  }
+
+  async deletarLicenca(licencaId: string) {
+    const licenca = await findLicencaById(licencaId)
+    if (!licenca) throw new NotFoundException('Licença não encontrada.')
+    await deletarTodasSessoesDaLicenca(licencaId)
+    try {
+      await deletarLicencaRepo(licencaId)
+    } catch (e) {
+      if (e instanceof Error && e.message === 'TEM_PAGAMENTOS')
+        throw new BadRequestException('Esta licença possui histórico de pagamentos e não pode ser excluída. Use "Revogar" para desativá-la permanentemente.')
+      throw e
+    }
+    return { msg: 'Licença excluída com sucesso.' }
+  }
+
+  async listarAlertasVencimento(diasAlerta = 30) {
+    return findLicencasExpirandoOuVencidas(diasAlerta)
   }
 
   async renovar(licencaId: string, body: unknown) {
@@ -181,7 +351,8 @@ export class DispositivoService implements OnModuleInit {
     const dataVencimento = new Date(base)
     dataVencimento.setMonth(dataVencimento.getMonth() + meses)
 
-    const chaveAtivacao = `START-${randomUUID().replace(/-/g, '').substring(0, 8).toUpperCase()}`
+    // Reutiliza a chave de ativação atual (Automatização sem atrito para o cliente)
+    const chaveAtivacao = licenca.chaveAtivacao
     await renovarLicencaComHistorico(licencaId, { chaveAtivacao, dataVencimento, meses, ultimoPagamento: new Date() })
 
     let emailEnviado = false
@@ -227,36 +398,81 @@ export class DispositivoService implements OnModuleInit {
       throw new BadRequestException('Licença vencida.')
     }
 
-    const limite = licenca.plano?.limiteUsuario ?? 1
+    const limite    = (licenca.plano?.limiteUsuario ?? 1) + (licenca.usuariosExtras ?? 0)
+    const countSessoes = await countSessoesAtivas(licenca.id)
+    
+    // Se HWID fornecido e já estava conectado -> reconexão (não consome novo slot)
+    const hwidKey   = dados.hwid ?? `anon-${randomUUID()}`
+    
+    // Verifica se este dispositivo específico já tem sessão
+    let reconexao = false
+    try {
+        const { prisma } = require('@startbig/database')
+        const sessao = await prisma.licencaSessao.findUnique({
+            where: { licencaId_hwid: { licencaId: licenca.id, hwid: hwidKey } }
+        })
+        reconexao = !!sessao
+    } catch(e) {}
 
-    if ((licenca.totalUsuarios ?? 0) >= limite)
+    if (!reconexao && countSessoes >= limite) {
       throw new BadRequestException(
-        `Limite de ${limite} usuário${limite > 1 ? 's' : ''} simultâneo${limite > 1 ? 's' : ''} atingido. Desconecte outro dispositivo e tente novamente.`
+        `Limite de ${limite} dispositivo(s) simultâneo(s) atingido. Encerre outra sessão e tente novamente.`
       )
+    }
 
-    await incrementarConexao(licenca.id)
+    await upsertLicencaSessao(licenca.id, hwidKey)
+    const novoTotalSessoes = reconexao ? countSessoes : countSessoes + 1
+    await updateLicenca(licenca.id, { totalUsuarios: novoTotalSessoes, ultimoHeartbeat: new Date() })
+
     const assinado = this.assinarToken({
-      licencaId:     licenca.id,
-      hwid:          dados.hwid,
-      plano:         licenca.plano?.nome,
+      licencaId:      licenca.id,
+      hwid:           dados.hwid ?? null,
+      plano:          licenca.plano?.nome,
       limite,
       dataVencimento: licenca.dataVencimento,
     })
 
-    return { msg: 'Conexão autorizada.', licencaId: licenca.id, limite, dataVencimento: licenca.dataVencimento, ...assinado }
+    return {
+      msg:            reconexao ? 'Reconexão autorizada.' : 'Conexão autorizada.',
+      licencaId:      licenca.id,
+      sessionKey:     hwidKey,   // ERP usa como hwid em /desconectar e /heartbeat
+      limite,
+      dataVencimento: licenca.dataVencimento,
+      ...assinado,
+    }
   }
 
   async desconectar(body: unknown) {
     const dados   = this.parseBody(desconectarSchema, body)
     const licenca = await findLicencaByChave(dados.chave)
     if (!licenca) return { msg: 'OK' }
-    await decrementarConexao(licenca.id)
+
+    if (dados.hwid) {
+      await deletarSessao(licenca.id, dados.hwid)
+      const restantes = await countSessoesAtivas(licenca.id)
+      await updateLicenca(licenca.id, { totalUsuarios: restantes }).catch(() => {})
+    }
+
     return { msg: 'Desconectado.' }
   }
 
   async heartbeat(body: unknown) {
-    const dados = this.parseBody(heartbeatSchema, body)
-    this.hbBuffer.add(dados.licencaId)
+    const dados   = this.parseBody(heartbeatSchema, body)
+    
+    // Validação em Tempo Real: checa se a licença mãe foi bloqueada/suspensa
+    const licenca = await findLicencaById(dados.licencaId)
+    if (!licenca) throw new NotFoundException('Licença não encontrada.')
+    if (licenca.status !== 'ATIVA') {
+      throw new BadRequestException(`Licença ${licenca.status.toLowerCase()}. Conexão encerrada pelo servidor.`)
+    }
+
+    if (dados.hwid) {
+      await upsertLicencaSessao(dados.licencaId, dados.hwid)
+    }
+    
+    // Atualiza a mãe de forma leve para saber que há atividade
+    await updateLicenca(dados.licencaId, { ultimoHeartbeat: new Date() })
+
     return { ok: true }
   }
 
@@ -265,26 +481,195 @@ export class DispositivoService implements OnModuleInit {
     const licenca = await findLicencaByChave(dados.chave)
     if (!licenca) return { valida: false, motivo: 'Licença não encontrada.' }
 
-    if (licenca.status === 'BLOQUEADA')
-      return { valida: false, motivo: 'Licença bloqueada.', status: 'BLOQUEADA' }
+    // Rejeição imediata — sem grace period
+    const MOTIVOS_REJEICAO: Partial<Record<string, string>> = {
+      BLOQUEADA: 'Licença bloqueada. Contate o suporte.',
+      SUSPENSA:  'Licença suspensa. Contate o suporte.',
+      REVOGADA:  'Licença revogada.',
+    }
+    const motivoRejeicao = MOTIVOS_REJEICAO[licenca.status as string]
+    if (motivoRejeicao) return { valida: false, motivo: motivoRejeicao, status: licenca.status as string }
 
+    // Verificar vencimento
     const vencida = licenca.status === 'VENCIDA' || (licenca.dataVencimento && licenca.dataVencimento < new Date())
     if (vencida) {
-      await updateLicenca(licenca.id, { status: 'VENCIDA' })
+      if (licenca.status !== 'VENCIDA') await updateLicenca(licenca.id, { status: 'VENCIDA' })
       return { valida: false, motivo: 'Licença vencida.', status: 'VENCIDA', dataVencimento: licenca.dataVencimento }
     }
 
-    const limite = licenca.plano?.limiteUsuario ?? 1
+    // Primeira ativação: AGUARDANDO → ATIVA
+    const agora = new Date()
+    if (licenca.status === 'AGUARDANDO') {
+      await updateLicenca(licenca.id, { status: 'ATIVA', dataAtivacao: agora })
+    }
 
-    await updateLicenca(licenca.id, { ultimaSincronizacao: new Date() })
+    const statusFinal = licenca.status === 'AGUARDANDO' ? 'ATIVA' : licenca.status
+    const limite      = (licenca.plano?.limiteUsuario ?? 1) + (licenca.usuariosExtras ?? 0)
+
+    await updateLicenca(licenca.id, { ultimaSincronizacao: agora })
     const assinado = this.assinarToken({
-      licencaId:     licenca.id,
-      hwid:          dados.hwid ?? null,
-      plano:         licenca.plano?.nome,
+      licencaId:      licenca.id,
+      hwid:           dados.hwid ?? null,
+      plano:          licenca.plano?.nome,
       limite,
       dataVencimento: licenca.dataVencimento,
     })
 
-    return { valida: true, status: licenca.status, dataVencimento: licenca.dataVencimento, ...assinado }
+    return {
+      valida:         true,
+      licencaId:      licenca.id,
+      status:         statusFinal,
+      dataVencimento: licenca.dataVencimento,
+      ...assinado,
+    }
+  }
+
+  async autoCadastro(body: unknown) {
+    const dados = this.parseBody(autoCadastroSchema, body)
+    
+    // 1. Validação matemática
+    if (dados.tipo === 'PF') {
+      if (!validarCpf(dados.documento)) throw new BadRequestException('CPF inválido matematicamente.')
+    } else {
+      if (!validarCnpj(dados.documento)) throw new BadRequestException('CNPJ inválido matematicamente.')
+      
+      // 2. Validação BrasilAPI para CNPJ
+      try {
+        const receitaRes = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${dados.documento}`)
+        if (!receitaRes.ok) {
+           throw new BadRequestException('Não foi possível validar o CNPJ na Receita Federal.')
+        }
+        const receita = await receitaRes.json() as any
+        if (receita.situacao_cadastral !== 2) {
+           throw new BadRequestException(`Cadastro negado. CNPJ encontra-se: ${receita.descricao_situacao_cadastral || 'INATIVO'}`)
+        }
+      } catch (e) {
+        if (e instanceof BadRequestException) throw e;
+        throw new BadRequestException('Falha ao comunicar com serviço de CNPJ da Receita Federal.')
+      }
+    }
+
+    const { prisma } = require('@startbig/database')
+
+    // 3. Pegar um usuário ADMIN padrão para ser o "dono" do cliente
+    const admin = await prisma.usuario.findFirst({ where: { tipoUsuario: 'ADMIN' } })
+    if (!admin) throw new BadRequestException('Sistema não configurado para auto-cadastro (Sem administrador master).')
+
+    // 4. Pegar o plano base ou criar um Trial
+    let plano = await prisma.plano.findFirst({ where: { precoMensal: 0 } })
+    if (!plano) plano = await prisma.plano.findFirst()
+    if (!plano) throw new BadRequestException('Nenhum plano cadastrado no sistema para vincular a licença.')
+
+    // 5. Verificar se cliente já existe
+    const existeEmail = await prisma.cliente.findFirst({ where: { email: dados.email } })
+    if (existeEmail) throw new BadRequestException('E-mail já cadastrado no sistema.')
+
+    if (dados.tipo === 'PF') {
+      const existeCPF = await prisma.clientePF.findUnique({ where: { cpf: dados.documento } })
+      if (existeCPF) throw new BadRequestException('CPF já cadastrado.')
+    } else {
+      const existeCNPJ = await prisma.clientePJ.findUnique({ where: { cnpj: dados.documento } })
+      if (existeCNPJ) throw new BadRequestException('CNPJ já cadastrado.')
+    }
+
+    // 6. Criar Cliente
+    let clienteId = ''
+    
+    // Preparar bloco de endereço se houver
+    const enderecoData = dados.endereco ? {
+      enderecos: {
+        create: {
+          tipo: 'PRINCIPAL',
+          cep: dados.endereco.cep,
+          logradouro: dados.endereco.logradouro,
+          numero: dados.endereco.numero,
+          complemento: dados.endereco.complemento,
+          bairro: dados.endereco.bairro,
+          cidade: dados.endereco.cidade,
+          estado: dados.endereco.estado
+        }
+      }
+    } : {}
+
+    if (dados.tipo === 'PF') {
+      const c = await prisma.cliente.create({
+        data: {
+          tipo: 'PF', email: dados.email, usuarioId: admin.id,
+          pf: { create: { 
+            nomeCompleto: dados.nomeOuRazao, 
+            cpf: dados.documento,
+            rg: dados.rg,
+            dataNascimento: dados.dataNascimento ? new Date(dados.dataNascimento) : undefined
+          } },
+          ...enderecoData
+        }
+      })
+      clienteId = c.id
+    } else {
+      const c = await prisma.cliente.create({
+        data: {
+          tipo: 'PJ', email: dados.email, usuarioId: admin.id,
+          pj: { create: { 
+            razaoSocial: dados.nomeOuRazao, 
+            cnpj: dados.documento,
+            nomeFantasia: dados.nomeFantasia,
+            inscricaoEstadual: dados.inscricaoEstadual,
+            inscricaoMunicipal: dados.inscricaoMunicipal,
+            regimeTributario: dados.regimeTributario,
+            telefone: dados.telefone,
+            celular: dados.celular,
+            setorAtividade: dados.setorAtividade,
+            logo: dados.logo,
+            responsavel: dados.responsavel
+          } },
+          ...enderecoData
+        }
+      })
+      clienteId = c.id
+    }
+
+    // 7. Criar Licença
+    const agora = new Date()
+    const vencimento = new Date(agora.getTime() + 7 * 24 * 60 * 60 * 1000) // 7 dias de trial
+    const hwidKey = dados.hwid ?? `anon-${randomUUID()}`
+
+    const licenca = await criarLicenca({
+       clienteId,
+       planoId: plano.id,
+       nomeDispositivo: 'Auto-Cadastro ERP',
+       dias: 7
+    })
+    
+    // Atualiza status para ATIVA, isTrial para true e registra a sessão
+    await updateLicenca(licenca.id, { 
+      status: 'ATIVA', 
+      isTrial: true, 
+      dataVencimento: vencimento,
+      dataAtivacao: agora,
+      ultimaSincronizacao: agora,
+      totalUsuarios: 1
+    })
+
+    await upsertLicencaSessao(licenca.id, hwidKey)
+
+    // 8. Assinar Token
+    const assinado = this.assinarToken({
+      licencaId:      licenca.id,
+      hwid:           hwidKey,
+      plano:          plano.nome,
+      limite:         plano.limiteUsuario,
+      dataVencimento: vencimento,
+    })
+
+    return {
+      msg: 'Auto-cadastro concluído com sucesso. Licença Trial de 7 dias gerada.',
+      clienteId,
+      licencaId: licenca.id,
+      chaveAtivacao: licenca.chaveAtivacao,
+      sessionKey: hwidKey,
+      limite: plano.limiteUsuario,
+      dataVencimento: vencimento,
+      ...assinado
+    }
   }
 }

@@ -1,3 +1,17 @@
+/**
+ * ============================================================================
+ * NOME DO ARQUIVO: main.ts
+ * MÓDULO: INICIALIZAÇÃO DO SERVIDOR
+ * ============================================================================
+ * O QUE ESTE ARQUIVO FAZ:
+ * É o Arquivo Principal que dá o "Start" (Boot) no Servidor Backend.
+ * 
+ * O QUE ELE CONTÉM:
+ * - Configuração da porta do servidor (3001).
+ * - Habilitação do CORS (para permitir que o frontend converse com a API).
+ * - Aplicação de Interceptors e Pipes globais.
+ * ============================================================================
+ */
 import 'reflect-metadata'
 import { NestFactory } from '@nestjs/core'
 import { AppModule } from './app.module'

@@ -20,7 +20,7 @@ type Cliente = {
   tipo: 'PF' | 'PJ'
   email: string
   pf: { nomeCompleto: string; cpf: string; rg?: string | null; dataNascimento?: string | null } | null
-  pj: { razaoSocial: string; cnpj: string; nomeFantasia?: string | null; responsavel?: string | null } | null
+  pj: { razaoSocial: string; cnpj: string; nomeFantasia?: string | null; inscricaoEstadual?: string | null; responsavel?: string | null } | null
   enderecos?: Endereco[]
 }
 
@@ -50,10 +50,11 @@ export default function ModalEditarCliente({ cliente, onClose, onSuccess }: Prop
     }
     return {
       ...base,
-      razaoSocial:  cliente.pj?.razaoSocial ?? '',
-      cnpj:         formatCnpj(cliente.pj?.cnpj ?? ''),
-      nomeFantasia: cliente.pj?.nomeFantasia ?? '',
-      responsavel:  cliente.pj?.responsavel ?? '',
+      razaoSocial:       cliente.pj?.razaoSocial ?? '',
+      cnpj:              formatCnpj(cliente.pj?.cnpj ?? ''),
+      nomeFantasia:      cliente.pj?.nomeFantasia ?? '',
+      inscricaoEstadual: cliente.pj?.inscricaoEstadual ?? '',
+      responsavel:       cliente.pj?.responsavel ?? '',
     }
   })
 
@@ -196,9 +197,14 @@ export default function ModalEditarCliente({ cliente, onClose, onSuccess }: Prop
                   <input value={form.nomeFantasia} onChange={e => atualizar('nomeFantasia', e.target.value)} placeholder="Opcional" className={ic(false)} />
                 </Campo>
               </div>
-              <Campo label="Responsável">
-                <input value={form.responsavel} onChange={e => atualizar('responsavel', e.target.value)} placeholder="Opcional" className={ic(false)} />
-              </Campo>
+              <div className="grid grid-cols-2 gap-3">
+                <Campo label="Inscrição Estadual">
+                  <input value={form.inscricaoEstadual} onChange={e => atualizar('inscricaoEstadual', e.target.value)} placeholder="Opcional" className={ic(false)} />
+                </Campo>
+                <Campo label="Responsável">
+                  <input value={form.responsavel} onChange={e => atualizar('responsavel', e.target.value)} placeholder="Opcional" className={ic(false)} />
+                </Campo>
+              </div>
             </>
           )}
 

@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Plus, Eye, Pencil, Users, PowerOff } from 'lucide-react'
+import { Search, Plus, Eye, Pencil, Users, PowerOff, CreditCard } from 'lucide-react'
 import ModalCriarCliente from './_components/ModalCriarCliente'
 import ModalEditarCliente from './_components/ModalEditarCliente'
 import ModalConfirmarDesativacao from './_components/ModalConfirmarDesativacao'
 import ModalPerfilCliente from './_components/ModalPerfilCliente'
+import ModalGerarLinkCliente from './_components/ModalGerarLinkCliente'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -65,6 +66,7 @@ export default function ClientesPage() {
   const [clienteEditando, setClienteEditando]       = useState<Cliente | null>(null)
   const [clientePerfil, setClientePerfil]           = useState<string | null>(null)
   const [clienteRemovendo, setClienteRemovendo]     = useState<Cliente | null>(null)
+  const [clienteGerandoLink, setClienteGerandoLink] = useState<Cliente | null>(null)
   const [processandoId, setProcessandoId]           = useState<string | null>(null)
 
   const carregar = useCallback(async (q = '') => {
@@ -93,7 +95,7 @@ export default function ClientesPage() {
   async function remover(id: string) {
     setProcessandoId(id)
     try {
-      await fetch(`/api/cliente/${id}`, { method: 'DELETE' })
+      await fetch(`/api/cliente/${id}/desativar`, { method: 'PATCH' })
       await carregar(busca)
       setClienteRemovendo(null)
       setClientePerfil(null)
@@ -250,6 +252,13 @@ export default function ClientesPage() {
                           <Pencil size={14} />
                         </button>
                         <button
+                          onClick={() => setClienteGerandoLink(c)}
+                          title="Gerar link de pagamento"
+                          className="p-2 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/15 rounded-lg transition-colors"
+                        >
+                          <CreditCard size={14} />
+                        </button>
+                        <button
                           onClick={() => setClienteRemovendo(c)}
                           disabled={processandoId === c.id}
                           title="Remover cliente"
@@ -303,6 +312,14 @@ export default function ClientesPage() {
             setClienteRemovendo(c as unknown as Cliente)
           }}
           onReativar={async () => { setClientePerfil(null) }}
+        />
+      )}
+
+      {clienteGerandoLink && (
+        <ModalGerarLinkCliente
+          clienteId={clienteGerandoLink.id}
+          nomeCliente={nomeCliente(clienteGerandoLink)}
+          onClose={() => setClienteGerandoLink(null)}
         />
       )}
 

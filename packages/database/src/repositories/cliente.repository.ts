@@ -8,6 +8,7 @@ const includeAll = {
 
 export async function findAllClientes() {
   return prisma.cliente.findMany({
+    where: { ativo: true },
     include: includeAll,
     orderBy: { criadoEm: 'desc' },
   })
@@ -24,6 +25,7 @@ export async function searchClientes(termo: string) {
   const t = termo.trim()
   return prisma.cliente.findMany({
     where: {
+      ativo: true,
       OR: [
         { id:    { contains: t, mode: 'insensitive' } },
         { email: { contains: t, mode: 'insensitive' } },

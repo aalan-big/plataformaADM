@@ -12,9 +12,15 @@ export const criarClientePJSchema = clienteBaseSchema.omit({ tipo: true }).exten
       .refine(validarCnpj, { message: 'CNPJ inválido (dígitos verificadores incorretos)' })
     ),
 
-  nomeFantasia:      z.string().optional(),
-  inscricaoEstadual: z.string().optional(),
-  responsavel:       z.string().optional(),
+  nomeFantasia:       z.string().optional(),
+  inscricaoEstadual:  z.string().optional(),
+  inscricaoMunicipal: z.string().optional(),
+  regimeTributario:   z.string().optional(),
+  telefone:           z.string().optional(),
+  celular:            z.string().optional(),
+  setorAtividade:     z.string().optional(),
+  logo:               z.string().optional(),
+  responsavel:        z.string().optional(),
 })
 
 export const editarClientePJSchema = criarClientePJSchema.partial()

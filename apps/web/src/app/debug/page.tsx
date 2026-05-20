@@ -43,7 +43,8 @@ function StatusServidor() {
 const ROTAS = [
   { modulo: 'Auth',      cor: 'text-emerald-400', rotas: ['POST /api/auth/login', 'POST /api/auth/logout', 'POST /api/usuario'] },
   { modulo: 'Clientes',  cor: 'text-rose-400',    rotas: ['GET /api/cliente', 'GET /api/cliente/:id', 'POST /api/cliente/registrar', 'PATCH /api/cliente/:id', 'DELETE /api/cliente/:id'] },
-  { modulo: 'Licenças',  cor: 'text-indigo-400',  rotas: ['GET /api/licenca/planos', 'GET /api/licenca/cliente/:id', 'POST /api/licenca', 'POST /api/licenca/:id/renovar'] },
+  { modulo: 'Licenças (Admin)',  cor: 'text-indigo-400',  rotas: ['GET /api/licenca/planos', 'GET /api/licenca/cliente/:id', 'POST /api/licenca', 'POST /api/licenca/:id/renovar', 'PATCH /api/licenca/:id/bloquear', 'PATCH /api/licenca/:id/reativar', 'PATCH /api/licenca/:id/resetar-usuarios', 'PATCH /api/licenca/:id/adicionar-extra', 'DELETE /api/licenca/:id'] },
+  { modulo: 'Licenças (ERP Público)', cor: 'text-fuchsia-400', rotas: ['POST /api/licenca/auto-cadastro', 'POST /api/licenca/conectar', 'POST /api/licenca/validar', 'POST /api/licenca/heartbeat', 'POST /api/licenca/desconectar'] },
   { modulo: 'Financeiro',cor: 'text-cyan-400',     rotas: ['POST /api/financeiro/confirmar', 'GET /api/financeiro/historico/cliente/:id', 'GET /api/financeiro/historico/licenca/:id', 'GET /api/financeiro/transacoes/cliente/:id', 'GET /api/financeiro/transacoes/licenca/:id', 'GET /api/financeiro/receita', 'POST /api/financeiro/webhook/asaas'] },
 ]
 

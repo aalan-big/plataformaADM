@@ -1,3 +1,5 @@
+@import "tailwindcss";
+
 /* Animação botão Sair */
 .btn-sair {
   transition: background 0.2s, color 0.2s, padding-left 0.3s;
@@ -15,3 +17,10 @@
 }
 
 /* Esconde scrollbar globalmente mantendo o scroll funcional */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+}

@@ -1,15 +1,26 @@
 'use client'
 
-/*
- * ARQUIVO: Console de Resposta da API (Console.tsx)
- * POSIÇÃO: src/app/debug/_shared/Console.tsx
- *
- * Componente compartilhado usado em todas as seções de teste da página /debug.
- * Exibe a resposta bruta da API em formato JSON dentro de um bloco "terminal".
- *
- * - Fundo preto para parecer um terminal real.
- * - Texto verde para respostas de sucesso (ok=true), âmbar para erros.
- * - Quando `response` é null, mostra "Aguardando requisição..." em cinza.
- * - O JSON é formatado com indentação de 2 espaços para facilitar leitura.
- */
 interface ApiResponse {
+  ok: boolean
+  status?: number
+  data?: unknown
+  payload?: unknown
+}
+
+export function Console({ response }: { response: ApiResponse | null }) {
+  if (!response) {
+    return (
+      <pre className="bg-black rounded-xl p-4 text-xs text-slate-600 min-h-24 overflow-auto">
+        Aguardando requisição...
+      </pre>
+    )
+  }
+
+  return (
+    <pre className={`bg-black rounded-xl p-4 text-xs min-h-24 overflow-auto whitespace-pre-wrap break-all ${
+      response.ok ? 'text-emerald-400' : 'text-amber-400'
+    }`}>
+      {JSON.stringify({ status: response.status, data: response.data ?? response.payload }, null, 2)}
+    </pre>
+  )
+}

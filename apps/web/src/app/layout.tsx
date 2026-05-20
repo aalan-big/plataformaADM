@@ -1,15 +1,21 @@
-/*
- * ARQUIVO: Layout Raiz da Aplicação (layout.tsx)
- * POSIÇÃO: src/app/layout.tsx
- *
- * Este é o arquivo de layout mais externo do Next.js — ele envolve TODAS as
- * páginas do sistema. Aqui definimos:
- *   - As fontes globais (Geist Sans e Geist Mono) via Google Fonts.
- *   - O elemento <html> com o idioma configurado para pt-BR.
- *   - O <body> que serve de container para todo o restante.
- *   - As metadatas padrão da aplicação (título e descrição da aba do navegador).
- *
- * O parâmetro `children` recebe o conteúdo da página que o usuário está
- * acessando no momento — o Next.js injeta isso automaticamente.
- */
 import type { Metadata } from 'next'
+import { Geist, Geist_Mono } from 'next/font/google'
+import '@/assets/globals.css'
+
+const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] })
+const geistMono = Geist_Mono({ variable: '--font-geist-mono', subsets: ['latin'] })
+
+export const metadata: Metadata = {
+  title: 'StartBig Admin',
+  description: 'Plataforma de gestão StartBig',
+}
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="pt-BR">
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+        {children}
+      </body>
+    </html>
+  )
+}

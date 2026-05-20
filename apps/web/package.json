@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -21,9 +21,11 @@
     "zod": "*"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "*",
     "@types/node": "*",
     "@types/react": "*",
     "@types/react-dom": "*",
+    "tailwindcss": "*",
     "typescript": "^5.0.0"
   }
 }

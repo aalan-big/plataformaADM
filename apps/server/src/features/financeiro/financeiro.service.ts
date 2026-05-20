@@ -1,3 +1,19 @@
+/**
+ * ============================================================================
+ * NOME DO ARQUIVO: financeiro.service.ts
+ * MÓDULO: FINANCEIRO
+ * ============================================================================
+ * O QUE ESTE ARQUIVO FAZ:
+ * Contém o "coração" e a Lógica de Negócio do módulo de FINANCEIRO. Aqui é onde
+ * as regras são aplicadas, contas são feitas, e a comunicação direta com o
+ * Banco de Dados (Prisma) acontece.
+ * 
+ * O QUE ELE CONTÉM:
+ * - Funções de criação, leitura, atualização e exclusão (CRUD).
+ * - Regras de negócio complexas (ex: validação de limites, cálculos financeiros).
+ * - Comunicação com bibliotecas externas (ex: Stripe, Envio de E-mails).
+ * ============================================================================
+ */
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common'
 import { ZodError } from 'zod'
 import { randomUUID } from 'crypto'
@@ -123,10 +139,25 @@ export class FinanceiroService {
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
     if (!licenca.plano) throw new NotFoundException('Plano não encontrado.')
 
+    const plano = licenca.plano as any
+    const preco   = Number(plano.precoMensal)
+    const descTri = plano.descontoTrimestral ? Number(plano.descontoTrimestral) / 100 : 0
+    const descAnu = plano.descontoAnual      ? Number(plano.descontoAnual)      / 100 : 0
+
+    let totalBRL: number
+    if (dados.meses === 3) {
+      totalBRL = plano.precoTrimestral ? Number(plano.precoTrimestral) : preco * 3 * (1 - descTri)
+    } else if (dados.meses === 12) {
+      totalBRL = plano.precoAnual ? Number(plano.precoAnual) : preco * 12 * (1 - descAnu)
+    } else {
+      totalBRL = preco * dados.meses
+    }
+
     const result = await this.stripeService.criarCheckoutSession({
-      meses:     dados.meses,
-      licencaId: dados.licencaId,
-      email:     licenca.cliente.email,
+      meses:         dados.meses,
+      licencaId:     dados.licencaId,
+      email:         licenca.cliente.email,
+      totalCentavos: Math.round(totalBRL * 100),
     })
 
     return { url: result.url, sessionId: result.sessionId }
@@ -190,7 +221,7 @@ export class FinanceiroService {
 
     // ── 1. Primeiro pagamento da assinatura ──────────────────────────────────
     if (evento.tipo === 'checkout.session.completed') {
-      const { sessionId, subscriptionId, licencaId, meses, amountTotal, email } = evento.dados
+      const { sessionId, subscriptionId, licencaId, meses, amountTotal, email } = (evento as any).dados
 
       const jaProcessado = await findPagamentoByTransacaoId(sessionId)
       if (jaProcessado) return { msg: 'Pagamento já processado' }
@@ -215,7 +246,7 @@ export class FinanceiroService {
 
     // ── 2. Renovação automática (Stripe cobra o cliente todo mês/trimestre/ano)
     if (evento.tipo === 'invoice.payment_succeeded') {
-      const { subscriptionId, amountTotal, billingReason } = evento.dados
+      const { subscriptionId, amountTotal, billingReason } = (evento as any).dados
 
       // Ignora a fatura do primeiro pagamento (já tratada acima)
       if (billingReason !== 'subscription_cycle') return { msg: `billing_reason "${billingReason}" ignorado` }
@@ -236,7 +267,7 @@ export class FinanceiroService {
 
     // ── 3. Assinatura cancelada ──────────────────────────────────────────────
     if (evento.tipo === 'customer.subscription.deleted') {
-      const { subscriptionId } = evento.dados
+      const { subscriptionId } = (evento as any).dados
       const licenca = await findLicencaByStripeSubscriptionId(subscriptionId)
       if (licenca) {
         await updateLicenca(licenca.id, { status: 'BLOQUEADA' })
@@ -248,8 +279,48 @@ export class FinanceiroService {
     return { msg: `Evento ${evento.tipo} ignorado` }
   }
 
-  async webhookAsaas(body: unknown) {
-    return { msg: 'Webhook Asaas recebido', body }
+  async webhookAsaas(body: any) {
+    // Exemplo de payload Asaas:
+    // { event: 'PAYMENT_RECEIVED', payment: { id: '...', externalReference: 'licencaId', value: 100 } }
+    
+    if (!body || !body.event || !body.payment) {
+      throw new BadRequestException('Formato de webhook Asaas inválido.')
+    }
+
+    if (body.event === 'PAYMENT_RECEIVED' || body.event === 'PAYMENT_CONFIRMED') {
+      const { id: transacaoId, externalReference, value, description } = body.payment
+      
+      const licencaId = externalReference
+      if (!licencaId) {
+        return { msg: 'externalReference (licencaId) ausente no pagamento Asaas — ignorado' }
+      }
+
+      const licenca = await findLicencaById(licencaId)
+      if (!licenca) {
+        return { msg: `Licença não encontrada para externalReference ${licencaId} — ignorado` }
+      }
+
+      const jaProcessado = await findPagamentoByTransacaoId(transacaoId)
+      if (jaProcessado) return { msg: 'Pagamento Asaas já processado' }
+
+      // Como o Asaas não diz diretamente a quantidade de meses neste payload simplificado,
+      // assumimos 1 mês como padrão (mensalidade), mas pode ser ajustado conforme a regra de negócio.
+      const meses = 1
+
+      const resultado = await this.processarRenovacao({
+        licenca,
+        meses,
+        valor: value,
+        transacaoId,
+        gateway: 'ASAAS',
+        origem: 'ASAAS',
+        descricao: description || `Pagamento Asaas (${body.payment.billingType})`,
+      })
+
+      return { msg: 'Pagamento Asaas processado com sucesso', data: resultado }
+    }
+
+    return { msg: `Evento Asaas ${body.event} ignorado` }
   }
 
   // ── Helper: renovar licença + registrar pagamento + enviar e-mail ──────────

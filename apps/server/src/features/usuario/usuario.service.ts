@@ -1,3 +1,19 @@
+/**
+ * ============================================================================
+ * NOME DO ARQUIVO: usuario.service.ts
+ * MÓDULO: USUARIO
+ * ============================================================================
+ * O QUE ESTE ARQUIVO FAZ:
+ * Contém o "coração" e a Lógica de Negócio do módulo de USUARIO. Aqui é onde
+ * as regras são aplicadas, contas são feitas, e a comunicação direta com o
+ * Banco de Dados (Prisma) acontece.
+ * 
+ * O QUE ELE CONTÉM:
+ * - Funções de criação, leitura, atualização e exclusão (CRUD).
+ * - Regras de negócio complexas (ex: validação de limites, cálculos financeiros).
+ * - Comunicação com bibliotecas externas (ex: Stripe, Envio de E-mails).
+ * ============================================================================
+ */
 import { Injectable, BadRequestException } from '@nestjs/common'
 import bcrypt from 'bcryptjs'
 import { findUserByEmail, saveUser, getAllUsers, updateUser, deleteUser } from '@startbig/database'
@@ -22,7 +38,7 @@ export class UsuarioService {
       nome: input.nome,
       email: input.email,
       senha: hashedPassword,
-      cargo: input.cargo ?? CARGO_PADRAO,
+      tipoUsuario: input.cargo ?? CARGO_PADRAO,
     })
 
     const { senha: _, ...user } = newUser
@@ -40,7 +56,7 @@ export class UsuarioService {
     const updateData: Parameters<typeof updateUser>[1] = {
       nome: data.nome,
       email: data.email,
-      cargo: data.cargo,
+      tipoUsuario: data.cargo,
     }
 
     if (data.senha) {

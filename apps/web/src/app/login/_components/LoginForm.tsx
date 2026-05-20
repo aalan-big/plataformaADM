@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Loader2, AlertCircle, Eye, EyeOff } from 'lucide-react'
+import Link from 'next/link'
+import { Loader2, AlertCircle, Eye, EyeOff, RefreshCw } from 'lucide-react'
 
 export function LoginForm() {
   const router = useRouter()
@@ -12,7 +13,7 @@ export function LoginForm() {
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro]           = useState<string | null>(null)
 
-  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
     setCarregando(true)
     setErro(null)
@@ -27,7 +28,10 @@ export function LoginForm() {
       const data = await res.json()
 
       if (!res.ok) {
-        setErro(data.erro ?? data.message ?? 'Credenciais inválidas.')
+        const msg = data.erro
+          ?? (typeof data.message === 'string' ? data.message : (data.message as Record<string, unknown>)?.message)
+          ?? 'Credenciais inválidas.'
+        setErro(String(msg))
         return
       }
 
@@ -100,6 +104,17 @@ export function LoginForm() {
         {carregando && <Loader2 size={14} className="animate-spin" />}
         {carregando ? 'Entrando...' : 'Entrar'}
       </button>
+
+      <div className="border-t border-slate-700/50 pt-4 mt-2">
+        <p className="text-xs text-slate-500 text-center mb-2">Cliente StartBig?</p>
+        <Link
+          href="/renovar"
+          className="w-full flex items-center justify-center gap-2 text-xs text-slate-400 hover:text-slate-200 bg-slate-700/40 hover:bg-slate-700/70 border border-slate-700 hover:border-slate-600 py-2.5 rounded-lg transition-all"
+        >
+          <RefreshCw size={12} />
+          Renovar minha licença
+        </Link>
+      </div>
     </form>
   )
 }

@@ -328,7 +328,7 @@ export default function FinanceiroPage() {
                 Icone: resumo?.crescimento !== null && resumo !== null && resumo.crescimento! >= 0 ? TrendingUp : TrendingDown,
               },
             ].map(s => (
-              <div key={s.label} className="bg-slate-800/70 backdrop-blur border border-slate-700/50 rounded-xl px-5 py-3 min-w-[7rem]">
+              <div key={s.label} className="bg-slate-800/70 backdrop-blur border border-slate-700/50 rounded-xl px-5 py-3 min-w-28">
                 <div className="flex items-center gap-1 mb-1">
                   <s.Icone size={10} className="text-slate-400" />
                   <p className="text-[10px] text-slate-400 uppercase tracking-wide">{s.label}</p>

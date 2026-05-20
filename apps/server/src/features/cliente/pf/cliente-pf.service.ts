@@ -1,3 +1,19 @@
+/**
+ * ============================================================================
+ * NOME DO ARQUIVO: cliente-pf.service.ts
+ * MÓDULO: CLIENTE
+ * ============================================================================
+ * O QUE ESTE ARQUIVO FAZ:
+ * Contém o "coração" e a Lógica de Negócio do módulo de CLIENTE. Aqui é onde
+ * as regras são aplicadas, contas são feitas, e a comunicação direta com o
+ * Banco de Dados (Prisma) acontece.
+ * 
+ * O QUE ELE CONTÉM:
+ * - Funções de criação, leitura, atualização e exclusão (CRUD).
+ * - Regras de negócio complexas (ex: validação de limites, cálculos financeiros).
+ * - Comunicação com bibliotecas externas (ex: Stripe, Envio de E-mails).
+ * ============================================================================
+ */
 import { findClientePFByCpf, createClientePF, updateClientePF, findClienteById, findClienteByEmail } from '@startbig/database'
 import type { CriarClientePFInput, EditarClientePFInput } from '@startbig/schemas'
 
@@ -17,9 +33,10 @@ export async function editarClientePF(clienteId: string, dados: EditarClientePFI
 
   if (cliente.tipo !== 'PF') throw new Error('Cliente não é Pessoa Física.')
 
-  if (dados.licencas !== undefined && dados.licencas < cliente.usuariosAtivos) {
+  const usuariosAtivos = (cliente as any).usuariosAtivos ?? 0
+  if (dados.licencas !== undefined && dados.licencas < usuariosAtivos) {
     throw new Error(
-      `Não é possível reduzir para ${dados.licencas} licença(s) — o cliente possui ${cliente.usuariosAtivos} usuário(s) ativo(s).`
+      `Não é possível reduzir para ${dados.licencas} licença(s) — o cliente possui ${usuariosAtivos} usuário(s) ativo(s).`
     )
   }
 

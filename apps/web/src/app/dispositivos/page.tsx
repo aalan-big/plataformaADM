@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Search, Plus, Eye, RefreshCw,
-  Cpu, ShieldCheck, ShieldOff, ShieldAlert, Beaker,
-  Copy, CheckCheck, ChevronDown,
+  Cpu, ShieldCheck, ShieldOff, ShieldAlert, ShieldX, Beaker,
+  Copy, CheckCheck,
 } from 'lucide-react'
 import ModalCriarTrial from './_components/ModalCriarTrial'
 import ModalGerarChave from './_components/ModalGerarChave'
@@ -12,7 +12,7 @@ import ModalDetalhe    from './_components/ModalDetalhe'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
-type Status = 'AGUARDANDO' | 'ATIVA' | 'BLOQUEADA' | 'VENCIDA'
+type Status = 'AGUARDANDO' | 'ATIVA' | 'BLOQUEADA' | 'VENCIDA' | 'SUSPENSA' | 'REVOGADA'
 
 type Licenca = {
   id: string
@@ -54,10 +54,12 @@ function diasRestantes(iso: string | null): number | null {
 }
 
 const STATUS_CFG: Record<Status, { label: string; cor: string; Icone: React.ElementType }> = {
-  ATIVA:      { label: 'Ativa',      cor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20', Icone: ShieldCheck  },
-  AGUARDANDO: { label: 'Aguardando', cor: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20',   Icone: ShieldAlert  },
-  BLOQUEADA:  { label: 'Bloqueada',  cor: 'text-red-400 bg-red-500/10 border-red-500/20',             Icone: ShieldOff    },
-  VENCIDA:    { label: 'Vencida',    cor: 'text-slate-400 bg-slate-700/30 border-slate-600/30',       Icone: ShieldOff    },
+  ATIVA:      { label: 'Ativa',      cor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20', Icone: ShieldCheck },
+  AGUARDANDO: { label: 'Aguardando', cor: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20',   Icone: ShieldAlert },
+  BLOQUEADA:  { label: 'Bloqueada',  cor: 'text-red-400 bg-red-500/10 border-red-500/20',             Icone: ShieldOff   },
+  VENCIDA:    { label: 'Vencida',    cor: 'text-slate-400 bg-slate-700/30 border-slate-600/30',       Icone: ShieldOff   },
+  SUSPENSA:   { label: 'Suspensa',   cor: 'text-orange-400 bg-orange-500/10 border-orange-500/20',    Icone: ShieldX     },
+  REVOGADA:   { label: 'Revogada',   cor: 'text-red-500 bg-red-600/10 border-red-600/20',             Icone: ShieldX     },
 }
 
 function BadgeStatus({ status }: { status: Status }) {
@@ -97,8 +99,6 @@ export default function DispositivosPage() {
   const [busca, setBusca] = useState('')
   const [filtroStatus, setFiltroStatus] = useState<string>('')
   const [filtroTrial, setFiltroTrial] = useState<string>('')
-  const [dropdownFiltro, setDropdownFiltro] = useState(false)
-
   const [modalCriar, setModalCriar]       = useState(false)
   const [licencaRenovar, setLicencaRenovar] = useState<Licenca | null>(null)
   const [licencaDetalhe, setLicencaDetalhe] = useState<string | null>(null)
@@ -162,7 +162,7 @@ export default function DispositivosPage() {
 
           <div className="flex items-stretch gap-3 shrink-0">
             {STATS.map(s => (
-              <div key={s.label} className="bg-slate-800/70 backdrop-blur border border-slate-700/50 rounded-xl px-5 py-3 text-center min-w-[4.5rem]">
+              <div key={s.label} className="bg-slate-800/70 backdrop-blur border border-slate-700/50 rounded-xl px-5 py-3 text-center min-w-18">
                 <div className="flex items-center justify-center gap-1 mb-1">
                   <Cpu size={10} className="text-slate-400" />
                   <p className="text-[10px] text-slate-400 uppercase tracking-wide">{s.label}</p>
@@ -200,6 +200,8 @@ export default function DispositivosPage() {
           <option value="ATIVA">Ativa</option>
           <option value="AGUARDANDO">Aguardando</option>
           <option value="BLOQUEADA">Bloqueada</option>
+          <option value="SUSPENSA">Suspensa</option>
+          <option value="REVOGADA">Revogada</option>
           <option value="VENCIDA">Vencida</option>
         </select>
 

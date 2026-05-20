@@ -1,3 +1,17 @@
+/**
+ * ============================================================================
+ * NOME DO ARQUIVO: auth.guard.ts
+ * MÓDULO: CORE/GERAL
+ * ============================================================================
+ * O QUE ESTE ARQUIVO FAZ:
+ * Funciona como um "Segurança de Porta" (Middleware de Proteção). Ele barra
+ * requisições que não cumprem os requisitos (ex: usuário sem login, ou sem a role certa).
+ * 
+ * O QUE ELE CONTÉM:
+ * - Lógica de verificação de Tokens JWT.
+ * - Lógica de verificação de Permissões (RBAC).
+ * ============================================================================
+ */
 import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
 import jwt from 'jsonwebtoken'

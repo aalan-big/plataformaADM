@@ -1,29 +1,126 @@
 'use client'
 
-/*
- * ARQUIVO: Tema Financeiro — Tela de Testes (TemaFinanceiro.tsx)
- * POSIÇÃO: src/app/debug/_temas/TemaFinanceiro.tsx
- *
- * Módulo de teste completo do sistema financeiro exibido na página /debug.
- * Exporta 5 seções independentes, cada uma testando uma parte do módulo:
- *
- * SecaoConfirmarPagamento — POST /api/financeiro/confirmar
- *   Fluxo de 3 passos: busca o cliente → seleciona a licença → preenche o valor.
- *   Ao confirmar, renova a licença e exibe a nova chave de ativação gerada.
- *
- * SecaoTransacoes — GET /api/financeiro/transacoes/cliente/:id ou .../licenca/:id
- *   Feed imutável de eventos financeiros (TransacaoHistorico). Mostra tipo
- *   (Pagamento/Estorno/Trial/Ajuste), origem (MANUAL/ASAAS) e valor.
- *
- * SecaoHistoricoPagamentos — GET /api/financeiro/historico/cliente/:id ou .../licenca/:id
- *   Registros da tabela Pagamento — um por pagamento confirmado.
- *
- * SecaoReceita — GET /api/financeiro/receita?ano=&mes=
- *   Soma dos pagamentos PAGO em um mês/ano. Mostra total e quantidade.
- *
- * SecaoWebhook — POST /api/financeiro/webhook/asaas
- *   Simula o callback automático do Asaas. O campo `externalReference` deve
- *   ser o UUID da licença — é assim que o webhook sabe qual licença renovar.
- */
 import { useState, type ChangeEvent } from 'react'
 import { Console } from '../_shared/Console'
+
+interface ApiResponse { ok: boolean; status: number; data: unknown }
+
+async function get(url: string): Promise<ApiResponse> {
+  const res  = await fetch(url)
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, data }
+}
+
+async function post(url: string, body: unknown): Promise<ApiResponse> {
+  const res  = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const data = await res.json()
+  return { ok: res.ok, status: res.status, data }
+}
+
+function Secao({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-[#0f172a] p-5 space-y-3">
+      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{titulo}</p>
+      {children}
+    </div>
+  )
+}
+
+function inp(placeholder: string, value: string, onChange: (e: ChangeEvent<HTMLInputElement>) => void) {
+  return (
+    <input type="text" value={value} onChange={onChange} placeholder={placeholder}
+      className="w-full bg-slate-800 border border-slate-700 text-slate-200 placeholder-slate-600 text-xs rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-cyan-500/50" />
+  )
+}
+
+function SecaoConfirmar() {
+  const [licencaId, setLicencaId] = useState('')
+  const [meses, setMeses]         = useState('1')
+  const [valor, setValor]         = useState('')
+  const [obs, setObs]             = useState('')
+  const [res, setRes]             = useState<ApiResponse | null>(null)
+
+  return (
+    <Secao titulo="POST /api/financeiro/confirmar">
+      {inp('licencaId (UUID)', licencaId, e => setLicencaId(e.target.value))}
+      {inp('meses (1-24)', meses, e => setMeses(e.target.value))}
+      {inp('valor (ex: 49.90)', valor, e => setValor(e.target.value))}
+      {inp('observacao (opcional)', obs, e => setObs(e.target.value))}
+      <button onClick={async () => setRes(await post('/api/financeiro/confirmar', { licencaId, meses: Number(meses), valor: Number(valor), observacao: obs || undefined }))}
+        className="w-full py-2 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-colors">
+        Confirmar Pagamento
+      </button>
+      <Console response={res} />
+    </Secao>
+  )
+}
+
+function SecaoReceita() {
+  const [ano, setAno] = useState(String(new Date().getFullYear()))
+  const [mes, setMes] = useState(String(new Date().getMonth() + 1))
+  const [res, setRes] = useState<ApiResponse | null>(null)
+
+  return (
+    <Secao titulo="GET /api/financeiro/receita">
+      {inp('Ano', ano, e => setAno(e.target.value))}
+      {inp('Mês (1-12)', mes, e => setMes(e.target.value))}
+      <button onClick={async () => setRes(await get(`/api/financeiro/receita?ano=${ano}&mes=${mes}`))}
+        className="w-full py-2 bg-cyan-700 hover:bg-cyan-600 text-white text-xs font-bold rounded-lg transition-colors">
+        Buscar Receita
+      </button>
+      <Console response={res} />
+    </Secao>
+  )
+}
+
+function SecaoTransacoes() {
+  const [tipo, setTipo]   = useState('cliente')
+  const [id, setId]       = useState('')
+  const [res, setRes]     = useState<ApiResponse | null>(null)
+
+  return (
+    <Secao titulo="GET /api/financeiro/transacoes/:tipo/:id">
+      <select value={tipo} onChange={e => setTipo(e.target.value)} className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2 focus:outline-none">
+        <option value="cliente">cliente</option>
+        <option value="licenca">licenca</option>
+      </select>
+      {inp('ID (UUID)', id, e => setId(e.target.value))}
+      <button onClick={async () => setRes(await get(`/api/financeiro/transacoes/${tipo}/${id}`))}
+        className="w-full py-2 bg-cyan-700 hover:bg-cyan-600 text-white text-xs font-bold rounded-lg transition-colors">
+        Buscar Transações
+      </button>
+      <Console response={res} />
+    </Secao>
+  )
+}
+
+function SecaoWebhook() {
+  const [licencaId, setLicencaId] = useState('')
+  const [valor, setValor]         = useState('')
+  const [res, setRes]             = useState<ApiResponse | null>(null)
+
+  return (
+    <Secao titulo="POST /api/financeiro/webhook/asaas">
+      {inp('externalReference (licencaId)', licencaId, e => setLicencaId(e.target.value))}
+      {inp('value (valor pago)', valor, e => setValor(e.target.value))}
+      <button onClick={async () => setRes(await post('/api/financeiro/webhook/asaas', {
+        event: 'PAYMENT_RECEIVED', payment: { externalReference: licencaId, value: Number(valor), status: 'RECEIVED' }
+      }))}
+        className="w-full py-2 bg-orange-700 hover:bg-orange-600 text-white text-xs font-bold rounded-lg transition-colors">
+        Simular Webhook
+      </button>
+      <Console response={res} />
+    </Secao>
+  )
+}
+
+export function TemaFinanceiro() {
+  return (
+    <>
+      <SecaoConfirmar />
+      <SecaoReceita />
+      <SecaoTransacoes />
+      <SecaoWebhook />
+    </>
+  )
+}

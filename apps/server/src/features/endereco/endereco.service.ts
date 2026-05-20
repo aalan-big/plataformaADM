@@ -1,3 +1,19 @@
+/**
+ * ============================================================================
+ * NOME DO ARQUIVO: endereco.service.ts
+ * MÓDULO: ENDERECO
+ * ============================================================================
+ * O QUE ESTE ARQUIVO FAZ:
+ * Contém o "coração" e a Lógica de Negócio do módulo de ENDERECO. Aqui é onde
+ * as regras são aplicadas, contas são feitas, e a comunicação direta com o
+ * Banco de Dados (Prisma) acontece.
+ * 
+ * O QUE ELE CONTÉM:
+ * - Funções de criação, leitura, atualização e exclusão (CRUD).
+ * - Regras de negócio complexas (ex: validação de limites, cálculos financeiros).
+ * - Comunicação com bibliotecas externas (ex: Stripe, Envio de E-mails).
+ * ============================================================================
+ */
 import { Injectable, NotFoundException } from '@nestjs/common'
 import {
   findEnderecosByCliente,

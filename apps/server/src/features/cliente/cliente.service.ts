@@ -1,3 +1,19 @@
+/**
+ * ============================================================================
+ * NOME DO ARQUIVO: cliente.service.ts
+ * MÓDULO: CLIENTE
+ * ============================================================================
+ * O QUE ESTE ARQUIVO FAZ:
+ * Contém o "coração" e a Lógica de Negócio do módulo de CLIENTE. Aqui é onde
+ * as regras são aplicadas, contas são feitas, e a comunicação direta com o
+ * Banco de Dados (Prisma) acontece.
+ * 
+ * O QUE ELE CONTÉM:
+ * - Funções de criação, leitura, atualização e exclusão (CRUD).
+ * - Regras de negócio complexas (ex: validação de limites, cálculos financeiros).
+ * - Comunicação com bibliotecas externas (ex: Stripe, Envio de E-mails).
+ * ============================================================================
+ */
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common'
 import { ZodError } from 'zod'
 import {
@@ -23,12 +39,13 @@ import { editarClientePJ } from './pj/cliente-pj.service'
 export class ClienteService {
 
   async listarClientes() {
-    return findAllClientes()
+    const data = await findAllClientes()
+    return { data }
   }
 
   async pesquisarClientes(termo: string) {
-    if (!termo.trim()) return findAllClientes()
-    return searchClientes(termo)
+    const data = termo.trim() ? await searchClientes(termo) : await findAllClientes()
+    return { data }
   }
 
   async buscarCliente(id: string) {
@@ -152,8 +169,19 @@ export class ClienteService {
   async desativar(id: string) {
     const cliente = await findClienteById(id)
     if (!cliente) throw new NotFoundException('Cliente não encontrado.')
-    await prisma.cliente.delete({ where: { id } })
-    return { msg: 'Cliente removido com sucesso' }
+
+    await prisma.$transaction(async (tx) => {
+      // 1. Inativar o cliente
+      await tx.cliente.update({ where: { id }, data: { ativo: false } })
+      
+      // 2. Suspender todas as licenças ativas/aguardando dele
+      await tx.licenca.updateMany({
+        where: { clienteId: id, status: { in: ['ATIVA', 'AGUARDANDO'] } },
+        data: { status: 'SUSPENSA' }
+      })
+    })
+
+    return { msg: 'Cliente desativado e licenças suspensas com sucesso' }
   }
 
   private async upsertEndereco(

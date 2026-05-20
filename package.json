@@ -16,9 +16,11 @@
     "db:generate": "prisma generate"
   },
   "devDependencies": {
+    "@types/node": "^25.6.2",
+    "@types/react": "^19.2.14",
     "dotenv-cli": "^7.0.0",
     "prisma": "*",
-    "typescript": "^5.0.0"
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "rxjs": "^7.8.2"

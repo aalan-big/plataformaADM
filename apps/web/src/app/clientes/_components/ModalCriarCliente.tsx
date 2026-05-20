@@ -38,7 +38,7 @@ type Tipo = 'PF' | 'PJ'
 
 const estadoInicial = {
   PF: { tipo: 'PF' as Tipo, nomeCompleto: '', cpf: '', rg: '', dataNascimento: '', email: '' },
-  PJ: { tipo: 'PJ' as Tipo, razaoSocial: '', cnpj: '', nomeFantasia: '', responsavel: '', email: '' },
+  PJ: { tipo: 'PJ' as Tipo, razaoSocial: '', cnpj: '', nomeFantasia: '', inscricaoEstadual: '', responsavel: '', email: '' },
 }
 
 interface Props {
@@ -219,14 +219,24 @@ export default function ModalCriarCliente({ onClose, onSuccess }: Props) {
                 </Campo>
               </div>
 
-              <Campo label="Responsável">
-                <input
-                  value={form.responsavel}
-                  onChange={e => atualizar('responsavel', e.target.value)}
-                  placeholder="Nome do sócio ou responsável"
-                  className={inputClass(false)}
-                />
-              </Campo>
+              <div className="grid grid-cols-2 gap-3">
+                <Campo label="Inscrição Estadual">
+                  <input
+                    value={form.inscricaoEstadual}
+                    onChange={e => atualizar('inscricaoEstadual', e.target.value)}
+                    placeholder="Opcional"
+                    className={inputClass(false)}
+                  />
+                </Campo>
+                <Campo label="Responsável">
+                  <input
+                    value={form.responsavel}
+                    onChange={e => atualizar('responsavel', e.target.value)}
+                    placeholder="Nome do sócio ou responsável"
+                    className={inputClass(false)}
+                  />
+                </Campo>
+              </div>
             </>
           )}
 

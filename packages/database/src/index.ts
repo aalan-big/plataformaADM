@@ -1,6 +1,5 @@
 export { prisma, default as prismaClient } from './client'
 
-export * from './repositories/auth.repository'
 export * from './repositories/usuario.repository'
 export * from './repositories/cliente.repository'
 export * from './repositories/cliente-pf.repository'
@@ -8,5 +7,6 @@ export * from './repositories/cliente-pj.repository'
 export * from './repositories/endereco.repository'
 export * from './repositories/plano.repository'
 export * from './repositories/licenca.repository'
+export * from './repositories/licenca-sessao.repository'
 export * from './repositories/pagamento.repository'
 export * from './repositories/transacao.repository'
