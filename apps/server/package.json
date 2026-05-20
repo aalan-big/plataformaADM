@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "nodemon",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/main.js"
+    "start": "tsx src/main.ts"
   },
   "dependencies": {
     "@nestjs/common": "*",
@@ -33,6 +33,7 @@
     "@types/nodemailer": "*",
     "nodemon": "^3.0.0",
     "ts-node": "^10.9.2",
+    "tsx": "^4.0.0",
     "typescript": "^5.0.0"
   }
 }
