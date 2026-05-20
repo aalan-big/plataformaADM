@@ -1,8 +1,10 @@
 'use client'
 
+export const dynamic = 'force-dynamic'
+
 import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Cpu, CheckCircle2, AlertCircle, Loader2, ShieldCheck, Calendar, Zap } from 'lucide-react'
+import { Cpu, AlertCircle, Loader2, ShieldCheck, Calendar, Zap } from 'lucide-react'
 
 type Opcao = {
   meses:    number
