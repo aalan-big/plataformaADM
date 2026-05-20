@@ -5,8 +5,7 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "dependencies": {
-    "@prisma/adapter-pg": "*",
-    "@prisma/client": "*",
+    "@prisma/client": "5",
     "pg": "*"
   },
   "devDependencies": {
