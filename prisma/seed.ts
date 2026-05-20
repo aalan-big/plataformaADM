@@ -1,12 +1,10 @@
-import { PrismaClient } from '@prisma/client'
+import { prisma } from '@startbig/database'
 import bcrypt from 'bcryptjs'
-
-const prisma = new PrismaClient()
 
 async function main() {
   // ── Usuário Administrador ─────────────────────────────────────────────────
   // Altere email e senha antes de subir para produção.
-  const senhaHash = await bcrypt.hash(process.env.ADMIN_SENHA ?? 'admin@123', 10)
+  const senhaHash = await bcrypt.hash(process.env.ADMIN_SENHA ?? 'admin123', 10)
 
   const admin = await prisma.usuario.upsert({
     where:  { email: process.env.ADMIN_EMAIL ?? 'admin@admin.com' },
@@ -70,4 +68,3 @@ async function main() {
 
 main()
   .catch((e) => { console.error('[seed] Erro:', e); process.exit(1) })
-  .finally(() => prisma.$disconnect())
