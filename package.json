@@ -13,13 +13,20 @@
     "start": "npm run start --workspace=apps/web",
     "lint": "npm run lint --workspace=apps/web",
     "db:push": "dotenv -e apps/server/.env -- prisma db push",
-    "db:generate": "prisma generate"
+    "db:generate": "prisma generate",
+    "db:seed": "dotenv -e apps/server/.env -- tsx prisma/seed.ts"
+  },
+  "prisma": {
+    "seed": "dotenv -e apps/server/.env -- tsx prisma/seed.ts"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^25.6.2",
     "@types/react": "^19.2.14",
+    "bcryptjs": "^3.0.3",
     "dotenv-cli": "^7.0.0",
     "prisma": "*",
+    "tsx": "^4.22.3",
     "typescript": "^5.9.3"
   },
   "dependencies": {
