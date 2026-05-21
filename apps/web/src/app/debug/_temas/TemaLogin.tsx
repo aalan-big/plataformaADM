@@ -8,7 +8,7 @@ interface UsuarioLogado { id: string; nome: string; email: string }
 interface ApiResponse { ok: boolean; status: number; data: unknown }
 
 async function req(url: string, body: unknown): Promise<ApiResponse> {
-  const res  = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const res  = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(body) })
   let data;
   try { data = await res.json() } catch { data = { erro: res.statusText || 'Resposta vazia ou inválida' } }
   return { ok: res.ok, status: res.status, data }
@@ -32,7 +32,7 @@ function inp(placeholder: string, value: string, onChange: (e: ChangeEvent<HTMLI
   )
 }
 
-function SecaoCadastro() {
+function SecaoCadastro({ logado }: { logado: boolean }) {
   const [nome,  setNome]  = useState('')
   const [email, setEmail] = useState('')
   const [senha, setSenha] = useState('')
@@ -45,6 +45,11 @@ function SecaoCadastro() {
 
   return (
     <Secao titulo="POST /api/usuario — Criar Usuário">
+      {!logado && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold">
+          <span>⚠</span> Faça login primeiro — este endpoint exige autenticação ADMIN.
+        </div>
+      )}
       {inp('Nome', nome, e => setNome(e.target.value))}
       {inp('E-mail', email, e => setEmail(e.target.value), 'email')}
       <SenhaInput value={senha} onChange={e => setSenha(e.target.value)} />
@@ -53,7 +58,13 @@ function SecaoCadastro() {
         <option value="GERENTE">GERENTE</option>
         <option value="SUPORTE">SUPORTE</option>
       </select>
-      <button onClick={enviar} className="w-full py-2 bg-cyan-700 hover:bg-cyan-600 text-white text-xs font-bold rounded-lg transition-colors">Cadastrar</button>
+      <button
+        onClick={enviar}
+        disabled={!logado}
+        className="w-full py-2 bg-cyan-700 hover:bg-cyan-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold rounded-lg transition-colors"
+      >
+        Cadastrar
+      </button>
       <Console response={res} />
     </Secao>
   )
@@ -82,11 +93,11 @@ function SecaoLogin({ onLogin }: { onLogin: (u: UsuarioLogado) => void }) {
   )
 }
 
-export function TemaLogin({ onLogin }: { onLogin: (u: UsuarioLogado) => void }) {
+export function TemaLogin({ onLogin, logado }: { onLogin: (u: UsuarioLogado) => void; logado: boolean }) {
   return (
     <>
-      <SecaoCadastro />
       <SecaoLogin onLogin={onLogin} />
+      <SecaoCadastro logado={logado} />
     </>
   )
 }

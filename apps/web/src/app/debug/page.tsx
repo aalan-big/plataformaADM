@@ -171,7 +171,7 @@ export default function DebugPage() {
       <div className="flex flex-col gap-5">
 
         <Tema titulo="01 — Login & Usuário">
-          <TemaLogin onLogin={setUsuario} />
+          <TemaLogin onLogin={setUsuario} logado={!!usuario} />
         </Tema>
 
         <Tema titulo={`02 — Clientes${usuario ? ` · ${usuario.nome}` : ' · faça login primeiro'}`}>
