@@ -1,9 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Bell, MessageSquare } from 'lucide-react'
+import { Bell, MessageSquare, Menu } from 'lucide-react'
 
-export function Header() {
+export function Header({ onAbrirMenu }: { onAbrirMenu: () => void }) {
   const [nome, setNome] = useState('')
 
   useEffect(() => {
@@ -22,7 +22,13 @@ export function Header() {
 
   return (
     <header className="h-14 shrink-0 flex items-center justify-between px-6 bg-slate-900 border-b border-slate-800">
-      <div />
+      <button
+        onClick={onAbrirMenu}
+        className="md:hidden p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+      >
+        <Menu size={18} />
+      </button>
+      <div className="hidden md:block" />
 
       <div className="flex items-center gap-2">
         <button className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors">
