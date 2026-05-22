@@ -43,7 +43,7 @@ export class EmailService {
     })
 
     await this.transporter.sendMail({
-      from:    `"StartBig ERP" <${process.env.SMTP_USER}>`,
+      from:    process.env.SMTP_FROM ?? `"StartBig ERP" <${process.env.SMTP_USER}>`,
       to:      dados.email,
       subject: 'Sua chave de ativação StartBig ERP',
       html:    this.template({ ...dados, vencimento }),
@@ -63,7 +63,7 @@ export class EmailService {
     })
 
     await this.transporter.sendMail({
-      from:    `"StartBig ERP" <${process.env.SMTP_USER}>`,
+      from:    process.env.SMTP_FROM ?? `"StartBig ERP" <${process.env.SMTP_USER}>`,
       to:      dados.email,
       subject: 'Renovação confirmada — StartBig ERP',
       html:    `
@@ -113,7 +113,7 @@ export class EmailService {
       : `Sua licença vencerá em ${dados.diasRestantes} dias`
 
     await this.transporter.sendMail({
-      from:    `"StartBig ERP" <${process.env.SMTP_USER}>`,
+      from:    process.env.SMTP_FROM ?? `"StartBig ERP" <${process.env.SMTP_USER}>`,
       to:      dados.email,
       subject: subject,
       html:    this.templateVencimento({ ...dados, vencimento }),
