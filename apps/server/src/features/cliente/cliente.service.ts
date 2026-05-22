@@ -35,9 +35,11 @@ import {
 } from '@startbig/schemas'
 import { editarClientePF } from './pf/cliente-pf.service'
 import { editarClientePJ } from './pj/cliente-pj.service'
+import { EmailService } from '../../core/email/email.service'
 
 @Injectable()
 export class ClienteService {
+  constructor(private readonly emailService: EmailService) {}
 
   async listarClientes() {
     const data = await findAllClientes()
@@ -162,13 +164,25 @@ export class ClienteService {
         return { cliente: novoCliente, enderecoSalvo: novoEndereco, licencaTrial: novaLicenca }
       })
 
-      cliente      = resultado.cliente
+      cliente       = resultado.cliente
       enderecoSalvo = resultado.enderecoSalvo
       licencaTrial  = resultado.licencaTrial
     } catch (e) {
       if (e instanceof NotFoundException || e instanceof BadRequestException) throw e
       throw new BadRequestException(e instanceof Error ? e.message : 'Erro ao salvar cliente no banco de dados')
     }
+
+    const nomeCliente = dadosValidados.tipo === 'PF'
+      ? dadosValidados.nomeCompleto
+      : dadosValidados.razaoSocial
+
+    this.emailService.enviarChaveAtivacao({
+      email:           dadosValidados.email,
+      nomeCliente,
+      chave:           licencaTrial.chaveAtivacao,
+      dataVencimento:  licencaTrial.dataVencimento!,
+      nomeDispositivo: 'Aguardando ativação',
+    }).catch(err => console.error('[email] Falha ao enviar boas-vindas:', err))
 
     return {
       msg: `Cliente ${dadosValidados.tipo} registrado com sucesso`,
