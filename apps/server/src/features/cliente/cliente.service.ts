@@ -90,72 +90,85 @@ export class ClienteService {
     const existeEmail = await findClienteByEmail(dadosValidados.email)
     if (existeEmail) throw new BadRequestException('E-mail já cadastrado em outro cliente.')
 
-    const { cliente, enderecoSalvo, licencaTrial } = await prisma.$transaction(async (tx) => {
-      let novoCliente
+    const plano = await prisma.plano.findFirst({ where: { status: 'ATIVO' }, orderBy: { precoMensal: 'asc' } })
+    if (!plano) throw new BadRequestException('Nenhum plano ativo cadastrado. Execute o seed do banco antes de registrar clientes.')
 
-      if (dadosValidados.tipo === 'PF') {
-        const { nomeCompleto, cpf, rg, dataNascimento, tipo, usuarioId, parceiroId, email } = dadosValidados
-        novoCliente = await tx.cliente.create({
+    let cliente: Awaited<ReturnType<typeof prisma.cliente.create>>
+    let enderecoSalvo: Awaited<ReturnType<typeof prisma.endereco.create>> | null
+    let licencaTrial: Awaited<ReturnType<typeof prisma.licenca.create>>
+
+    try {
+      const resultado = await prisma.$transaction(async (tx) => {
+        let novoCliente
+
+        if (dadosValidados.tipo === 'PF') {
+          const { nomeCompleto, cpf, rg, dataNascimento, usuarioId, parceiroId, email } = dadosValidados
+          novoCliente = await tx.cliente.create({
+            data: {
+              tipo: 'PF',
+              email: email as string,
+              usuario: { connect: { id: usuarioId } },
+              ...(parceiroId ? { parceiroObj: { connect: { id: parceiroId } } } : {}),
+              pf: { create: { nomeCompleto, cpf, rg, dataNascimento: dataNascimento ? new Date(dataNascimento) : undefined } },
+            },
+            include: { pf: true, pj: true, enderecos: true },
+          })
+        } else {
+          const { razaoSocial, cnpj, nomeFantasia, inscricaoEstadual, inscricaoMunicipal, regimeTributario, responsavel, telefone, celular, setorAtividade, usuarioId, parceiroId, email } = dadosValidados
+          novoCliente = await tx.cliente.create({
+            data: {
+              tipo: 'PJ',
+              email: email as string,
+              usuario: { connect: { id: usuarioId } },
+              ...(parceiroId ? { parceiroObj: { connect: { id: parceiroId } } } : {}),
+              pj: { create: { razaoSocial, cnpj, nomeFantasia, inscricaoEstadual, inscricaoMunicipal, regimeTributario, responsavel, telefone, celular, setorAtividade } },
+            },
+            include: { pf: true, pj: true, enderecos: true },
+          })
+        }
+
+        const novoEndereco = enderecoPreValidado
+          ? await tx.endereco.create({ data: { ...enderecoPreValidado, clienteId: novoCliente.id } })
+          : null
+
+        const diasTrial = 14
+        const dataVencimento = new Date()
+        dataVencimento.setDate(dataVencimento.getDate() + diasTrial)
+        const chaveAtivacao = `START-${randomUUID().replace(/-/g, '').substring(0, 8).toUpperCase()}`
+
+        const novaLicenca = await tx.licenca.create({
           data: {
-            tipo: 'PF',
-            email: email as string,
-            usuario: { connect: { id: usuarioId } },
-            ...(parceiroId ? { parceiroObj: { connect: { id: parceiroId } } } : {}),
-            pf: { create: { nomeCompleto, cpf, rg, dataNascimento: dataNascimento ? new Date(dataNascimento) : undefined } },
+            clienteId:    novoCliente.id,
+            planoId:      plano.id,
+            chaveAtivacao,
+            isTrial:      true,
+            status:       'ATIVA',
+            diasCortesia: diasTrial,
+            dataVencimento,
+            chaveOrigem:  'TRIAL_AUTO',
           },
-          include: { pf: true, pj: true, enderecos: true },
         })
-      } else {
-        const { razaoSocial, cnpj, nomeFantasia, inscricaoEstadual, inscricaoMunicipal, regimeTributario, responsavel, telefone, celular, setorAtividade, tipo, usuarioId, parceiroId, email } = dadosValidados
-        novoCliente = await tx.cliente.create({
+
+        await tx.licencaHistorico.create({
           data: {
-            tipo: 'PJ',
-            email: email as string,
-            usuario: { connect: { id: usuarioId } },
-            ...(parceiroId ? { parceiroObj: { connect: { id: parceiroId } } } : {}),
-            pj: { create: { razaoSocial, cnpj, nomeFantasia, inscricaoEstadual, inscricaoMunicipal, regimeTributario, responsavel, telefone, celular, setorAtividade } },
+            licencaId:     novaLicenca.id,
+            tipo:          'TRIAL',
+            chaveAtivacao,
+            dataVencimento,
+            observacao:    `Trial de ${diasTrial} dias gerado automaticamente no cadastro`,
           },
-          include: { pf: true, pj: true, enderecos: true },
         })
-      }
 
-      const novoEndereco = enderecoPreValidado
-        ? await tx.endereco.create({ data: { ...enderecoPreValidado, clienteId: novoCliente.id } })
-        : null
-
-      const plano = await tx.plano.findFirst({ where: { status: 'ATIVO' }, orderBy: { precoMensal: 'asc' } })
-      if (!plano) throw new BadRequestException('Nenhum plano ativo encontrado para criar licença trial.')
-
-      const diasTrial = 14
-      const dataVencimento = new Date()
-      dataVencimento.setDate(dataVencimento.getDate() + diasTrial)
-      const chaveAtivacao = `START-${randomUUID().replace(/-/g, '').substring(0, 8).toUpperCase()}`
-
-      const licencaTrial = await tx.licenca.create({
-        data: {
-          clienteId:    novoCliente.id,
-          planoId:      plano.id,
-          chaveAtivacao,
-          isTrial:      true,
-          status:       'ATIVA',
-          diasCortesia: diasTrial,
-          dataVencimento,
-          chaveOrigem:  'TRIAL_AUTO',
-        },
+        return { cliente: novoCliente, enderecoSalvo: novoEndereco, licencaTrial: novaLicenca }
       })
 
-      await tx.licencaHistorico.create({
-        data: {
-          licencaId:     licencaTrial.id,
-          tipo:          'TRIAL',
-          chaveAtivacao,
-          dataVencimento,
-          observacao:    `Trial de ${diasTrial} dias gerado automaticamente no cadastro`,
-        },
-      })
-
-      return { cliente: novoCliente, enderecoSalvo: novoEndereco, licencaTrial }
-    })
+      cliente      = resultado.cliente
+      enderecoSalvo = resultado.enderecoSalvo
+      licencaTrial  = resultado.licencaTrial
+    } catch (e) {
+      if (e instanceof NotFoundException || e instanceof BadRequestException) throw e
+      throw new BadRequestException(e instanceof Error ? e.message : 'Erro ao salvar cliente no banco de dados')
+    }
 
     return {
       msg: `Cliente ${dadosValidados.tipo} registrado com sucesso`,
