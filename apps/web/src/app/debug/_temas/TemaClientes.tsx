@@ -28,11 +28,7 @@ function inp(placeholder: string, value: string, onChange: (e: ChangeEvent<HTMLI
   )
 }
 
-const SETORES = [
-  'Varejo', 'Atacado', 'Restaurante / Food Service', 'Farmácia', 'Posto de Combustível',
-  'Supermercado', 'Vestuário / Moda', 'Eletrônicos', 'Saúde / Clínica', 'Serviços Gerais',
-  'Educação', 'Construção Civil', 'Agropecuária', 'Logística / Transporte', 'Outro',
-]
+const SETORES = ['Loja de Informática']
 
 const REGIMES = ['Simples Nacional', 'Lucro Presumido', 'Lucro Real', 'MEI', 'Outro']
 

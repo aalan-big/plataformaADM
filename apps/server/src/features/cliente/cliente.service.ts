@@ -106,14 +106,14 @@ export class ClienteService {
           include: { pf: true, pj: true, enderecos: true },
         })
       } else {
-        const { razaoSocial, cnpj, nomeFantasia, inscricaoEstadual, responsavel, tipo, usuarioId, parceiroId, email } = dadosValidados
+        const { razaoSocial, cnpj, nomeFantasia, inscricaoEstadual, inscricaoMunicipal, regimeTributario, responsavel, telefone, celular, setorAtividade, tipo, usuarioId, parceiroId, email } = dadosValidados
         novoCliente = await tx.cliente.create({
           data: {
             tipo: 'PJ',
             email: email as string,
             usuario: { connect: { id: usuarioId } },
             ...(parceiroId ? { parceiroObj: { connect: { id: parceiroId } } } : {}),
-            pj: { create: { razaoSocial, cnpj, nomeFantasia, inscricaoEstadual, responsavel } },
+            pj: { create: { razaoSocial, cnpj, nomeFantasia, inscricaoEstadual, inscricaoMunicipal, regimeTributario, responsavel, telefone, celular, setorAtividade } },
           },
           include: { pf: true, pj: true, enderecos: true },
         })

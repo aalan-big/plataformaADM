@@ -11,14 +11,14 @@ export interface EnderecoForm {
   complemento: string
   bairro: string
   cidade: string
-  uf: string
+  estado: string
 }
 
 export function enderecoVazio(): EnderecoForm {
-  return { id: '', cep: '', tipo: 'RESIDENCIAL', logradouro: '', numero: '', complemento: '', bairro: '', cidade: '', uf: '' }
+  return { id: '', cep: '', tipo: 'PRINCIPAL', logradouro: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '' }
 }
 
-const TIPOS = ['RESIDENCIAL', 'COMERCIAL', 'COBRANCA', 'ENTREGA', 'OUTRO']
+const TIPOS = ['PRINCIPAL', 'FILIAL', 'COBRANCA', 'ENTREGA']
 const UFS   = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO']
 
 interface Props {
@@ -44,7 +44,7 @@ export function FormEndereco({ form, onChange, modoEdicao = false, cor = 'cyan' 
       const res  = await fetch(`https://viacep.com.br/ws/${cep}/json/`)
       const data = await res.json()
       if (data.erro) { setErroCep('CEP não encontrado.'); return }
-      onChange({ ...form, logradouro: data.logradouro ?? '', bairro: data.bairro ?? '', cidade: data.localidade ?? '', uf: data.uf ?? '' })
+      onChange({ ...form, logradouro: data.logradouro ?? '', bairro: data.bairro ?? '', cidade: data.localidade ?? '', estado: data.estado ?? '' })
     } catch { setErroCep('Falha ao buscar CEP.') }
     finally { setBuscandoCep(false) }
   }
@@ -98,7 +98,7 @@ export function FormEndereco({ form, onChange, modoEdicao = false, cor = 'cyan' 
 
       <div className="flex gap-2">
         <input value={form.cidade} onChange={e => set('cidade', e.target.value)} placeholder="Cidade" className={`${inp} flex-1`} />
-        <select value={form.uf} onChange={e => set('uf', e.target.value)} className={`${inp} w-20`}>
+        <select value={form.estado} onChange={e => set('estado', e.target.value)} className={`${inp} w-20`}>
           <option value="">UF</option>
           {UFS.map(u => <option key={u} value={u}>{u}</option>)}
         </select>
