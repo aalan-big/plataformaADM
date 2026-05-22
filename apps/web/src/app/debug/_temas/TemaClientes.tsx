@@ -28,38 +28,102 @@ function inp(placeholder: string, value: string, onChange: (e: ChangeEvent<HTMLI
   )
 }
 
+const SETORES = [
+  'Varejo', 'Atacado', 'Restaurante / Food Service', 'Farmácia', 'Posto de Combustível',
+  'Supermercado', 'Vestuário / Moda', 'Eletrônicos', 'Saúde / Clínica', 'Serviços Gerais',
+  'Educação', 'Construção Civil', 'Agropecuária', 'Logística / Transporte', 'Outro',
+]
+
+const REGIMES = ['Simples Nacional', 'Lucro Presumido', 'Lucro Real', 'MEI', 'Outro']
+
 function SecaoRegistrar({ usuarioId }: { usuarioId: string }) {
-  const [tipo,  setTipo]  = useState<'PF' | 'PJ'>('PF')
-  const [nome,  setNome]  = useState('')
-  const [doc,   setDoc]   = useState('')
-  const [email, setEmail] = useState('')
-  const [end,   setEnd]   = useState<EnderecoForm>(enderecoVazio())
-  const [res,   setRes]   = useState<ApiResponse | null>(null)
+  const [tipo, setTipo] = useState<'PF' | 'PJ'>('PJ')
+  const [end,  setEnd]  = useState<EnderecoForm>(enderecoVazio())
+  const [res,  setRes]  = useState<ApiResponse | null>(null)
+
+  const [pj, setPj] = useState({
+    razaoSocial: '', cnpj: '', nomeFantasia: '', email: '',
+    inscricaoEstadual: '', inscricaoMunicipal: '', regimeTributario: '',
+    responsavel: '', telefone: '', celular: '', setorAtividade: '',
+  })
+
+  const [pf, setPf] = useState({
+    nomeCompleto: '', cpf: '', rg: '', dataNascimento: '', email: '',
+  })
+
+  function setPjF(campo: string, valor: string) { setPj(p => ({ ...p, [campo]: valor })) }
+  function setPfF(campo: string, valor: string) { setPf(p => ({ ...p, [campo]: valor })) }
 
   async function enviar() {
-    const body: Record<string, unknown> = { tipo, email, usuarioId }
-    if (tipo === 'PF') { body.nomeCompleto = nome; body.cpf = doc }
-    else               { body.razaoSocial  = nome; body.cnpj = doc }
+    const body: Record<string, unknown> = { tipo, usuarioId }
+    if (tipo === 'PJ') Object.assign(body, pj)
+    else               Object.assign(body, pf)
     if (end.cep) body.endereco = end
     setRes(await req('POST', '/api/cliente/registrar', body))
   }
 
+  const cls = 'w-full bg-slate-800 border border-slate-700 text-slate-200 placeholder-slate-600 text-xs rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-rose-500/50'
+  const label = (txt: string) => <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold pt-2">{txt}</p>
+
   return (
     <Secao titulo="POST /api/cliente/registrar — Criar Cliente">
       <div className="flex gap-2">
-        {(['PF', 'PJ'] as const).map(t => (
+        {(['PJ', 'PF'] as const).map(t => (
           <button key={t} onClick={() => setTipo(t)}
             className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-colors ${tipo === t ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>
             {t}
           </button>
         ))}
       </div>
-      {inp(tipo === 'PF' ? 'Nome completo' : 'Razão Social', nome, e => setNome(e.target.value))}
-      {inp(tipo === 'PF' ? 'CPF (somente números)' : 'CNPJ (somente números)', doc, e => setDoc(e.target.value))}
-      {inp('E-mail', email, e => setEmail(e.target.value), 'email')}
-      <p className="text-[10px] text-slate-600 uppercase tracking-wider font-bold pt-1">Endereço (opcional)</p>
+
+      {tipo === 'PJ' && (
+        <>
+          {label('Dados da Empresa')}
+          <input value={pj.razaoSocial}       onChange={e => setPjF('razaoSocial', e.target.value)}       placeholder="Razão Social *"          className={cls} />
+          <input value={pj.cnpj}              onChange={e => setPjF('cnpj', e.target.value)}              placeholder="CNPJ * (somente números)" className={cls} />
+          <input value={pj.nomeFantasia}      onChange={e => setPjF('nomeFantasia', e.target.value)}      placeholder="Nome Fantasia"            className={cls} />
+          <input value={pj.email}             onChange={e => setPjF('email', e.target.value)}             placeholder="E-mail *"   type="email"  className={cls} />
+          <div className="grid grid-cols-2 gap-2">
+            <input value={pj.telefone}        onChange={e => setPjF('telefone', e.target.value)}          placeholder="Telefone"                 className={cls} />
+            <input value={pj.celular}         onChange={e => setPjF('celular', e.target.value)}           placeholder="Celular"                  className={cls} />
+          </div>
+          {label('Dados Fiscais')}
+          <div className="grid grid-cols-2 gap-2">
+            <input value={pj.inscricaoEstadual}   onChange={e => setPjF('inscricaoEstadual', e.target.value)}   placeholder="Inscrição Estadual"   className={cls} />
+            <input value={pj.inscricaoMunicipal}  onChange={e => setPjF('inscricaoMunicipal', e.target.value)}  placeholder="Inscrição Municipal"  className={cls} />
+          </div>
+          <select value={pj.regimeTributario} onChange={e => setPjF('regimeTributario', e.target.value)} className={cls}>
+            <option value="">Regime Tributário</option>
+            {REGIMES.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+          {label('Segmento e Responsável')}
+          <select value={pj.setorAtividade}   onChange={e => setPjF('setorAtividade', e.target.value)}   className={cls}>
+            <option value="">Setor de Atividade *</option>
+            {SETORES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <input value={pj.responsavel}       onChange={e => setPjF('responsavel', e.target.value)}       placeholder="Responsável / Sócio"     className={cls} />
+        </>
+      )}
+
+      {tipo === 'PF' && (
+        <>
+          {label('Dados Pessoais')}
+          <input value={pf.nomeCompleto}    onChange={e => setPfF('nomeCompleto', e.target.value)}    placeholder="Nome Completo *"          className={cls} />
+          <div className="grid grid-cols-2 gap-2">
+            <input value={pf.cpf}           onChange={e => setPfF('cpf', e.target.value)}            placeholder="CPF * (somente números)"  className={cls} />
+            <input value={pf.rg}            onChange={e => setPfF('rg', e.target.value)}             placeholder="RG"                       className={cls} />
+          </div>
+          <input value={pf.dataNascimento}  onChange={e => setPfF('dataNascimento', e.target.value)} placeholder="Data de Nascimento"  type="date" className={cls} />
+          <input value={pf.email}           onChange={e => setPfF('email', e.target.value)}          placeholder="E-mail *"            type="email" className={cls} />
+        </>
+      )}
+
+      {label('Endereço (opcional)')}
       <FormEndereco form={end} onChange={setEnd} cor="rose" />
-      <button onClick={enviar} className="w-full py-2 bg-rose-700 hover:bg-rose-600 text-white text-xs font-bold rounded-lg transition-colors">Registrar</button>
+
+      <button onClick={enviar} className="w-full py-2 bg-rose-700 hover:bg-rose-600 text-white text-xs font-bold rounded-lg transition-colors">
+        Registrar
+      </button>
       <Console response={res} />
     </Secao>
   )
