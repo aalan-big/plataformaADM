@@ -38,8 +38,8 @@ function SecaoRegistrar({ usuarioId }: { usuarioId: string }) {
 
   async function enviar() {
     const body: Record<string, unknown> = { tipo, email, usuarioId }
-    if (tipo === 'PF') body.pf = { nomeCompleto: nome, cpf: doc }
-    else               body.pj = { razaoSocial: nome, cnpj: doc }
+    if (tipo === 'PF') { body.nomeCompleto = nome; body.cpf = doc }
+    else               { body.razaoSocial  = nome; body.cnpj = doc }
     if (end.cep) body.endereco = end
     setRes(await req('POST', '/api/cliente/registrar', body))
   }

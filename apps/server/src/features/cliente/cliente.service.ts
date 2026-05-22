@@ -14,6 +14,7 @@
  * - Comunicação com bibliotecas externas (ex: Stripe, Envio de E-mails).
  * ============================================================================
  */
+import { randomUUID } from 'crypto'
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common'
 import { ZodError } from 'zod'
 import {
@@ -89,7 +90,7 @@ export class ClienteService {
     const existeEmail = await findClienteByEmail(dadosValidados.email)
     if (existeEmail) throw new BadRequestException('E-mail já cadastrado em outro cliente.')
 
-    const { cliente, enderecoSalvo } = await prisma.$transaction(async (tx) => {
+    const { cliente, enderecoSalvo, licencaTrial } = await prisma.$transaction(async (tx) => {
       let novoCliente
 
       if (dadosValidados.tipo === 'PF') {
@@ -122,12 +123,43 @@ export class ClienteService {
         ? await tx.endereco.create({ data: { ...enderecoPreValidado, clienteId: novoCliente.id } })
         : null
 
-      return { cliente: novoCliente, enderecoSalvo: novoEndereco }
+      const plano = await tx.plano.findFirst({ where: { status: 'ATIVO' }, orderBy: { precoMensal: 'asc' } })
+      if (!plano) throw new BadRequestException('Nenhum plano ativo encontrado para criar licença trial.')
+
+      const diasTrial = 14
+      const dataVencimento = new Date()
+      dataVencimento.setDate(dataVencimento.getDate() + diasTrial)
+      const chaveAtivacao = `START-${randomUUID().replace(/-/g, '').substring(0, 8).toUpperCase()}`
+
+      const licencaTrial = await tx.licenca.create({
+        data: {
+          clienteId:    novoCliente.id,
+          planoId:      plano.id,
+          chaveAtivacao,
+          isTrial:      true,
+          status:       'ATIVA',
+          diasCortesia: diasTrial,
+          dataVencimento,
+          chaveOrigem:  'TRIAL_AUTO',
+        },
+      })
+
+      await tx.licencaHistorico.create({
+        data: {
+          licencaId:     licencaTrial.id,
+          tipo:          'TRIAL',
+          chaveAtivacao,
+          dataVencimento,
+          observacao:    `Trial de ${diasTrial} dias gerado automaticamente no cadastro`,
+        },
+      })
+
+      return { cliente: novoCliente, enderecoSalvo: novoEndereco, licencaTrial }
     })
 
     return {
       msg: `Cliente ${dadosValidados.tipo} registrado com sucesso`,
-      data: { ...cliente, endereco: enderecoSalvo },
+      data: { ...cliente, endereco: enderecoSalvo, licencaTrial },
     }
   }
 
