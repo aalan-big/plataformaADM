@@ -186,7 +186,7 @@ export class ClienteService {
 
     return {
       msg: `Cliente ${dadosValidados.tipo} registrado com sucesso`,
-      data: { ...cliente, endereco: enderecoSalvo, licencaTrial },
+      data: { ...cliente, enderecos: enderecoSalvo ? [enderecoSalvo] : [], licencaTrial },
     }
   }
 
