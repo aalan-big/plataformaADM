@@ -6,6 +6,7 @@
   "types": "./src/index.ts",
   "dependencies": {
     "@prisma/client": "^7",
+    "@prisma/adapter-pg": "^7",
     "pg": "*"
   },
   "devDependencies": {
