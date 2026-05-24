@@ -33,7 +33,6 @@ type Licenca = {
 
 export type ClienteCompleto = {
   id:        string
-  tipo:      'PF' | 'PJ'
   email:     string
   usuarioId: string
   criadoEm:  string
@@ -491,11 +490,11 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
   useEffect(() => { carregar() }, [carregar])
 
   const nome = cliente
-    ? cliente.tipo === 'PF' ? (cliente.pf?.nomeCompleto ?? '—') : (cliente.pj?.razaoSocial ?? '—')
+    ? cliente.pf ? (cliente.pf.nomeCompleto ?? '—') : (cliente.pj?.razaoSocial ?? '—')
     : '—'
 
   const doc = cliente
-    ? cliente.tipo === 'PF' ? formatCpf(cliente.pf?.cpf ?? '') : formatCnpj(cliente.pj?.cnpj ?? '')
+    ? cliente.pf ? formatCpf(cliente.pf.cpf ?? '') : formatCnpj(cliente.pj?.cnpj ?? '')
     : ''
 
   return (
@@ -567,30 +566,30 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                   <div>
                     <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Tipo</p>
                     <span className={`inline-block font-semibold px-1.5 py-0.5 rounded text-[10px] ${
-                      cliente.tipo === 'PJ' ? 'bg-blue-500/15 text-blue-400' : 'bg-purple-500/15 text-purple-400'
+                      cliente.pj ? 'bg-blue-500/15 text-blue-400' : 'bg-purple-500/15 text-purple-400'
                     }`}>
-                      {cliente.tipo === 'PJ' ? 'Pessoa Jurídica' : 'Pessoa Física'}
+                      {cliente.pj ? 'Pessoa Jurídica' : 'Pessoa Física'}
                     </span>
                   </div>
                   <div>
                     <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">
-                      {cliente.tipo === 'PF' ? 'CPF' : 'CNPJ'}
+                      {cliente.pf ? 'CPF' : 'CNPJ'}
                     </p>
                     <p className="text-slate-300 font-mono">{doc}</p>
                   </div>
-                  {cliente.tipo === 'PJ' && cliente.pj?.nomeFantasia && (
+                  {cliente.pj && cliente.pj?.nomeFantasia && (
                     <div>
                       <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Nome Fantasia</p>
                       <p className="text-slate-300">{cliente.pj.nomeFantasia}</p>
                     </div>
                   )}
-                  {cliente.tipo === 'PJ' && cliente.pj?.inscricaoEstadual && (
+                  {cliente.pj && cliente.pj?.inscricaoEstadual && (
                     <div>
                       <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Inscrição Estadual</p>
                       <p className="text-slate-300">{cliente.pj.inscricaoEstadual}</p>
                     </div>
                   )}
-                  {cliente.tipo === 'PJ' && cliente.pj?.responsavel && (
+                  {cliente.pj && cliente.pj?.responsavel && (
                     <div>
                       <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Responsável</p>
                       <p className="text-slate-300">{cliente.pj.responsavel}</p>

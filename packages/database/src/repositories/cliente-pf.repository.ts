@@ -10,7 +10,6 @@ export async function createClientePF(dados: CriarClientePFInput) {
 
   return prisma.cliente.create({
     data: {
-      tipo:    'PF',
       email:   email as string,
       usuario: { connect: { id: usuarioId } },
       ...(parceiroId ? { parceiroObj: { connect: { id: parceiroId } } } : {}),

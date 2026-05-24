@@ -12,7 +12,6 @@ import ModalGerarLinkCliente from './_components/ModalGerarLinkCliente'
 
 type Cliente = {
   id: string
-  tipo: 'PF' | 'PJ'
   email: string
   usuarioId: string
   parceiroId?: string | null
@@ -24,11 +23,11 @@ type Cliente = {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function nomeCliente(c: Cliente) {
-  return c.tipo === 'PF' ? (c.pf?.nomeCompleto ?? '—') : (c.pj?.razaoSocial ?? '—')
+  return c.pf ? (c.pf.nomeCompleto ?? '—') : (c.pj?.razaoSocial ?? '—')
 }
 
 function docCliente(c: Cliente) {
-  if (c.tipo === 'PF') return formatCpf(c.pf?.cpf ?? '')
+  if (c.pf) return formatCpf(c.pf.cpf ?? '')
   return formatCnpj(c.pj?.cnpj ?? '')
 }
 
@@ -213,11 +212,11 @@ export default function ClientesPage() {
                         <div>
                           <p className="font-medium text-slate-200 leading-tight">{nome}</p>
                           <span className={`inline-block mt-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-                            c.tipo === 'PJ'
+                            c.pj
                               ? 'bg-blue-500/15 text-blue-400'
                               : 'bg-purple-500/15 text-purple-400'
                           }`}>
-                            {c.tipo}
+                            {c.pj ? 'PJ' : 'PF'}
                           </span>
                         </div>
                       </div>
@@ -326,8 +325,8 @@ export default function ClientesPage() {
       {clienteRemovendo && (
         <ModalConfirmarDesativacao
           nomeCliente={
-            clienteRemovendo.tipo === 'PF'
-              ? (clienteRemovendo.pf?.nomeCompleto ?? clienteRemovendo.email)
+            clienteRemovendo.pf
+              ? (clienteRemovendo.pf.nomeCompleto ?? clienteRemovendo.email)
               : (clienteRemovendo.pj?.razaoSocial  ?? clienteRemovendo.email)
           }
           processando={processandoId === clienteRemovendo.id}

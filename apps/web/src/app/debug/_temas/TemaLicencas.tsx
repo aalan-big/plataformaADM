@@ -40,7 +40,7 @@ function RotaBadge({ metodo, rota }: { metodo: string; rota: string }) {
 // Tipos
 // ---------------------------------------------------------------------------
 interface ClienteItem {
-  id: string; tipo: 'PF' | 'PJ'; email: string
+  id: string; email: string
   pf?: { nomeCompleto: string }; pj?: { razaoSocial: string }
 }
 function getNome(c: ClienteItem) {
@@ -289,8 +289,8 @@ function SecaoGerenciarLicencas() {
                 }`}>
                 <div className="flex items-center gap-2 mb-1">
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                    c.tipo === 'PF' ? 'bg-sky-900/50 text-sky-300 border border-sky-700/50' : 'bg-violet-900/50 text-violet-300 border border-violet-700/50'
-                  }`}>{c.tipo}</span>
+                    c.pf ? 'bg-sky-900/50 text-sky-300 border border-sky-700/50' : 'bg-violet-900/50 text-violet-300 border border-violet-700/50'
+                  }`}>{c.pf ? 'PF' : 'PJ'}</span>
                   <span className="text-sm font-semibold text-slate-200 truncate">{getNome(c)}</span>
                 </div>
                 <p className="text-xs text-slate-500 truncate">{c.email}</p>

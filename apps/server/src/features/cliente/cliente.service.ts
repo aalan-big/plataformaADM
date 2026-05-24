@@ -107,7 +107,6 @@ export class ClienteService {
           const { nomeCompleto, cpf, rg, dataNascimento, usuarioId, parceiroId, email } = dadosValidados
           novoCliente = await tx.cliente.create({
             data: {
-              tipo: 'PF',
               email: email as string,
               usuario: { connect: { id: usuarioId } },
               ...(parceiroId ? { parceiroObj: { connect: { id: parceiroId } } } : {}),
@@ -119,7 +118,6 @@ export class ClienteService {
           const { razaoSocial, cnpj, nomeFantasia, inscricaoEstadual, inscricaoMunicipal, regimeTributario, responsavel, telefone, celular, setorAtividade, usuarioId, parceiroId, email } = dadosValidados
           novoCliente = await tx.cliente.create({
             data: {
-              tipo: 'PJ',
               email: email as string,
               usuario: { connect: { id: usuarioId } },
               ...(parceiroId ? { parceiroObj: { connect: { id: parceiroId } } } : {}),
@@ -197,14 +195,14 @@ export class ClienteService {
     const { endereco: enderecoRaw, ...dadosCliente } = body as Record<string, unknown>
 
     try {
-      if (cliente.tipo === 'PF') {
+      if (!!cliente.pf) {
         const dadosValidados = editarClientePFSchema.parse(dadosCliente)
         const atualizado = await editarClientePF(id, dadosValidados)
         await this.upsertEndereco(id, cliente.enderecos, enderecoRaw)
         return { msg: 'Cliente PF atualizado com sucesso', data: atualizado }
       }
 
-      if (cliente.tipo === 'PJ') {
+      if (!!cliente.pj) {
         const dadosValidados = editarClientePJSchema.parse(dadosCliente)
         const atualizado = await editarClientePJ(id, dadosValidados)
         await this.upsertEndereco(id, cliente.enderecos, enderecoRaw)

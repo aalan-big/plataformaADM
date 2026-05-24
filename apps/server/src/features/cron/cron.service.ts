@@ -72,7 +72,7 @@ export class CronService {
         const diasRestantes = Math.round(diffMs / (1000 * 60 * 60 * 24))
 
         if (this.DIAS_ALERTA.includes(diasRestantes)) {
-          const nomeCliente = licenca.cliente.tipo === 'PF'
+          const nomeCliente = !!licenca.cliente.pf
             ? (licenca.cliente.pf?.nomeCompleto ?? licenca.cliente.email)
             : (licenca.cliente.pj?.razaoSocial  ?? licenca.cliente.email)
 

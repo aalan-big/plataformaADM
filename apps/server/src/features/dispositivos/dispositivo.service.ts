@@ -229,8 +229,8 @@ export class DispositivoService {
     // Envia chave de ativação trial por email
     const licencaCompleta = await findLicencaById(licenca.id)
     if (licencaCompleta) {
-      const nomeCliente = licencaCompleta.cliente.tipo === 'PF'
-        ? (licencaCompleta.cliente.pf?.nomeCompleto ?? licencaCompleta.cliente.email)
+      const nomeCliente = licencaCompleta.cliente.pf
+        ? (licencaCompleta.cliente.pf.nomeCompleto ?? licencaCompleta.cliente.email)
         : (licencaCompleta.cliente.pj?.razaoSocial  ?? licencaCompleta.cliente.email)
 
       try {
@@ -341,8 +341,8 @@ export class DispositivoService {
     const licenca   = await findLicencaById(licencaId)
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
 
-    const nomeCliente = licenca.cliente.tipo === 'PF'
-      ? (licenca.cliente.pf?.nomeCompleto ?? licenca.cliente.email)
+    const nomeCliente = licenca.cliente.pf
+      ? (licenca.cliente.pf.nomeCompleto ?? licenca.cliente.email)
       : (licenca.cliente.pj?.razaoSocial  ?? licenca.cliente.email)
 
     const base = licenca.dataVencimento && licenca.dataVencimento > new Date()
@@ -594,7 +594,7 @@ export class DispositivoService {
     if (dados.tipo === 'PF') {
       const c = await prisma.cliente.create({
         data: {
-          tipo: 'PF', email: dados.email, usuarioId: admin.id,
+          email: dados.email, usuarioId: admin.id,
           pf: { create: { 
             nomeCompleto: dados.nomeOuRazao, 
             cpf: dados.documento,
@@ -608,7 +608,7 @@ export class DispositivoService {
     } else {
       const c = await prisma.cliente.create({
         data: {
-          tipo: 'PJ', email: dados.email, usuarioId: admin.id,
+          email: dados.email, usuarioId: admin.id,
           pj: { create: { 
             razaoSocial: dados.nomeOuRazao, 
             cnpj: dados.documento,

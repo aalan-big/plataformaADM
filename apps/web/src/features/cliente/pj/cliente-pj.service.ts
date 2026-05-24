@@ -15,7 +15,7 @@ export async function editarClientePJ(clienteId: string, dados: EditarClientePJI
   const cliente = await findClienteById(clienteId)
   if (!cliente) throw new Error('Cliente não encontrado.')
 
-  if (cliente.tipo !== 'PJ') throw new Error('Cliente não é Pessoa Jurídica.')
+  if (!cliente.pj) throw new Error('Cliente não é Pessoa Jurídica.')
 
   if (dados.cnpj) {
     const existeCnpj = await findClientePJByCnpj(dados.cnpj)

@@ -105,7 +105,7 @@ export class FinanceiroService {
     const descTri = plano.descontoTrimestral ? Number(plano.descontoTrimestral) / 100 : 0
     const descAnu = plano.descontoAnual      ? Number(plano.descontoAnual)      / 100 : 0
 
-    const nome = licenca.cliente.tipo === 'PF'
+    const nome = !!licenca.cliente.pf
       ? (licenca.cliente.pf?.nomeCompleto ?? licenca.cliente.email)
       : (licenca.cliente.pj?.razaoSocial  ?? licenca.cliente.email)
 
@@ -178,7 +178,7 @@ export class FinanceiroService {
     const licenca = await findLicencaById(dados.licencaId)
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
 
-    const nomeCliente = licenca.cliente.tipo === 'PF'
+    const nomeCliente = !!licenca.cliente.pf
       ? (licenca.cliente.pf?.nomeCompleto ?? licenca.cliente.email)
       : (licenca.cliente.pj?.razaoSocial  ?? licenca.cliente.email)
 
@@ -337,7 +337,7 @@ export class FinanceiroService {
     const { licenca, meses, valor, transacaoId, gateway, origem, descricao } = params
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
 
-    const nomeCliente = licenca.cliente.tipo === 'PF'
+    const nomeCliente = !!licenca.cliente.pf
       ? (licenca.cliente.pf?.nomeCompleto ?? licenca.cliente.email)
       : (licenca.cliente.pj?.razaoSocial  ?? licenca.cliente.email)
 

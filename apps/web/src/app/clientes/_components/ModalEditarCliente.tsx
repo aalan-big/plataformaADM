@@ -17,7 +17,6 @@ type Endereco = {
 
 type Cliente = {
   id: string
-  tipo: 'PF' | 'PJ'
   email: string
   pf: { nomeCompleto: string; cpf: string; rg?: string | null; dataNascimento?: string | null } | null
   pj: { razaoSocial: string; cnpj: string; nomeFantasia?: string | null; inscricaoEstadual?: string | null; responsavel?: string | null } | null
@@ -34,7 +33,7 @@ function formatCpf(v: string)  { return v.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/
 function formatCnpj(v: string) { return v.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5') }
 
 export default function ModalEditarCliente({ cliente, onClose, onSuccess }: Props) {
-  const isPF = cliente.tipo === 'PF'
+  const isPF = !!cliente.pf
   const enderecoExistente = cliente.enderecos?.[0] ?? null
 
   const [form, setForm] = useState<Record<string, string>>(() => {
@@ -151,7 +150,7 @@ export default function ModalEditarCliente({ cliente, onClose, onSuccess }: Prop
               <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${
                 isPF ? 'bg-purple-500/15 text-purple-400' : 'bg-blue-500/15 text-blue-400'
               }`}>
-                {cliente.tipo}
+                {isPF ? 'PF' : 'PJ'}
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">

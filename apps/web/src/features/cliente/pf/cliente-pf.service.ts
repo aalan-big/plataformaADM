@@ -15,7 +15,7 @@ export async function editarClientePF(clienteId: string, dados: EditarClientePFI
   const cliente = await findClienteById(clienteId)
   if (!cliente) throw new Error('Cliente não encontrado.')
 
-  if (cliente.tipo !== 'PF') throw new Error('Cliente não é Pessoa Física.')
+  if (!cliente.pf) throw new Error('Cliente não é Pessoa Física.')
 
   if (dados.cpf) {
     const existeCpf = await findClientePFByCpf(dados.cpf)

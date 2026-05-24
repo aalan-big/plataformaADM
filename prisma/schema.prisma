@@ -79,7 +79,6 @@ model Usuario {
 // ── Cliente ───────────────────────────────────────────────────────────────────
 model Cliente {
   id              String    @id @default(uuid())
-  tipo            String
   email           String
   usuarioId       String
   parceiroId      String?

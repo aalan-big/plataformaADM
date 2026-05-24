@@ -31,7 +31,7 @@ export async function editarClientePJ(clienteId: string, dados: EditarClientePJI
   const cliente = await findClienteById(clienteId)
   if (!cliente) throw new Error('Cliente não encontrado.')
 
-  if (cliente.tipo !== 'PJ') throw new Error('Cliente não é Pessoa Jurídica.')
+  if (!cliente.pj) throw new Error('Cliente não é Pessoa Jurídica.')
 
   const usuariosAtivos = (cliente as any).usuariosAtivos ?? 0
   if (dados.licencas !== undefined && dados.licencas < usuariosAtivos) {

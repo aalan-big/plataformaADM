@@ -5,7 +5,6 @@ import { X, Search, Loader2, AlertCircle, Cpu, User } from 'lucide-react'
 
 type ClienteOpc = {
   id: string
-  tipo: 'PF' | 'PJ'
   email: string
   pf: { nomeCompleto: string } | null
   pj: { razaoSocial: string } | null
@@ -18,7 +17,7 @@ type Plano = {
 }
 
 function nomeCliente(c: ClienteOpc) {
-  return c.tipo === 'PF' ? (c.pf?.nomeCompleto ?? c.email) : (c.pj?.razaoSocial ?? c.email)
+  return c.pf ? (c.pf.nomeCompleto ?? c.email) : (c.pj?.razaoSocial ?? c.email)
 }
 
 interface Props {
@@ -174,8 +173,8 @@ export default function ModalCriarTrial({ onClose, onSuccess }: Props) {
                         <p className="text-[11px] text-slate-500 truncate">{c.email}</p>
                       </div>
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
-                        c.tipo === 'PJ' ? 'bg-blue-500/15 text-blue-400' : 'bg-purple-500/15 text-purple-400'
-                      }`}>{c.tipo}</span>
+                        c.pj ? 'bg-blue-500/15 text-blue-400' : 'bg-purple-500/15 text-purple-400'
+                      }`}>{c.pj ? 'PJ' : 'PF'}</span>
                     </button>
                   ))}
                 </div>

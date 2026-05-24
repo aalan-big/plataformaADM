@@ -40,7 +40,6 @@ type LicencaDetalhe = {
   cliente: {
     id: string
     email: string
-    tipo: 'PF' | 'PJ'
     pf: { nomeCompleto: string } | null
     pj: { razaoSocial: string } | null
   }
@@ -50,8 +49,8 @@ type LicencaDetalhe = {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function nomeCliente(l: LicencaDetalhe) {
-  return l.cliente.tipo === 'PF'
-    ? (l.cliente.pf?.nomeCompleto ?? l.cliente.email)
+  return l.cliente.pf
+    ? (l.cliente.pf.nomeCompleto ?? l.cliente.email)
     : (l.cliente.pj?.razaoSocial ?? l.cliente.email)
 }
 

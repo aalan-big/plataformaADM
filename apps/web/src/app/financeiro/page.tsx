@@ -51,8 +51,8 @@ type Inadimplente = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function nomeCliente(c: { tipo: string; pf: { nomeCompleto: string } | null; pj: { razaoSocial: string } | null; email: string }) {
-  return c.tipo === 'PF' ? (c.pf?.nomeCompleto ?? c.email) : (c.pj?.razaoSocial ?? c.email)
+function nomeCliente(c: { pf: { nomeCompleto: string } | null; pj: { razaoSocial: string } | null; email: string }) {
+  return c.pf ? (c.pf.nomeCompleto ?? c.email) : (c.pj?.razaoSocial ?? c.email)
 }
 
 function formatarReais(v: number | string) {

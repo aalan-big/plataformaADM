@@ -10,7 +10,6 @@ export async function createClientePJ(dados: CriarClientePJInput) {
 
   return prisma.cliente.create({
     data: {
-      tipo: 'PJ',
       email,
       usuario: { connect: { id: usuarioId } },
       ...(parceiroId ? { parceiroObj: { connect: { id: parceiroId } } } : {}),
