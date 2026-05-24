@@ -140,7 +140,7 @@ export default function ModalCriarCliente({ onClose, onSuccess }: Props) {
 
       <div className="relative z-10 w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
 
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-800">
+        <div className="flex items-center justify-between px-4 py-4 sm:px-6 sm:py-5 border-b border-slate-800">
           <div>
             <h2 className="text-lg font-bold text-slate-100">Novo Cliente</h2>
             <p className="text-xs text-slate-400 mt-0.5">Preencha os dados para cadastrar no sistema</p>
@@ -150,7 +150,7 @@ export default function ModalCriarCliente({ onClose, onSuccess }: Props) {
           </button>
         </div>
 
-        <div className="px-6 pt-5 pb-1">
+        <div className="px-4 pt-4 pb-1 sm:px-6 sm:pt-5">
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Tipo de Cliente</p>
           <div className="grid grid-cols-2 gap-3">
             <button
@@ -186,7 +186,7 @@ export default function ModalCriarCliente({ onClose, onSuccess }: Props) {
           </div>
         </div>
 
-        <form onSubmit={enviar} className="flex-1 overflow-y-auto px-6 pt-4 pb-6 space-y-4">
+        <form onSubmit={enviar} className="flex-1 overflow-y-auto px-4 pt-4 pb-5 sm:px-6 sm:pb-6 space-y-4">
 
           {tipo === 'PJ' && (
             <>
@@ -199,7 +199,7 @@ export default function ModalCriarCliente({ onClose, onSuccess }: Props) {
                 />
               </Campo>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Campo label="CNPJ *" erro={erroCampo('cnpj')}>
                   <input
                     value={form.cnpj}
@@ -219,7 +219,7 @@ export default function ModalCriarCliente({ onClose, onSuccess }: Props) {
                 </Campo>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Campo label="Inscrição Estadual">
                   <input
                     value={form.inscricaoEstadual}
@@ -251,7 +251,7 @@ export default function ModalCriarCliente({ onClose, onSuccess }: Props) {
                 />
               </Campo>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Campo label="CPF *" erro={erroCampo('cpf')}>
                   <input
                     value={form.cpf}
@@ -377,7 +377,7 @@ export default function ModalCriarCliente({ onClose, onSuccess }: Props) {
                   </Campo>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-3 gap-2">
                   <Campo label="Bairro *">
                     <input
                       value={endereco.bairro}

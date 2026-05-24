@@ -91,7 +91,7 @@ export default function ModalGerarChave({ licenca, onClose, onSuccess }: Props) 
             </div>
             <div>
               <h2 className="text-sm font-bold text-white">Gerar Chave de Ativação</h2>
-              <p className="text-[11px] text-slate-500 truncate max-w-48">
+              <p className="text-[11px] text-slate-500 truncate max-w-full">
                 {nomeCliente(licenca)} · {licenca.nomeDispositivo ?? 'Dispositivo'}
               </p>
             </div>
@@ -131,7 +131,7 @@ export default function ModalGerarChave({ licenca, onClose, onSuccess }: Props) 
                 <label className="text-[11px] text-slate-400 uppercase tracking-wide font-semibold">
                   Período de Renovação
                 </label>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {MESES_OPCOES.map(m => (
                     <button
                       key={m}

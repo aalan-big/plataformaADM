@@ -502,7 +502,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
       <div className="w-full max-w-lg bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
 
         {/* Cabeçalho */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+        <div className="flex items-center justify-between px-4 py-4 border-b border-slate-800">
           <div className="flex items-center gap-3 min-w-0">
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold text-white shrink-0 ${corAvatar(nome)}`}>
               {nome[0]?.toUpperCase() ?? '?'}
@@ -541,7 +541,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
         </div>
 
         {/* Corpo */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 sm:space-y-5">
 
           {carregando && (
             <div className="flex flex-col items-center gap-2 py-12">

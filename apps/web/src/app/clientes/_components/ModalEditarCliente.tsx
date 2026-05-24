@@ -143,7 +143,7 @@ export default function ModalEditarCliente({ cliente, onClose, onSuccess }: Prop
 
       <div className="relative z-10 w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
 
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-800">
+        <div className="flex items-center justify-between px-4 py-4 sm:px-6 sm:py-5 border-b border-slate-800">
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-lg font-bold text-slate-100">Editar Cliente</h2>
@@ -162,14 +162,14 @@ export default function ModalEditarCliente({ cliente, onClose, onSuccess }: Prop
           </button>
         </div>
 
-        <form onSubmit={enviar} className="flex-1 overflow-y-auto px-6 pt-5 pb-6 space-y-4">
+        <form onSubmit={enviar} className="flex-1 overflow-y-auto px-4 pt-4 pb-5 sm:px-6 sm:pt-5 sm:pb-6 space-y-4">
 
           {isPF && (
             <>
               <Campo label="Nome Completo *" erro={erroCampo('nomeCompleto')}>
                 <input value={form.nomeCompleto} onChange={e => atualizar('nomeCompleto', e.target.value)} className={ic(!!erroCampo('nomeCompleto'))} />
               </Campo>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Campo label="CPF *" erro={erroCampo('cpf')}>
                   <input value={form.cpf} onChange={e => atualizar('cpf', e.target.value)} placeholder="000.000.000-00" className={ic(!!erroCampo('cpf'))} />
                 </Campo>
@@ -188,7 +188,7 @@ export default function ModalEditarCliente({ cliente, onClose, onSuccess }: Prop
               <Campo label="Razão Social *" erro={erroCampo('razaoSocial')}>
                 <input value={form.razaoSocial} onChange={e => atualizar('razaoSocial', e.target.value)} className={ic(!!erroCampo('razaoSocial'))} />
               </Campo>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Campo label="CNPJ *" erro={erroCampo('cnpj')}>
                   <input value={form.cnpj} onChange={e => atualizar('cnpj', e.target.value)} placeholder="00.000.000/0001-00" className={ic(!!erroCampo('cnpj'))} />
                 </Campo>
@@ -196,7 +196,7 @@ export default function ModalEditarCliente({ cliente, onClose, onSuccess }: Prop
                   <input value={form.nomeFantasia} onChange={e => atualizar('nomeFantasia', e.target.value)} placeholder="Opcional" className={ic(false)} />
                 </Campo>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Campo label="Inscrição Estadual">
                   <input value={form.inscricaoEstadual} onChange={e => atualizar('inscricaoEstadual', e.target.value)} placeholder="Opcional" className={ic(false)} />
                 </Campo>
@@ -281,7 +281,7 @@ export default function ModalEditarCliente({ cliente, onClose, onSuccess }: Prop
                   </Campo>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-3 gap-2">
                   <Campo label="Bairro *">
                     <input value={endereco.bairro} onChange={e => atualizarEndereco('bairro', e.target.value)} className={ic(false)} />
                   </Campo>

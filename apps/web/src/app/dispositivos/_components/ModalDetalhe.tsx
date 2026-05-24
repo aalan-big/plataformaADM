@@ -247,7 +247,7 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
         <div className="relative z-10 w-full max-w-2xl bg-[#0f1117] border border-slate-800 rounded-2xl shadow-2xl flex flex-col max-h-[92vh]">
 
           {/* ── Cabeçalho ───────────────────────────────────────────────── */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 shrink-0">
+          <div className="flex items-center justify-between px-4 py-4 sm:px-6 border-b border-slate-800 shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center">
                 <Cpu size={15} className="text-slate-400" />
@@ -258,7 +258,7 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
                     <h2 className="text-sm font-semibold text-white leading-tight">
                       {licenca.nomeDispositivo ?? 'Dispositivo sem nome'}
                     </h2>
-                    <p className="text-[11px] text-slate-500">{licenca && nomeCliente(licenca)} · {licenca.cliente.email}</p>
+                    <p className="text-[11px] text-slate-500 truncate max-w-45 sm:max-w-xs">{licenca && nomeCliente(licenca)} · {licenca.cliente.email}</p>
                   </>
                 ) : (
                   <h2 className="text-sm font-semibold text-white">Licença</h2>
@@ -271,7 +271,7 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
           </div>
 
           {/* ── Corpo ───────────────────────────────────────────────────── */}
-          <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
 
             {carregando && (
               <div className="flex flex-col items-center gap-3 py-16">
@@ -355,7 +355,7 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
                   </div>
 
                   {/* Ações rápidas */}
-                  <div className="bg-slate-800/30 border-t border-slate-700/50 px-5 py-3 flex items-center gap-2">
+                  <div className="bg-slate-800/30 border-t border-slate-700/50 px-4 py-3 sm:px-5 flex flex-wrap items-center gap-2">
                     <button
                       onClick={() => setModalRenovar(true)}
                       className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition-colors"
@@ -528,7 +528,7 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
                         { m: 12, label: '12 meses', total: totalAnu,  desc: descExibidaAnu },
                       ]
                       return (
-                        <div className="flex items-end gap-2">
+                        <div className="flex flex-wrap items-end gap-2">
                           {opcoes.map(({ m, label, total, desc }) => (
                             <button key={m}
                               onClick={() => { setMesesStripe(m); setLinkStripe(''); setLinkCopiado(false) }}
@@ -623,7 +623,7 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
           </div>
 
           {/* ── Rodapé ──────────────────────────────────────────────────── */}
-          <div className="px-5 py-3 border-t border-slate-800 flex items-center justify-end shrink-0">
+          <div className="px-4 py-3 sm:px-5 border-t border-slate-800 flex items-center justify-end shrink-0">
             <button
               onClick={onClose}
               className="px-4 py-2 text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
