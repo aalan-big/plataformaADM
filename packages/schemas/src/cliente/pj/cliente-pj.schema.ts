@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { clienteBaseSchema } from '../cliente.schema'
 import { validarCnpj } from '../../core/documento.validators'
 
-export const criarClientePJSchema = clienteBaseSchema.omit({ tipo: true }).extend({
+export const criarClientePJSchema = clienteBaseSchema.extend({
   razaoSocial:       z.string().min(2, { message: 'Razão social obrigatória' }),
 
   cnpj: z.string()

@@ -32,6 +32,8 @@ import {
   editarClientePFSchema,
   editarClientePJSchema,
   editarEnderecoSchema,
+  type CriarClientePFInput,
+  type CriarClientePJInput,
 } from '@startbig/schemas'
 import { editarClientePF } from './pf/cliente-pf.service'
 import { editarClientePJ } from './pj/cliente-pj.service'
@@ -81,11 +83,15 @@ export class ClienteService {
       })
     }
 
-    if (dadosValidados.tipo === 'PF') {
-      const existe = await findClientePFByCpf(dadosValidados.cpf)
+    const isPF = 'nomeCompleto' in dadosValidados
+    const dadosPF = isPF ? dadosValidados as CriarClientePFInput : null
+    const dadosPJ = !isPF ? dadosValidados as CriarClientePJInput : null
+
+    if (dadosPF) {
+      const existe = await findClientePFByCpf(dadosPF.cpf)
       if (existe) throw new BadRequestException('CPF já cadastrado.')
     } else {
-      const existe = await findClientePJByCnpj(dadosValidados.cnpj)
+      const existe = await findClientePJByCnpj(dadosPJ!.cnpj)
       if (existe) throw new BadRequestException('CNPJ já cadastrado.')
     }
 
@@ -103,8 +109,8 @@ export class ClienteService {
       const resultado = await prisma.$transaction(async (tx) => {
         let novoCliente
 
-        if (dadosValidados.tipo === 'PF') {
-          const { nomeCompleto, cpf, rg, dataNascimento, usuarioId, parceiroId, email } = dadosValidados
+        if (dadosPF) {
+          const { nomeCompleto, cpf, rg, dataNascimento, usuarioId, parceiroId, email } = dadosPF
           novoCliente = await tx.cliente.create({
             data: {
               email: email as string,
@@ -115,7 +121,7 @@ export class ClienteService {
             include: { pf: true, pj: true, enderecos: true },
           })
         } else {
-          const { razaoSocial, cnpj, nomeFantasia, inscricaoEstadual, inscricaoMunicipal, regimeTributario, responsavel, telefone, celular, setorAtividade, usuarioId, parceiroId, email } = dadosValidados
+          const { razaoSocial, cnpj, nomeFantasia, inscricaoEstadual, inscricaoMunicipal, regimeTributario, responsavel, telefone, celular, setorAtividade, usuarioId, parceiroId, email } = dadosPJ!
           novoCliente = await tx.cliente.create({
             data: {
               email: email as string,
@@ -170,9 +176,7 @@ export class ClienteService {
       throw new BadRequestException(e instanceof Error ? e.message : 'Erro ao salvar cliente no banco de dados')
     }
 
-    const nomeCliente = dadosValidados.tipo === 'PF'
-      ? dadosValidados.nomeCompleto
-      : dadosValidados.razaoSocial
+    const nomeCliente = dadosPF ? dadosPF.nomeCompleto : dadosPJ!.razaoSocial
 
     this.emailService.enviarChaveAtivacao({
       email:           dadosValidados.email,
@@ -183,7 +187,7 @@ export class ClienteService {
     }).catch(err => console.error('[email] Falha ao enviar boas-vindas:', err))
 
     return {
-      msg: `Cliente ${dadosValidados.tipo} registrado com sucesso`,
+      msg: `Cliente ${isPF ? 'PF' : 'PJ'} registrado com sucesso`,
       data: { ...cliente, enderecos: enderecoSalvo ? [enderecoSalvo] : [], licencaTrial },
     }
   }

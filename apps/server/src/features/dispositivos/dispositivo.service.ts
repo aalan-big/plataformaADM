@@ -54,7 +54,6 @@ import { EmailService } from '../../core/email/email.service'
 import { z } from 'zod'
 
 export const autoCadastroSchema = z.object({
-  tipo: z.enum(['PF', 'PJ']),
   documento: z.string().transform(s => s.replace(/\D/g, '')),
   nomeOuRazao: z.string().min(2),
   email: z.string().email(),
@@ -526,13 +525,16 @@ export class DispositivoService {
 
   async autoCadastro(body: unknown) {
     const dados = this.parseBody(autoCadastroSchema, body)
-    
+
+    // Deduz o tipo pelo tamanho do documento: 11 = CPF (PF), 14 = CNPJ (PJ)
+    const isPF = dados.documento.length === 11
+
     // 1. Validação matemática
-    if (dados.tipo === 'PF') {
+    if (isPF) {
       if (!validarCpf(dados.documento)) throw new BadRequestException('CPF inválido matematicamente.')
     } else {
       if (!validarCnpj(dados.documento)) throw new BadRequestException('CNPJ inválido matematicamente.')
-      
+
       // 2. Validação BrasilAPI para CNPJ
       try {
         const receitaRes = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${dados.documento}`)
@@ -564,7 +566,7 @@ export class DispositivoService {
     const existeEmail = await prisma.cliente.findFirst({ where: { email: dados.email } })
     if (existeEmail) throw new BadRequestException('E-mail já cadastrado no sistema.')
 
-    if (dados.tipo === 'PF') {
+    if (isPF) {
       const existeCPF = await prisma.clientePF.findUnique({ where: { cpf: dados.documento } })
       if (existeCPF) throw new BadRequestException('CPF já cadastrado.')
     } else {
@@ -591,12 +593,12 @@ export class DispositivoService {
       }
     } : {}
 
-    if (dados.tipo === 'PF') {
+    if (isPF) {
       const c = await prisma.cliente.create({
         data: {
           email: dados.email, usuarioId: admin.id,
-          pf: { create: { 
-            nomeCompleto: dados.nomeOuRazao, 
+          pf: { create: {
+            nomeCompleto: dados.nomeOuRazao,
             cpf: dados.documento,
             rg: dados.rg,
             dataNascimento: dados.dataNascimento ? new Date(dados.dataNascimento) : undefined
@@ -609,8 +611,8 @@ export class DispositivoService {
       const c = await prisma.cliente.create({
         data: {
           email: dados.email, usuarioId: admin.id,
-          pj: { create: { 
-            razaoSocial: dados.nomeOuRazao, 
+          pj: { create: {
+            razaoSocial: dados.nomeOuRazao,
             cnpj: dados.documento,
             nomeFantasia: dados.nomeFantasia,
             inscricaoEstadual: dados.inscricaoEstadual,

@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { clienteBaseSchema } from '../cliente.schema'
 import { validarCpf } from '../../core/documento.validators'
 
-export const criarClientePFSchema = clienteBaseSchema.omit({ tipo: true }).extend({
+export const criarClientePFSchema = clienteBaseSchema.extend({
   nomeCompleto:   z.string().min(2, { message: 'Nome completo obrigatório' }),
 
   cpf: z.string()

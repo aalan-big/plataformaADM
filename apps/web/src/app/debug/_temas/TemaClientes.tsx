@@ -51,7 +51,7 @@ function SecaoRegistrar({ usuarioId }: { usuarioId: string }) {
   function setPfF(campo: string, valor: string) { setPf(p => ({ ...p, [campo]: valor })) }
 
   async function enviar() {
-    const body: Record<string, unknown> = { tipo, usuarioId }
+    const body: Record<string, unknown> = { usuarioId }
     if (tipo === 'PJ') Object.assign(body, pj)
     else               Object.assign(body, pf)
     if (end.cep) body.endereco = end
