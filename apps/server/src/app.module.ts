@@ -24,6 +24,7 @@ import { EnderecoModule } from './features/endereco/endereco.module'
 import { DispositivoModule } from './features/dispositivos/dispositivo.module'
 import { FinanceiroModule } from './features/financeiro/financeiro.module'
 import { CronModule } from './features/cron/cron.module'
+import { PlanoModule } from './features/plano/plano.module'
 import { StripeModule } from './common/stripe/stripe.module'
 import { EmailModule } from './core/email/email.module'
 import { AuthGuard } from './core/guards/auth.guard'
@@ -45,6 +46,7 @@ import { RolesGuard } from './core/guards/roles.guard'
     DispositivoModule,
     FinanceiroModule,
     CronModule,
+    PlanoModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

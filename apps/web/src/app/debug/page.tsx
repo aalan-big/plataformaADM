@@ -6,6 +6,7 @@ import { TemaLogin } from './_temas/TemaLogin'
 import { TemaClientes } from './_temas/TemaClientes'
 import { TemaLicencas } from './_temas/TemaLicencas'
 import { TemaFinanceiro } from './_temas/TemaFinanceiro'
+import { TemaPlano } from './_temas/TemaPlano'
 
 interface UsuarioLogado {
   id:    string
@@ -46,6 +47,7 @@ const ROTAS = [
   { modulo: 'Licenças (Admin)',  cor: 'text-indigo-400',  rotas: ['GET /api/licenca/planos', 'GET /api/licenca/cliente/:id', 'POST /api/licenca', 'POST /api/licenca/:id/renovar', 'PATCH /api/licenca/:id/bloquear', 'PATCH /api/licenca/:id/reativar', 'PATCH /api/licenca/:id/resetar-usuarios', 'PATCH /api/licenca/:id/adicionar-extra', 'DELETE /api/licenca/:id'] },
   { modulo: 'Licenças (ERP Público)', cor: 'text-fuchsia-400', rotas: ['POST /api/licenca/auto-cadastro', 'POST /api/licenca/conectar', 'POST /api/licenca/validar', 'POST /api/licenca/heartbeat', 'POST /api/licenca/desconectar'] },
   { modulo: 'Financeiro',cor: 'text-cyan-400',     rotas: ['POST /api/financeiro/confirmar', 'GET /api/financeiro/historico/cliente/:id', 'GET /api/financeiro/historico/licenca/:id', 'GET /api/financeiro/transacoes/cliente/:id', 'GET /api/financeiro/transacoes/licenca/:id', 'GET /api/financeiro/receita', 'POST /api/financeiro/webhook/asaas'] },
+  { modulo: 'Planos',    cor: 'text-purple-400',   rotas: ['GET /api/plano', 'POST /api/plano', 'GET /api/plano/:id', 'PUT /api/plano/:id', 'PATCH /api/plano/:id/desativar', 'PATCH /api/plano/:id/reativar'] },
 ]
 
 function MapaRotas() {
@@ -127,7 +129,7 @@ export default function DebugPage() {
           <div>
             <h1 className="text-2xl font-black text-cyan-400 tracking-tight">BigTec API Laboratory</h1>
             <p className="text-slate-500 text-sm mt-0.5">
-              Ambiente de teste dos módulos — Auth · Clientes · Licenças · Financeiro
+              Ambiente de teste dos módulos — Auth · Clientes · Licenças · Financeiro · Planos
             </p>
           </div>
 
@@ -161,6 +163,8 @@ export default function DebugPage() {
           <Passo n={3} label="Licenças" ativo={!!usuario} />
           <span className="text-slate-700 text-xs">→</span>
           <Passo n={4} label="Financeiro" ativo={!!usuario} />
+          <span className="text-slate-700 text-xs">→</span>
+          <Passo n={5} label="Planos" ativo={!!usuario} />
         </div>
       </header>
 
@@ -190,6 +194,12 @@ export default function DebugPage() {
           {usuario
             ? <TemaFinanceiro />
             : <Bloqueado modulo="Financeiro" />}
+        </Tema>
+
+        <Tema titulo={`05 — Controle de Planos${usuario ? '' : ' · faça login primeiro'}`}>
+          {usuario
+            ? <TemaPlano />
+            : <Bloqueado modulo="Planos" />}
         </Tema>
 
       </div>
