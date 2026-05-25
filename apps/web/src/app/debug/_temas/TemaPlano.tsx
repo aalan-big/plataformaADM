@@ -88,8 +88,22 @@ export function TemaPlano() {
   const [loadAcao, setLoadAcao]           = useState<Record<string, boolean>>({})
   const [resultAcao, setResultAcao]       = useState<Record<string, ApiResponse>>({})
 
-  const fn = (k: keyof typeof camposVazios) => (e: ChangeEvent<HTMLInputElement>) =>
-    setForm(prev => ({ ...prev, [k]: e.target.value }))
+  const fn = (k: keyof typeof camposVazios) => (e: ChangeEvent<HTMLInputElement>) => {
+    const valor = e.target.value
+    setForm(prev => {
+      const novo = { ...prev, [k]: valor }
+      if (k === 'precoMensal') {
+        const mensal = parseFloat(valor) || 0
+        const descTrim = parseFloat(prev.descontoTrimestral) || 0
+        const descAnual = parseFloat(prev.descontoAnual) || 0
+        if (descTrim > 0)
+          novo.precoTrimestral = (mensal * 3 * (1 - descTrim / 100)).toFixed(2)
+        if (descAnual > 0)
+          novo.precoAnual = (mensal * 12 * (1 - descAnual / 100)).toFixed(2)
+      }
+      return novo
+    })
+  }
 
   const listar = async () => {
     setCarregando(true); setResultLista(null)
