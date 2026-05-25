@@ -632,14 +632,14 @@ export class DispositivoService {
 
     // 7. Criar Licença
     const agora = new Date()
-    const vencimento = new Date(agora.getTime() + 7 * 24 * 60 * 60 * 1000) // 7 dias de trial
+    const vencimento = new Date(agora.getTime() + 14 * 24 * 60 * 60 * 1000) // 14 dias de trial
     const hwidKey = dados.hwid ?? `anon-${randomUUID()}`
 
     const licenca = await criarLicenca({
        clienteId,
        planoId: plano.id,
        nomeDispositivo: 'Auto-Cadastro ERP',
-       dias: 7
+       dias: 14
     })
     
     // Atualiza status para ATIVA, isTrial para true e registra a sessão
@@ -663,8 +663,21 @@ export class DispositivoService {
       dataVencimento: vencimento,
     })
 
+    // 9. Enviar e-mail de boas-vindas com a chave de ativação
+    try {
+      await this.emailService.enviarChaveAtivacao({
+        email:           dados.email,
+        nomeCliente:     dados.nomeOuRazao,
+        chave:           licenca.chaveAtivacao,
+        dataVencimento:  vencimento,
+        nomeDispositivo: 'Auto-Cadastro ERP',
+      })
+    } catch (err) {
+      this.logger.warn(`[email] Falha ao enviar boas-vindas para ${dados.email}: ${err instanceof Error ? err.message : err}`)
+    }
+
     return {
-      msg: 'Auto-cadastro concluído com sucesso. Licença Trial de 7 dias gerada.',
+      msg: 'Auto-cadastro concluído com sucesso. Licença Trial de 14 dias gerada.',
       clienteId,
       licencaId: licenca.id,
       chaveAtivacao: licenca.chaveAtivacao,
