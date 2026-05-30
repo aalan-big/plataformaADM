@@ -64,6 +64,8 @@ export class CronService {
 
       for (const licenca of licencasParaAlerta) {
         if (licenca.status === 'VENCIDA' || !licenca.dataVencimento) continue
+        // Assinantes com cartão no Stripe renovam automaticamente — não avisar
+        if (licenca.stripeSubscriptionId) continue
 
         const vencimento = new Date(licenca.dataVencimento)
         vencimento.setHours(0, 0, 0, 0)
