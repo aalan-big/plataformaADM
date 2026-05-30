@@ -22,5 +22,6 @@ import { EmailModule } from '../../core/email/email.module'
   imports:     [EmailModule],
   controllers: [DispositivoController],
   providers:   [DispositivoService],
+  exports:     [DispositivoService],
 })
 export class DispositivoModule {}

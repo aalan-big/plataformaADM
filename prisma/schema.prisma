@@ -79,13 +79,17 @@ model Usuario {
 
 // ── Cliente ───────────────────────────────────────────────────────────────────
 model Cliente {
-  id              String    @id @default(uuid())
-  email           String
-  usuarioId       String
-  parceiroId      String?
-  ativo           Boolean   @default(true)
-  criadoEm        DateTime  @default(now())
-  dataAtualizacao DateTime  @updatedAt
+  id                 String    @id @default(uuid())
+  email              String
+  usuarioId          String
+  parceiroId         String?
+  ativo              Boolean   @default(true)
+  criadoEm           DateTime  @default(now())
+  dataAtualizacao    DateTime  @updatedAt
+  senhaHash          String?
+  emailPendente      String?
+  tokenEmail         String?
+  tokenEmailExpiraEm DateTime?
 
   pf              ClientePF?
   pj              ClientePJ?

@@ -20,6 +20,7 @@
     "jsonwebtoken": "*",
     "nodemailer": "*",
     "reflect-metadata": "*",
+    "resend": "^6.12.4",
     "rxjs": "*",
     "stripe": "*",
     "zod": "*"
