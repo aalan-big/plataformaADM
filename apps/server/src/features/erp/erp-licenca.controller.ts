@@ -1,14 +1,14 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common'
+import { Controller, Get, Post, Body } from '@nestjs/common'
 import { DispositivoService } from '../dispositivos/dispositivo.service'
-import { FinanceiroService } from '../financeiro/financeiro.service'
+import { ErpAuthService } from './erp-auth.service'
 import { Public } from '../../core/decorators/public.decorator'
 
 @Public()
 @Controller('erp')
-export class ErpController {
+export class ErpLicencaController {
   constructor(
     private readonly dispositivoService: DispositivoService,
-    private readonly financeiroService:  FinanceiroService,
+    private readonly erpAuthService:     ErpAuthService,
   ) {}
 
   @Get('chave-publica')
@@ -17,8 +17,15 @@ export class ErpController {
   }
 
   @Post('auto-cadastro')
-  autoCadastro(@Body() body: unknown) {
-    return this.dispositivoService.autoCadastro(body)
+  async autoCadastro(@Body() body: unknown) {
+    const resultado = await this.dispositivoService.autoCadastro(body)
+    // Após cadastro envia e-mail para o cliente criar a senha de acesso
+    await this.erpAuthService.enviarEmailPrimeiroAcesso(
+      resultado.clienteId,
+      (body as any).email,
+      (body as any).nomeOuRazao,
+    )
+    return resultado
   }
 
   @Post('conectar')
@@ -39,15 +46,5 @@ export class ErpController {
   @Post('validar')
   validar(@Body() body: unknown) {
     return this.dispositivoService.validar(body)
-  }
-
-  @Post('cobranca')
-  cobranca(@Body() body: unknown) {
-    return this.financeiroService.gerarCobranca(body)
-  }
-
-  @Get('plano/:licencaId')
-  plano(@Param('licencaId') licencaId: string) {
-    return this.financeiroService.planoPagamento(licencaId)
   }
 }
