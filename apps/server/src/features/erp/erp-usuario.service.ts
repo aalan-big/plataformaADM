@@ -7,7 +7,7 @@ import { Resend } from 'resend'
 const resend = new Resend(process.env.RESEND_API_KEY)
 
 const alterarSenhaSchema = z.object({
-  senhaAtual: z.string(),
+  senhaAtual: z.string().optional(),
   novaSenha:  z.string().min(8, 'A nova senha deve ter no mínimo 8 caracteres.'),
 })
 
@@ -44,7 +44,7 @@ export class ErpUsuarioService {
 
     const { cliente } = licenca
     const nome = cliente.pf?.nomeCompleto ?? cliente.pj?.razaoSocial ?? ''
-    return { nome, email: cliente.email }
+    return { nome, email: cliente.email, temSenha: !!cliente.senhaHash }
   }
 
   async alterarSenha(licencaId: string, body: unknown) {
@@ -57,11 +57,12 @@ export class ErpUsuarioService {
 
     const { cliente } = licenca
 
-    if (!cliente.senhaHash)
-      throw new BadRequestException('Nenhuma senha configurada. Defina sua senha antes de alterá-la.')
-
-    const senhaValida = await bcrypt.compare(dados.senhaAtual, cliente.senhaHash)
-    if (!senhaValida) throw new BadRequestException('Senha atual incorreta.')
+    if (cliente.senhaHash) {
+      if (!dados.senhaAtual)
+        throw new BadRequestException('Informe a senha atual para alterá-la.')
+      const senhaValida = await bcrypt.compare(dados.senhaAtual, cliente.senhaHash)
+      if (!senhaValida) throw new BadRequestException('Senha atual incorreta.')
+    }
 
     const novoHash = await bcrypt.hash(dados.novaSenha, 10)
     await this.prisma.cliente.update({
