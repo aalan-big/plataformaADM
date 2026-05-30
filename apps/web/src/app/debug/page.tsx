@@ -7,6 +7,8 @@ import { TemaClientes } from './_temas/TemaClientes'
 import { TemaLicencas } from './_temas/TemaLicencas'
 import { TemaFinanceiro } from './_temas/TemaFinanceiro'
 import { TemaPlano } from './_temas/TemaPlano'
+import { TemaErpAuth } from './_temas/TemaErpAuth'
+import { TemaErpUsuario } from './_temas/TemaErpUsuario'
 
 interface UsuarioLogado {
   id:    string
@@ -42,12 +44,15 @@ function StatusServidor() {
 // Guia rápido de rotas
 // ---------------------------------------------------------------------------
 const ROTAS = [
-  { modulo: 'Auth',      cor: 'text-emerald-400', rotas: ['POST /api/auth/login', 'POST /api/auth/logout', 'POST /api/usuario'] },
-  { modulo: 'Clientes',  cor: 'text-rose-400',    rotas: ['GET /api/cliente', 'GET /api/cliente/:id', 'POST /api/cliente/registrar', 'PATCH /api/cliente/:id', 'DELETE /api/cliente/:id'] },
-  { modulo: 'Licenças (Admin)',  cor: 'text-indigo-400',  rotas: ['GET /api/licenca/planos', 'GET /api/licenca/cliente/:id', 'POST /api/licenca', 'POST /api/licenca/:id/renovar', 'PATCH /api/licenca/:id/bloquear', 'PATCH /api/licenca/:id/reativar', 'PATCH /api/licenca/:id/resetar-usuarios', 'PATCH /api/licenca/:id/adicionar-extra', 'DELETE /api/licenca/:id'] },
-  { modulo: 'Licenças (ERP Público)', cor: 'text-fuchsia-400', rotas: ['POST /api/licenca/auto-cadastro', 'POST /api/licenca/conectar', 'POST /api/licenca/validar', 'POST /api/licenca/heartbeat', 'POST /api/licenca/desconectar'] },
-  { modulo: 'Financeiro',cor: 'text-cyan-400',     rotas: ['POST /api/financeiro/confirmar', 'GET /api/financeiro/historico/cliente/:id', 'GET /api/financeiro/historico/licenca/:id', 'GET /api/financeiro/transacoes/cliente/:id', 'GET /api/financeiro/transacoes/licenca/:id', 'GET /api/financeiro/receita', 'POST /api/financeiro/webhook/asaas'] },
-  { modulo: 'Planos',    cor: 'text-purple-400',   rotas: ['GET /api/plano', 'POST /api/plano', 'GET /api/plano/:id', 'PUT /api/plano/:id', 'PATCH /api/plano/:id/desativar', 'PATCH /api/plano/:id/reativar'] },
+  { modulo: 'Auth (Admin)',    cor: 'text-emerald-400', rotas: ['POST /api/auth/login', 'POST /api/auth/logout', 'POST /api/usuario'] },
+  { modulo: 'Clientes',        cor: 'text-rose-400',    rotas: ['GET /api/cliente', 'GET /api/cliente/:id', 'POST /api/cliente/registrar', 'PATCH /api/cliente/:id', 'DELETE /api/cliente/:id'] },
+  { modulo: 'Licenças (Admin)',cor: 'text-indigo-400',  rotas: ['GET /api/licenca/planos', 'GET /api/licenca/cliente/:id', 'POST /api/licenca', 'POST /api/licenca/:id/renovar', 'PATCH /api/licenca/:id/bloquear', 'PATCH /api/licenca/:id/reativar', 'PATCH /api/licenca/:id/resetar-usuarios', 'PATCH /api/licenca/:id/adicionar-extra', 'DELETE /api/licenca/:id'] },
+  { modulo: 'ERP — Licença',   cor: 'text-fuchsia-400', rotas: ['GET /erp/chave-publica', 'POST /erp/auto-cadastro', 'POST /erp/conectar', 'POST /erp/validar', 'POST /erp/heartbeat', 'POST /erp/desconectar'] },
+  { modulo: 'ERP — Auth',      cor: 'text-cyan-400',    rotas: ['POST /erp/auth/login', 'POST /erp/auth/primeiro-acesso'] },
+  { modulo: 'ERP — Usuário',   cor: 'text-teal-400',    rotas: ['GET /erp/usuario/dados', 'POST /erp/usuario/alterar-senha', 'POST /erp/usuario/solicitar-novo-email', 'GET /erp/usuario/confirmar-email'] },
+  { modulo: 'ERP — Cobrança',  cor: 'text-orange-400',  rotas: ['POST /erp/cobranca', 'GET /erp/plano/:licencaId'] },
+  { modulo: 'Financeiro',      cor: 'text-yellow-400',  rotas: ['POST /api/financeiro/confirmar', 'GET /api/financeiro/historico/cliente/:id', 'GET /api/financeiro/historico/licenca/:id', 'GET /api/financeiro/receita', 'POST /api/financeiro/webhook/stripe', 'POST /api/financeiro/webhook/asaas'] },
+  { modulo: 'Planos',          cor: 'text-purple-400',  rotas: ['GET /api/plano', 'POST /api/plano', 'GET /api/plano/:id', 'PUT /api/plano/:id', 'PATCH /api/plano/:id/desativar', 'PATCH /api/plano/:id/reativar'] },
 ]
 
 function MapaRotas() {
@@ -117,7 +122,8 @@ function Passo({ n, label, ativo }: { n: number; label: string; ativo: boolean }
 // Página
 // ---------------------------------------------------------------------------
 export default function DebugPage() {
-  const [usuario, setUsuario] = useState<UsuarioLogado | null>(null)
+  const [usuario,   setUsuario]   = useState<UsuarioLogado | null>(null)
+  const [erpToken,  setErpToken]  = useState('')
   const usuarioId = usuario?.id ?? ''
 
   return (
@@ -156,15 +162,19 @@ export default function DebugPage() {
         {/* Fluxo de passos */}
         <div className="flex items-center gap-4 mt-5 pt-4 border-t border-slate-700/40">
           <span className="text-[10px] text-slate-600 uppercase font-bold tracking-wider shrink-0">Fluxo:</span>
-          <Passo n={1} label="Login"    ativo={true} />
+          <Passo n={1} label="Login Admin"  ativo={true} />
           <span className="text-slate-700 text-xs">→</span>
-          <Passo n={2} label="Clientes" ativo={!!usuario} />
+          <Passo n={2} label="Clientes"    ativo={!!usuario} />
           <span className="text-slate-700 text-xs">→</span>
-          <Passo n={3} label="Licenças" ativo={!!usuario} />
+          <Passo n={3} label="Licenças"    ativo={!!usuario} />
           <span className="text-slate-700 text-xs">→</span>
-          <Passo n={4} label="Financeiro" ativo={!!usuario} />
+          <Passo n={4} label="Financeiro"  ativo={!!usuario} />
           <span className="text-slate-700 text-xs">→</span>
-          <Passo n={5} label="Planos" ativo={!!usuario} />
+          <Passo n={5} label="Planos"      ativo={!!usuario} />
+          <span className="text-slate-700 text-xs">·</span>
+          <Passo n={6} label="ERP Auth"    ativo={true} />
+          <span className="text-slate-700 text-xs">→</span>
+          <Passo n={7} label="ERP Usuário" ativo={!!erpToken} />
         </div>
       </header>
 
@@ -200,6 +210,14 @@ export default function DebugPage() {
           {usuario
             ? <TemaPlano />
             : <Bloqueado modulo="Planos" />}
+        </Tema>
+
+        <Tema titulo="06 — ERP Auth · Login e Primeiro Acesso">
+          <TemaErpAuth onToken={setErpToken} />
+        </Tema>
+
+        <Tema titulo={`07 — ERP Usuário · Perfil${erpToken ? '' : ' · faça login ERP primeiro'}`}>
+          <TemaErpUsuario token={erpToken} />
         </Tema>
 
       </div>

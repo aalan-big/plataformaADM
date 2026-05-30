@@ -519,18 +519,20 @@ function SecaoSimularERP() {
   const [loadHb, setLoadHb]                       = useState(false)
   const [resultHb, setResultHb]                   = useState<ApiResponse | null>(null)
 
+  const ERP_API = process.env.NEXT_PUBLIC_API_URL ?? 'https://api.startbig.com.br'
+
   const autoCadastro = async () => {
     setLoadAc(true); setResultAc(null)
     const payload = { tipo: acTipo, documento: acDocumento, nomeOuRazao: acNome, email: acEmail }
-    const r = await api('/api/licenca/auto-cadastro', { method: 'POST', body: JSON.stringify(payload) })
+    const r = await api(`${ERP_API}/erp/auto-cadastro`, { method: 'POST', body: JSON.stringify(payload) })
     setLoadAc(false); setResultAc(r)
     const chv = (r.payload as any)?.chaveAtivacao
-    if (chv) setChaveConectar(chv) // preenche automático
+    if (chv) setChaveConectar(chv)
   }
 
   const conectar = async () => {
     setLoadConectar(true); setResultConectar(null)
-    const r = await api('/api/licenca/conectar', { method: 'POST', body: JSON.stringify({ chave: chaveConectar }) })
+    const r = await api(`${ERP_API}/erp/conectar`, { method: 'POST', body: JSON.stringify({ chave: chaveConectar }) })
     setLoadConectar(false); setResultConectar(r)
     const licId = (r.payload as any)?.licencaId
     if (licId) setLicencaIdHb(licId)
@@ -540,13 +542,13 @@ function SecaoSimularERP() {
     setLoadValidar(true); setResultValidar(null)
     const payload: Record<string, unknown> = { chave: chaveValidar }
     if (totalUsuariosValidar.trim()) payload.totalUsuarios = parseInt(totalUsuariosValidar)
-    const r = await api('/api/licenca/validar', { method: 'POST', body: JSON.stringify(payload) })
+    const r = await api(`${ERP_API}/erp/validar`, { method: 'POST', body: JSON.stringify(payload) })
     setLoadValidar(false); setResultValidar(r)
   }
 
   const desconectar = async () => {
     setLoadDesconectar(true); setResultDesconectar(null)
-    const r = await api('/api/licenca/desconectar', { method: 'POST', body: JSON.stringify({ chave: chaveDesconectar }) })
+    const r = await api(`${ERP_API}/erp/desconectar`, { method: 'POST', body: JSON.stringify({ chave: chaveDesconectar }) })
     setLoadDesconectar(false); setResultDesconectar(r)
   }
 
@@ -554,16 +556,16 @@ function SecaoSimularERP() {
     setLoadHb(true); setResultHb(null)
     const payload: Record<string, unknown> = { licencaId: licencaIdHb }
     if (totalUsuariosHb.trim()) payload.totalUsuarios = parseInt(totalUsuariosHb)
-    const r = await api('/api/licenca/heartbeat', { method: 'POST', body: JSON.stringify(payload) })
+    const r = await api(`${ERP_API}/erp/heartbeat`, { method: 'POST', body: JSON.stringify(payload) })
     setLoadHb(false); setResultHb(r)
   }
 
   const abas: { id: Aba; label: string; metodo: string; rota: string; cor: string }[] = [
-    { id: 'auto-cadastro', label: 'Auto-Cadastro', metodo: 'POST', rota: '/api/licenca/auto-cadastro', cor: 'fuchsia'},
-    { id: 'conectar',    label: 'Conectar',    metodo: 'POST', rota: '/api/licenca/conectar',    cor: 'emerald' },
-    { id: 'validar',     label: 'Validar',     metodo: 'POST', rota: '/api/licenca/validar',     cor: 'sky'     },
-    { id: 'desconectar', label: 'Desconectar', metodo: 'POST', rota: '/api/licenca/desconectar', cor: 'orange'  },
-    { id: 'heartbeat',   label: 'Heartbeat',   metodo: 'POST', rota: '/api/licenca/heartbeat',   cor: 'violet'  },
+    { id: 'auto-cadastro', label: 'Auto-Cadastro', metodo: 'POST', rota: '/erp/auto-cadastro', cor: 'fuchsia'},
+    { id: 'conectar',    label: 'Conectar',    metodo: 'POST', rota: '/erp/conectar',    cor: 'emerald' },
+    { id: 'validar',     label: 'Validar',     metodo: 'POST', rota: '/erp/validar',     cor: 'sky'     },
+    { id: 'desconectar', label: 'Desconectar', metodo: 'POST', rota: '/erp/desconectar', cor: 'orange'  },
+    { id: 'heartbeat',   label: 'Heartbeat',   metodo: 'POST', rota: '/erp/heartbeat',   cor: 'violet'  },
   ]
 
   const corMap: Record<string, { btn: string; border: string; bg: string }> = {
@@ -606,11 +608,11 @@ function SecaoSimularERP() {
         <div className="flex items-center gap-2 mb-4">
           <RotaBadge metodo={abaAtual.metodo} rota={abaAtual.rota} />
           <span className="text-xs text-slate-500">
-            {aba === 'auto-cadastro' && '→ bate na Receita Federal, emite trial e retorna JWT'}
-            {aba === 'conectar'    && '→ valida chave, emite JWT (expira em min(7d, dias até vencimento))'}
-            {aba === 'validar'     && '→ verifica licença, renova JWT, atualiza totalUsuarios'}
-            {aba === 'desconectar' && '→ encerra sessão (sem decremento — modelo por usuários)'}
-            {aba === 'heartbeat'   && '→ buffer em memória, flush a cada 30s, atualiza totalUsuarios'}
+            {aba === 'auto-cadastro' && '→ bate na Receita Federal, cria cliente, emite trial e envia e-mail de primeiro acesso'}
+            {aba === 'conectar'    && '→ valida chave, emite JWT RS256 (expira em min(7d, dias até vencimento))'}
+            {aba === 'validar'     && '→ verifica licença, renova JWT, marca primeira ativação se AGUARDANDO'}
+            {aba === 'desconectar' && '→ encerra sessão, libera slot de usuário'}
+            {aba === 'heartbeat'   && '→ sinal de vida a cada 10 min, verifica se licença ainda está ATIVA'}
           </span>
         </div>
 
