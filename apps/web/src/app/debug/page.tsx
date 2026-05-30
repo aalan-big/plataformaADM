@@ -178,8 +178,8 @@ export default function DebugPage() {
         </div>
       </header>
 
-      {/* Mapa de rotas (colapsável) */}
-      <MapaRotas />
+      {/* Mapa de rotas — só visível após login */}
+      {usuario && <MapaRotas />}
 
       {/* Módulos */}
       <div className="flex flex-col gap-5">
