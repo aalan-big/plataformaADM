@@ -212,12 +212,16 @@ export default function DebugPage() {
             : <Bloqueado modulo="Planos" />}
         </Tema>
 
-        <Tema titulo="06 — ERP Auth · Login e Primeiro Acesso">
-          <TemaErpAuth onToken={setErpToken} />
+        <Tema titulo={`06 — ERP Auth · Login e Primeiro Acesso${usuario ? '' : ' · faça login primeiro'}`}>
+          {usuario
+            ? <TemaErpAuth onToken={setErpToken} />
+            : <Bloqueado modulo="ERP Auth" />}
         </Tema>
 
-        <Tema titulo={`07 — ERP Usuário · Perfil${erpToken ? '' : ' · faça login ERP primeiro'}`}>
-          <TemaErpUsuario token={erpToken} />
+        <Tema titulo={`07 — ERP Usuário · Perfil${usuario ? (erpToken ? '' : ' · faça login ERP primeiro') : ' · faça login primeiro'}`}>
+          {usuario
+            ? <TemaErpUsuario token={erpToken} />
+            : <Bloqueado modulo="ERP Usuário" />}
         </Tema>
 
       </div>
