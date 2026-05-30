@@ -1,13 +1,11 @@
 'use client'
 
-export const dynamic = 'force-dynamic'
-
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 
 type Status = 'carregando' | 'sucesso' | 'erro'
 
-export default function ConfirmarEmailPage() {
+function ConfirmarEmailConteudo() {
   const searchParams = useSearchParams()
   const token        = searchParams.get('token')
   const [status, setStatus] = useState<Status>('carregando')
@@ -21,26 +19,32 @@ export default function ConfirmarEmailPage() {
   }, [token])
 
   if (status === 'carregando') {
-    return (
-      <main style={{ fontFamily: 'Arial, sans-serif', textAlign: 'center', paddingTop: '80px' }}>
-        <p>Confirmando seu e-mail...</p>
-      </main>
-    )
+    return <p>Confirmando seu e-mail...</p>
   }
 
   if (status === 'sucesso') {
     return (
-      <main style={{ fontFamily: 'Arial, sans-serif', textAlign: 'center', paddingTop: '80px' }}>
+      <>
         <h2>E-mail confirmado com sucesso!</h2>
         <p>Seu novo e-mail já está ativo. Você pode fechar esta aba.</p>
-      </main>
+      </>
     )
   }
 
   return (
-    <main style={{ fontFamily: 'Arial, sans-serif', textAlign: 'center', paddingTop: '80px' }}>
+    <>
       <h2>Link inválido ou expirado</h2>
       <p>Solicite uma nova troca de e-mail pelo sistema ERP.</p>
+    </>
+  )
+}
+
+export default function ConfirmarEmailPage() {
+  return (
+    <main style={{ fontFamily: 'Arial, sans-serif', textAlign: 'center', paddingTop: '80px' }}>
+      <Suspense fallback={<p>Carregando...</p>}>
+        <ConfirmarEmailConteudo />
+      </Suspense>
     </main>
   )
 }
