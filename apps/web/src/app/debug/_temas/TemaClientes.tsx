@@ -206,6 +206,50 @@ function SecaoRemover() {
   )
 }
 
+function SecaoLimparBanco() {
+  const [confirmado, setConfirmado] = useState(false)
+  const [carregando, setCarregando] = useState(false)
+  const [res, setRes] = useState<ApiResponse | null>(null)
+
+  async function limpar() {
+    setCarregando(true)
+    setRes(await req('DELETE', '/api/debug/limpar-clientes'))
+    setCarregando(false)
+    setConfirmado(false)
+  }
+
+  return (
+    <Secao titulo="⚠ LIMPAR BANCO — Apagar todos os clientes">
+      <p className="text-[10px] text-amber-400/80 leading-relaxed">
+        Apaga <span className="font-black text-amber-300">todos</span> os registros de clientes, endereços, licenças, pagamentos e transações. Ação irreversível.
+      </p>
+
+      {!confirmado ? (
+        <button onClick={() => setConfirmado(true)}
+          className="w-full py-2 bg-amber-900/60 hover:bg-amber-800/80 border border-amber-700/50 text-amber-300 text-xs font-bold rounded-lg transition-colors">
+          Quero limpar o banco
+        </button>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-[10px] text-red-400 font-black text-center uppercase tracking-wider">Tem certeza? Isso não pode ser desfeito.</p>
+          <div className="flex gap-2">
+            <button onClick={() => setConfirmado(false)}
+              className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-bold rounded-lg transition-colors">
+              Cancelar
+            </button>
+            <button onClick={limpar} disabled={carregando}
+              className="flex-1 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-colors">
+              {carregando ? 'Limpando...' : 'CONFIRMAR E LIMPAR'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <Console response={res} />
+    </Secao>
+  )
+}
+
 export function TemaClientes({ usuarioId }: { usuarioId: string }) {
   return (
     <>
@@ -214,6 +258,7 @@ export function TemaClientes({ usuarioId }: { usuarioId: string }) {
       <SecaoBuscar />
       <SecaoEditar />
       <SecaoRemover />
+      <SecaoLimparBanco />
     </>
   )
 }
