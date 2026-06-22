@@ -245,6 +245,15 @@ export class ClienteService {
     return { msg: 'Cliente desativado e licenças suspensas com sucesso' }
   }
 
+  async limparTodosDebug() {
+    const [transacoes, pagamentos, clientes] = await prisma.$transaction([
+      prisma.transacaoHistorico.deleteMany(),
+      prisma.pagamento.deleteMany(),
+      prisma.cliente.deleteMany(),
+    ])
+    return { deletados: { transacoes: transacoes.count, pagamentos: pagamentos.count, clientes: clientes.count } }
+  }
+
   private async upsertEndereco(
     clienteId: string,
     enderecos: { id: string; tipo: string }[],

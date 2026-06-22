@@ -14,7 +14,7 @@
  * - Respostas HTTP formatadas para o cliente.
  * ============================================================================
  */
-import { Controller, Get, Post, Patch, Param, Body, Query } from '@nestjs/common'
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query } from '@nestjs/common'
 import { ClienteService } from './cliente.service'
 import { Roles } from '../../core/decorators/roles.decorator'
 
@@ -47,5 +47,10 @@ export class ClienteController {
   @Patch(':id/desativar')
   async desativar(@Param('id') id: string) {
     return this.clienteService.desativar(id)
+  }
+
+  @Delete('limpar-debug')
+  async limparDebug() {
+    return this.clienteService.limparTodosDebug()
   }
 }
