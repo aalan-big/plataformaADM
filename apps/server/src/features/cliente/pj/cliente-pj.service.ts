@@ -33,13 +33,6 @@ export async function editarClientePJ(clienteId: string, dados: EditarClientePJI
 
   if (!cliente.pj) throw new Error('Cliente não é Pessoa Jurídica.')
 
-  const usuariosAtivos = (cliente as any).usuariosAtivos ?? 0
-  if (dados.licencas !== undefined && dados.licencas < usuariosAtivos) {
-    throw new Error(
-      `Não é possível reduzir para ${dados.licencas} licença(s) — o cliente possui ${usuariosAtivos} usuário(s) ativo(s).`
-    )
-  }
-
   if (dados.cnpj) {
     const existeCnpj = await findClientePJByCnpj(dados.cnpj)
     if (existeCnpj && existeCnpj.clienteId !== clienteId) throw new Error('CNPJ já cadastrado em outro cliente.')
