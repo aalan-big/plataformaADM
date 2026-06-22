@@ -538,16 +538,20 @@ export class DispositivoService {
       // 2. Validação BrasilAPI para CNPJ
       try {
         const receitaRes = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${dados.documento}`)
-        if (!receitaRes.ok) {
-           throw new BadRequestException('Não foi possível validar o CNPJ na Receita Federal.')
+        if (receitaRes.status === 404) {
+          throw new BadRequestException('CNPJ não encontrado na Receita Federal. Verifique o número informado.')
         }
-        const receita = await receitaRes.json() as any
-        if (receita.situacao_cadastral !== 2) {
-           throw new BadRequestException(`Cadastro negado. CNPJ encontra-se: ${receita.descricao_situacao_cadastral || 'INATIVO'}`)
+        if (!receitaRes.ok) {
+          this.logger.warn(`[BrasilAPI] Status ${receitaRes.status} ao consultar CNPJ ${dados.documento} — prosseguindo sem validação online.`)
+        } else {
+          const receita = await receitaRes.json() as any
+          if (receita.situacao_cadastral !== 2) {
+            throw new BadRequestException(`Cadastro negado. CNPJ encontra-se: ${receita.descricao_situacao_cadastral || 'INATIVO'}`)
+          }
         }
       } catch (e) {
         if (e instanceof BadRequestException) throw e;
-        throw new BadRequestException('Falha ao comunicar com serviço de CNPJ da Receita Federal.')
+        this.logger.warn(`[BrasilAPI] Falha de rede ao consultar CNPJ ${dados.documento} — prosseguindo sem validação online.`)
       }
     }
 
@@ -567,10 +571,10 @@ export class DispositivoService {
     if (existeEmail) throw new BadRequestException('E-mail já cadastrado no sistema.')
 
     if (isPF) {
-      const existeCPF = await prisma.clientePF.findUnique({ where: { cpf: dados.documento } })
+      const existeCPF = await prisma.clientePF.findFirst({ where: { cpf: dados.documento } })
       if (existeCPF) throw new BadRequestException('CPF já cadastrado.')
     } else {
-      const existeCNPJ = await prisma.clientePJ.findUnique({ where: { cnpj: dados.documento } })
+      const existeCNPJ = await prisma.clientePJ.findFirst({ where: { cnpj: dados.documento } })
       if (existeCNPJ) throw new BadRequestException('CNPJ já cadastrado.')
     }
 
