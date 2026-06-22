@@ -535,24 +535,6 @@ export class DispositivoService {
     } else {
       if (!validarCnpj(dados.documento)) throw new BadRequestException('CNPJ inválido matematicamente.')
 
-      // 2. Validação BrasilAPI para CNPJ
-      try {
-        const receitaRes = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${dados.documento}`)
-        if (receitaRes.status === 404) {
-          throw new BadRequestException('CNPJ não encontrado na Receita Federal. Verifique o número informado.')
-        }
-        if (!receitaRes.ok) {
-          this.logger.warn(`[BrasilAPI] Status ${receitaRes.status} ao consultar CNPJ ${dados.documento} — prosseguindo sem validação online.`)
-        } else {
-          const receita = await receitaRes.json() as any
-          if (receita.situacao_cadastral !== 2) {
-            throw new BadRequestException(`Cadastro negado. CNPJ encontra-se: ${receita.descricao_situacao_cadastral || 'INATIVO'}`)
-          }
-        }
-      } catch (e) {
-        if (e instanceof BadRequestException) throw e;
-        this.logger.warn(`[BrasilAPI] Falha de rede ao consultar CNPJ ${dados.documento} — prosseguindo sem validação online.`)
-      }
     }
 
     const { prisma } = require('@startbig/database')
