@@ -12,7 +12,8 @@
  * - Aplicação de Interceptors e Pipes globais.
  * ============================================================================
  */
-import 'dotenv/config'
+import dotenv from 'dotenv'
+dotenv.config({ override: true })
 import 'reflect-metadata'
 import { NestFactory } from '@nestjs/core'
 import { AppModule } from './app.module'
