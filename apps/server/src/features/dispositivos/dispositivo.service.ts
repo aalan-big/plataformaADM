@@ -628,17 +628,25 @@ export class DispositivoService {
        dias: 14
     })
     
-    // Atualiza status para ATIVA, isTrial para true e registra a sessão
-    await updateLicenca(licenca.id, { 
-      status: 'ATIVA', 
-      isTrial: true, 
-      dataVencimento: vencimento,
-      dataAtivacao: agora,
-      ultimaSincronizacao: agora,
-      totalUsuarios: 1
-    })
+    // Atualiza campos extras da licença (não crítico — criarLicenca já seta os principais)
+    try {
+      await updateLicenca(licenca.id, {
+        status: 'ATIVA',
+        isTrial: true,
+        dataVencimento: vencimento,
+        dataAtivacao: agora,
+        ultimaSincronizacao: agora,
+        totalUsuarios: 1
+      })
+    } catch (err) {
+      this.logger.warn(`[auto-cadastro] falha ao atualizar licença (não crítico): ${err instanceof Error ? err.message : err}`)
+    }
 
-    await upsertLicencaSessao(licenca.id, hwidKey)
+    try {
+      await upsertLicencaSessao(licenca.id, hwidKey)
+    } catch (err) {
+      this.logger.warn(`[auto-cadastro] falha ao criar sessão inicial (não crítico): ${err instanceof Error ? err.message : err}`)
+    }
 
     // 8. Assinar Token
     const assinado = this.assinarToken({

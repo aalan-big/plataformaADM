@@ -19,12 +19,12 @@ export class ErpLicencaController {
   @Post('auto-cadastro')
   async autoCadastro(@Body() body: unknown) {
     const resultado = await this.dispositivoService.autoCadastro(body)
-    // Após cadastro envia e-mail para o cliente criar a senha de acesso
-    await this.erpAuthService.enviarEmailPrimeiroAcesso(
+    // Não-crítico: falha no e-mail/token não deve derrubar o cadastro
+    this.erpAuthService.enviarEmailPrimeiroAcesso(
       resultado.clienteId,
       (body as any).email,
       (body as any).nomeOuRazao,
-    )
+    ).catch(err => console.warn('[erp] enviarEmailPrimeiroAcesso falhou:', err?.message ?? err))
     return resultado
   }
 
