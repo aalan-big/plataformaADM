@@ -17,15 +17,8 @@ export class ErpLicencaController {
   }
 
   @Post('auto-cadastro')
-  async autoCadastro(@Body() body: unknown) {
-    const resultado = await this.dispositivoService.autoCadastro(body)
-    // Não-crítico: falha no e-mail/token não deve derrubar o cadastro
-    this.erpAuthService.enviarEmailPrimeiroAcesso(
-      resultado.clienteId,
-      (body as any).email,
-      (body as any).nomeOuRazao,
-    ).catch(err => console.warn('[erp] enviarEmailPrimeiroAcesso falhou:', err?.message ?? err))
-    return resultado
+  autoCadastro(@Body() body: unknown) {
+    return this.dispositivoService.autoCadastro(body)
   }
 
   @Post('conectar')
