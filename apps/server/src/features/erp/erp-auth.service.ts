@@ -115,8 +115,8 @@ export class ErpAuthService {
     const appUrl = process.env.APP_URL ?? 'https://admin.startbig.com.br'
 
     try {
-      await resend.emails.send({
-        from:    'noreply@startbig.com.br',
+      const { error } = await resend.emails.send({
+        from:    process.env.EMAIL_FROM ?? 'noreply@startbig.com.br',
         to:      email,
         subject: 'Bem-vindo ao StartBig — Crie sua senha de acesso',
         html:    `
@@ -128,6 +128,8 @@ export class ErpAuthService {
           <p>Se não foi você quem se cadastrou, ignore este e-mail.</p>
         `,
       })
+      if (error) console.warn('[email] primeiro-acesso Resend error:', JSON.stringify(error))
+      else console.log('[email] primeiro-acesso enviado para', email)
     } catch (err) {
       console.warn('[email] falha ao enviar primeiro-acesso:', err instanceof Error ? err.message : err)
     }

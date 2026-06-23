@@ -4,6 +4,12 @@ import { Resend } from 'resend'
 const resend = new Resend(process.env.RESEND_API_KEY)
 const FROM   = process.env.EMAIL_FROM ?? 'noreply@startbig.com.br'
 
+async function enviar(payload: Parameters<typeof resend.emails.send>[0]) {
+  const { data, error } = await resend.emails.send(payload)
+  if (error) throw new Error(`Resend: ${JSON.stringify(error)}`)
+  return data
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name)
@@ -19,7 +25,7 @@ export class EmailService {
       day: '2-digit', month: 'long', year: 'numeric',
     })
 
-    await resend.emails.send({
+    await enviar({
       from:    FROM,
       to:      dados.email,
       subject: 'Sua chave de ativação StartBig ERP',
@@ -39,7 +45,7 @@ export class EmailService {
       day: '2-digit', month: 'long', year: 'numeric',
     })
 
-    await resend.emails.send({
+    await enviar({
       from:    FROM,
       to:      dados.email,
       subject: 'Renovação confirmada — StartBig ERP',
@@ -89,7 +95,7 @@ export class EmailService {
       ? 'Aviso Importante: Sua licença vence amanhã'
       : `Sua licença vencerá em ${dados.diasRestantes} dias`
 
-    await resend.emails.send({
+    await enviar({
       from:    FROM,
       to:      dados.email,
       subject,
