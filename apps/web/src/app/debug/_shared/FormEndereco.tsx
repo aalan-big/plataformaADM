@@ -53,7 +53,8 @@ export function FormEndereco({ form, onChange, modoEdicao = false, cor = 'cyan' 
     if (e.key === 'Enter') buscarCep()
   }
 
-  const inp = 'w-full bg-slate-800 border border-slate-700 text-slate-200 placeholder-slate-600 text-xs rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-cyan-500/50'
+  const inpBase = 'bg-slate-800 border border-slate-700 text-slate-200 placeholder-slate-600 text-xs rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-cyan-500/50'
+  const inp = `w-full ${inpBase}`
 
   return (
     <div className="space-y-2">
@@ -90,15 +91,15 @@ export function FormEndereco({ form, onChange, modoEdicao = false, cor = 'cyan' 
       <input value={form.logradouro} onChange={e => set('logradouro', e.target.value)} placeholder="Logradouro" className={inp} />
 
       <div className="flex gap-2">
-        <input value={form.numero} onChange={e => set('numero', e.target.value)} placeholder="Número" className={`${inp} w-24`} />
-        <input value={form.complemento} onChange={e => set('complemento', e.target.value)} placeholder="Complemento" className={`${inp} flex-1`} />
+        <input value={form.numero} onChange={e => set('numero', e.target.value)} placeholder="Número" className={`${inpBase} w-24`} />
+        <input value={form.complemento} onChange={e => set('complemento', e.target.value)} placeholder="Complemento" className={`${inpBase} flex-1`} />
       </div>
 
       <input value={form.bairro} onChange={e => set('bairro', e.target.value)} placeholder="Bairro" className={inp} />
 
       <div className="flex gap-2">
-        <input value={form.cidade} onChange={e => set('cidade', e.target.value)} placeholder="Cidade" className={`${inp} flex-1`} />
-        <select value={form.estado} onChange={e => set('estado', e.target.value)} className={`${inp} w-20`}>
+        <input value={form.cidade} onChange={e => set('cidade', e.target.value)} placeholder="Cidade" className={`${inpBase} flex-1`} />
+        <select value={form.estado} onChange={e => set('estado', e.target.value)} className={`${inpBase} w-20`}>
           <option value="">UF</option>
           {UFS.map(u => <option key={u} value={u}>{u}</option>)}
         </select>
