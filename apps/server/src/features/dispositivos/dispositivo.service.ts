@@ -397,31 +397,7 @@ export class DispositivoService {
       throw new BadRequestException('Licença vencida.')
     }
 
-    const limite    = (licenca.plano?.limiteUsuario ?? 1) + (licenca.usuariosExtras ?? 0)
-    const countSessoes = await countSessoesAtivas(licenca.id)
-    
-    // Se HWID fornecido e já estava conectado -> reconexão (não consome novo slot)
-    const hwidKey   = dados.hwid ?? `anon-${randomUUID()}`
-    
-    // Verifica se este dispositivo específico já tem sessão
-    let reconexao = false
-    try {
-        const { prisma } = require('@startbig/database')
-        const sessao = await prisma.licencaSessao.findUnique({
-            where: { licencaId_hwid: { licencaId: licenca.id, hwid: hwidKey } }
-        })
-        reconexao = !!sessao
-    } catch(e) {}
-
-    if (!reconexao && countSessoes >= limite) {
-      throw new BadRequestException(
-        `Limite de ${limite} dispositivo(s) simultâneo(s) atingido. Encerre outra sessão e tente novamente.`
-      )
-    }
-
-    await upsertLicencaSessao(licenca.id, hwidKey)
-    const novoTotalSessoes = reconexao ? countSessoes : countSessoes + 1
-    await updateLicenca(licenca.id, { totalUsuarios: novoTotalSessoes, ultimoHeartbeat: new Date() })
+    const limite = (licenca.plano?.limiteUsuario ?? 1) + (licenca.usuariosExtras ?? 0)
 
     const assinado = this.assinarToken({
       licencaId:      licenca.id,
@@ -431,10 +407,45 @@ export class DispositivoService {
       dataVencimento: licenca.dataVencimento,
     })
 
+    // Sem HWID: só valida a licença e devolve o JWT com o limite.
+    // O ERP local gerencia os terminais internamente usando esse limite.
+    if (!dados.hwid) {
+      await updateLicenca(licenca.id, { ultimoHeartbeat: new Date() })
+      return {
+        msg:            'Conexão autorizada.',
+        licencaId:      licenca.id,
+        limite,
+        dataVencimento: licenca.dataVencimento,
+        ...assinado,
+      }
+    }
+
+    // Com HWID: controla sessões por dispositivo (uso avançado / múltiplos backends)
+    const countSessoes = await countSessoesAtivas(licenca.id)
+
+    let reconexao = false
+    try {
+      const { prisma } = require('@startbig/database')
+      const sessao = await prisma.licencaSessao.findUnique({
+        where: { licencaId_hwid: { licencaId: licenca.id, hwid: dados.hwid } }
+      })
+      reconexao = !!sessao
+    } catch(e) {}
+
+    if (!reconexao && countSessoes >= limite) {
+      throw new BadRequestException(
+        `Limite de ${limite} dispositivo(s) simultâneo(s) atingido. Encerre outra sessão e tente novamente.`
+      )
+    }
+
+    await upsertLicencaSessao(licenca.id, dados.hwid)
+    const novoTotalSessoes = reconexao ? countSessoes : countSessoes + 1
+    await updateLicenca(licenca.id, { totalUsuarios: novoTotalSessoes, ultimoHeartbeat: new Date() })
+
     return {
       msg:            reconexao ? 'Reconexão autorizada.' : 'Conexão autorizada.',
       licencaId:      licenca.id,
-      sessionKey:     hwidKey,   // ERP usa como hwid em /desconectar e /heartbeat
+      sessionKey:     dados.hwid,
       limite,
       dataVencimento: licenca.dataVencimento,
       ...assinado,
