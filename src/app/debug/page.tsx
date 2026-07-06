@@ -1,6 +1,5 @@
 import { Tema } from './_shared/Tema'
 import { TemaLogin } from './_temas/TemaLogin'
-import { TemaErpAuthLogin } from './_temas/TemaErpAuthLogin'
 
 
 export default function DebugPage() {
@@ -16,9 +15,6 @@ export default function DebugPage() {
       <div className="flex flex-col gap-6">
         <Tema titulo="Login">
           <TemaLogin />
-        </Tema>
-        <Tema titulo="ERP - Login (cliente existente / reinstalação)">
-          <TemaErpAuthLogin />
         </Tema>
       </div>
     </div>
