@@ -384,7 +384,7 @@ export class DispositivoService {
 
   // ── Endpoints do ERP (públicos) ───────────────────────────────────────────
 
-  async conectar(body: unknown) {
+  async conectar(body: unknown, opts?: { autenticado?: boolean }) {
     const dados   = this.parseBody(conectarSchema, body)
     const licenca = await findLicencaByChave(dados.chave)
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
@@ -421,7 +421,7 @@ export class DispositivoService {
     }
 
     // Com HWID: controla sessões por dispositivo (uso avançado / múltiplos backends)
-    const countSessoes = await countSessoesAtivas(licenca.id)
+    let countSessoes = await countSessoesAtivas(licenca.id)
 
     let reconexao = false
     try {
@@ -433,9 +433,38 @@ export class DispositivoService {
     } catch(e) {}
 
     if (!reconexao && countSessoes >= limite) {
-      throw new BadRequestException(
-        `Limite de ${limite} dispositivo(s) simultâneo(s) atingido. Encerre outra sessão e tente novamente.`
-      )
+      // Login autenticado (email+senha) já provou a identidade do dono da licença —
+      // nesse caso é seguro encerrar sessões antigas para liberar vaga num dispositivo novo
+      // (reinstalação/troca de máquina). Via chave de ativação pura isso continua bloqueado,
+      // pois a chave sozinha não prova quem está conectando.
+      if (opts?.autenticado) {
+        await deletarTodasSessoesDaLicenca(licenca.id)
+        await registrarEventoLicenca(licenca.id, {
+          tipo:          'TROCA_DISPOSITIVO',
+          chaveAtivacao: licenca.chaveAtivacao,
+          observacao:    `Sessão(ões) anterior(es) encerrada(s) automaticamente — login autenticado em novo dispositivo (hwid: ${dados.hwid}).`,
+        })
+        countSessoes = 0
+
+        try {
+          const nomeCliente = licenca.cliente.pf
+            ? (licenca.cliente.pf.nomeCompleto ?? licenca.cliente.email)
+            : (licenca.cliente.pj?.razaoSocial  ?? licenca.cliente.email)
+
+          await this.emailService.enviarAlertaTrocaDispositivo({
+            email:       licenca.cliente.email,
+            nomeCliente,
+            hwidNovo:    dados.hwid,
+            dataHora:    new Date(),
+          })
+        } catch (err) {
+          console.warn('[email] falha ao enviar alerta de troca de dispositivo:', err instanceof Error ? err.message : err)
+        }
+      } else {
+        throw new BadRequestException(
+          `Limite de ${limite} dispositivo(s) simultâneo(s) atingido. Encerre outra sessão e tente novamente.`
+        )
+      }
     }
 
     await upsertLicencaSessao(licenca.id, dados.hwid)

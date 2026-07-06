@@ -48,6 +48,7 @@ export class ErpAuthService {
           where:   { status: 'ATIVA' },
           orderBy: { criadoEm: 'desc' },
           take:    1,
+          include: { plano: true },
         },
       },
     })
@@ -66,11 +67,21 @@ export class ErpAuthService {
     if (!licenca)
       throw new BadRequestException('Nenhuma licença ativa encontrada para este e-mail.')
 
-    // Reutiliza o fluxo de conectar passando a chave da licença
-    return this.dispositivoService.conectar({
-      chave: licenca.chaveAtivacao,
-      hwid:  dados.hwid ?? `login-${randomUUID()}`,
-    })
+    // Reutiliza o fluxo de conectar passando a chave da licença.
+    // autenticado: true → identidade já provada por email+senha, então em caso de
+    // limite de dispositivos atingido a sessão antiga é encerrada em vez de bloquear.
+    const resultado = await this.dispositivoService.conectar(
+      {
+        chave: licenca.chaveAtivacao,
+        hwid:  dados.hwid ?? `login-${randomUUID()}`,
+      },
+      { autenticado: true },
+    )
+
+    // O ERP precisa guardar a chaveAtivacao localmente para os próximos
+    // /licenca/validar e /licenca/desconectar — conectar() não a devolve
+    // porque normalmente quem chama já a tem.
+    return { ...resultado, chaveAtivacao: licenca.chaveAtivacao }
   }
 
   async primeiroAcesso(body: unknown) {

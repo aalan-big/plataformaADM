@@ -105,6 +105,55 @@ export class EmailService {
     this.logger.log(`Aviso de vencimento (${dados.diasRestantes} dias) enviado para ${dados.email}`)
   }
 
+  async enviarAlertaTrocaDispositivo(dados: {
+    email:       string
+    nomeCliente: string
+    hwidNovo:    string
+    dataHora:    Date
+  }) {
+    const dataHora = dados.dataHora.toLocaleString('pt-BR', {
+      dateStyle: 'short', timeStyle: 'short',
+    })
+
+    await enviar({
+      from:    FROM,
+      to:      dados.email,
+      subject: 'Alerta de segurança — novo dispositivo conectado à sua conta StartBig',
+      html:    `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0f172a;font-family:Arial,sans-serif;">
+  <div style="max-width:540px;margin:40px auto;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;">
+    <div style="background:#1e3a5f;padding:28px 36px;text-align:center;">
+      <p style="margin:0;color:#fff;font-size:20px;font-weight:700;letter-spacing:1px;">StartBig ERP</p>
+      <p style="margin:4px 0 0;color:#94a3b8;font-size:12px;">Alerta de Segurança</p>
+    </div>
+    <div style="padding:32px 36px;">
+      <p style="color:#e2e8f0;font-size:15px;margin:0 0 6px;">Olá, <strong>${dados.nomeCliente}</strong></p>
+      <p style="color:#94a3b8;font-size:13px;margin:0 0 28px;line-height:1.7;">
+        Detectamos um login com e-mail e senha em um <strong>novo dispositivo</strong>. Como o limite de dispositivos simultâneos da sua licença já estava ocupado, a sessão anterior foi encerrada automaticamente para liberar acesso a este novo dispositivo.
+      </p>
+      <div style="background:#0f172a;border:1px solid #f59e0b;border-radius:10px;padding:22px;text-align:center;margin-bottom:24px;">
+        <p style="margin:0 0 10px;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:2px;">Novo dispositivo</p>
+        <p style="margin:0;color:#e2e8f0;font-size:14px;font-family:monospace;">${dados.hwidNovo}</p>
+        <p style="margin:10px 0 0;color:#94a3b8;font-size:12px;">${dataHora}</p>
+      </div>
+      <p style="color:#94a3b8;font-size:13px;margin:0 0 20px;line-height:1.7;">
+        Se foi você quem reinstalou o sistema ou trocou de computador, pode ignorar este aviso. Se não reconhece esse acesso, troque sua senha e entre em contato com o suporte imediatamente.
+      </p>
+      <p style="color:#475569;font-size:12px;line-height:1.6;margin:0;border-top:1px solid #334155;padding-top:20px;">
+        Este é um e-mail automático de segurança — não é necessário responder.
+      </p>
+    </div>
+  </div>
+</body>
+</html>`,
+    })
+
+    this.logger.log(`Alerta de troca de dispositivo enviado para ${dados.email}`)
+  }
+
   private templateVencimento(d: {
     nomeCliente:   string
     diasRestantes: number
