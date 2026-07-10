@@ -54,8 +54,8 @@ export class ClienteController {
     return this.clienteService.reenviarPrimeiroAcesso(id)
   }
 
-  @Delete('limpar-debug')
-  async limparDebug() {
-    return this.clienteService.limparTodosDebug()
+  @Delete('remover-debug')
+  async removerDebug(@Body() body: { ids?: string[] }) {
+    return this.clienteService.removerClientesDebug(body?.ids ?? [])
   }
 }

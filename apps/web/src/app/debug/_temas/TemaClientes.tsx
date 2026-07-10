@@ -206,43 +206,122 @@ function SecaoRemover() {
   )
 }
 
-function SecaoLimparBanco() {
-  const [confirmado, setConfirmado] = useState(false)
-  const [carregando, setCarregando] = useState(false)
-  const [res, setRes] = useState<ApiResponse | null>(null)
+interface ClienteItem {
+  id:    string
+  email: string
+  pf?:   { nomeCompleto?: string } | null
+  pj?:   { razaoSocial?: string }  | null
+}
 
-  async function limpar() {
-    setCarregando(true)
-    setRes(await req('DELETE', '/api/debug/limpar-clientes'))
-    setCarregando(false)
+function nomeDoCliente(c: ClienteItem) {
+  return c.pf?.nomeCompleto ?? c.pj?.razaoSocial ?? c.email
+}
+
+function SecaoRemoverClientes() {
+  const [busca, setBusca]               = useState('')
+  const [clientes, setClientes]         = useState<ClienteItem[]>([])
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set())
+  const [buscando, setBuscando]         = useState(false)
+  const [confirmado, setConfirmado]     = useState(false)
+  const [removendo, setRemovendo]       = useState(false)
+  const [res, setRes]                   = useState<ApiResponse | null>(null)
+
+  async function buscar() {
+    setBuscando(true)
     setConfirmado(false)
+    const r = await req('GET', `/api/cliente${busca ? `?q=${encodeURIComponent(busca)}` : ''}`)
+    setBuscando(false)
+    if (r.ok && r.data && typeof r.data === 'object' && 'data' in r.data) {
+      setClientes((r.data as { data: ClienteItem[] }).data)
+      setSelecionados(new Set())
+    } else {
+      setRes(r)
+    }
+  }
+
+  function alternar(id: string) {
+    setSelecionados(prev => {
+      const novo = new Set(prev)
+      if (novo.has(id)) novo.delete(id)
+      else novo.add(id)
+      return novo
+    })
+  }
+
+  function alternarTodos() {
+    setSelecionados(prev => prev.size === clientes.length ? new Set() : new Set(clientes.map(c => c.id)))
+  }
+
+  async function remover() {
+    setRemovendo(true)
+    const r = await req('DELETE', '/api/debug/remover-clientes', { ids: Array.from(selecionados) })
+    setRes(r)
+    setRemovendo(false)
+    setConfirmado(false)
+    if (r.ok) {
+      setClientes(prev => prev.filter(c => !selecionados.has(c.id)))
+      setSelecionados(new Set())
+    }
   }
 
   return (
-    <Secao titulo="⚠ LIMPAR BANCO — Apagar todos os clientes">
+    <Secao titulo="⚠ Remover clientes selecionados">
       <p className="text-[10px] text-amber-400/80 leading-relaxed">
-        Apaga <span className="font-black text-amber-300">todos</span> os registros de clientes, endereços, licenças, pagamentos e transações. Ação irreversível.
+        Busque pelo nome, e-mail ou CPF/CNPJ, selecione quem quer apagar e confirme. Remove o cliente e todos os registros ligados a ele (endereços, licenças, pagamentos, transações). Ação irreversível.
       </p>
 
-      {!confirmado ? (
-        <button onClick={() => setConfirmado(true)}
-          className="w-full py-2 bg-amber-900/60 hover:bg-amber-800/80 border border-amber-700/50 text-amber-300 text-xs font-bold rounded-lg transition-colors">
-          Quero limpar o banco
+      <div className="flex gap-2">
+        {inp('Buscar por nome, e-mail, CPF/CNPJ...', busca, e => setBusca(e.target.value))}
+        <button onClick={buscar} disabled={buscando}
+          className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-slate-300 text-xs rounded-lg transition-colors whitespace-nowrap">
+          {buscando ? 'Buscando...' : 'Buscar'}
         </button>
-      ) : (
+      </div>
+
+      {clientes.length > 0 && (
         <div className="space-y-2">
-          <p className="text-[10px] text-red-400 font-black text-center uppercase tracking-wider">Tem certeza? Isso não pode ser desfeito.</p>
-          <div className="flex gap-2">
-            <button onClick={() => setConfirmado(false)}
-              className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-bold rounded-lg transition-colors">
-              Cancelar
+          <div className="flex items-center justify-between">
+            <button onClick={alternarTodos} className="text-[10px] text-slate-400 hover:text-slate-200 underline">
+              {selecionados.size === clientes.length ? 'Desmarcar todos' : 'Selecionar todos'}
             </button>
-            <button onClick={limpar} disabled={carregando}
-              className="flex-1 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-colors">
-              {carregando ? 'Limpando...' : 'CONFIRMAR E LIMPAR'}
-            </button>
+            <span className="text-[10px] text-slate-500">{selecionados.size} de {clientes.length} selecionado(s)</span>
+          </div>
+
+          <div className="max-h-56 overflow-auto rounded-lg border border-slate-800 divide-y divide-slate-800">
+            {clientes.map(c => (
+              <label key={c.id} className="flex items-center gap-2 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800/60 cursor-pointer">
+                <input type="checkbox" checked={selecionados.has(c.id)} onChange={() => alternar(c.id)} className="accent-red-600" />
+                <span className="flex-1 truncate">
+                  <span className="font-bold">{nomeDoCliente(c)}</span>
+                  <span className="text-slate-500"> — {c.email}</span>
+                </span>
+              </label>
+            ))}
           </div>
         </div>
+      )}
+
+      {selecionados.size > 0 && (
+        !confirmado ? (
+          <button onClick={() => setConfirmado(true)}
+            className="w-full py-2 bg-amber-900/60 hover:bg-amber-800/80 border border-amber-700/50 text-amber-300 text-xs font-bold rounded-lg transition-colors">
+            Apagar {selecionados.size} cliente(s) selecionado(s)
+          </button>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-[10px] text-red-400 font-black text-center uppercase tracking-wider">Tem certeza? Isso não pode ser desfeito.</p>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmado(false)}
+                className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-bold rounded-lg transition-colors">
+                Cancelar
+              </button>
+              <button onClick={remover} disabled={removendo}
+                className="flex-1 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-colors">
+                {removendo ? 'Removendo...' : 'CONFIRMAR E REMOVER'}
+              </button>
+            </div>
+          </div>
+        )
       )}
 
       <Console response={res} />
@@ -258,7 +337,7 @@ export function TemaClientes({ usuarioId }: { usuarioId: string }) {
       <SecaoBuscar />
       <SecaoEditar />
       <SecaoRemover />
-      <SecaoLimparBanco />
+      <SecaoRemoverClientes />
     </>
   )
 }

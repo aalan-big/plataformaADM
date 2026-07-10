@@ -271,11 +271,13 @@ export class ClienteService {
     return { msg: 'Cliente desativado e licenças suspensas com sucesso' }
   }
 
-  async limparTodosDebug() {
+  async removerClientesDebug(ids: string[]) {
+    if (!ids?.length) throw new BadRequestException('Nenhum cliente selecionado.')
+
     const [transacoes, pagamentos, clientes] = await prisma.$transaction([
-      prisma.transacaoHistorico.deleteMany(),
-      prisma.pagamento.deleteMany(),
-      prisma.cliente.deleteMany(),
+      prisma.transacaoHistorico.deleteMany({ where: { clienteId: { in: ids } } }),
+      prisma.pagamento.deleteMany({ where: { clienteId: { in: ids } } }),
+      prisma.cliente.deleteMany({ where: { id: { in: ids } } }),
     ])
     return { deletados: { transacoes: transacoes.count, pagamentos: pagamentos.count, clientes: clientes.count } }
   }
