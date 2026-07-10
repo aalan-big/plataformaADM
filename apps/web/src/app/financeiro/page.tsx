@@ -389,6 +389,7 @@ export default function FinanceiroPage() {
             <select value={gateway} onChange={e => setGateway(e.target.value)}
               className="bg-slate-800 border border-slate-700 text-slate-300 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500/40">
               <option value="">Todos os gateways</option>
+              <option value="STRIPE">Stripe</option>
               <option value="MANUAL">Manual</option>
               <option value="ASAAS">Asaas</option>
             </select>
@@ -438,7 +439,9 @@ export default function FinanceiroPage() {
                     </td>
                     <td className="px-5 py-4">
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                        p.gateway === 'ASAAS'
+                        p.gateway === 'STRIPE'
+                          ? 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20'
+                          : p.gateway === 'ASAAS'
                           ? 'text-blue-400 bg-blue-500/10 border-blue-500/20'
                           : 'text-slate-400 bg-slate-700/30 border-slate-600/30'
                       }`}>

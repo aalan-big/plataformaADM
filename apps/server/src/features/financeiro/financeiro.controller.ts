@@ -29,12 +29,12 @@ export class FinanceiroController {
 
   @Get('resumo')
   async resumo() {
-    return this.financeiroService.resumo()
+    return { data: await this.financeiroService.resumo() }
   }
 
   @Get('inadimplentes')
   async inadimplentes(@Query('dias') dias?: string) {
-    return this.financeiroService.inadimplentes(dias ? Number(dias) : undefined)
+    return { data: await this.financeiroService.inadimplentes(dias ? Number(dias) : undefined) }
   }
 
   @Get('pagamentos')
@@ -44,7 +44,7 @@ export class FinanceiroController {
     @Query('gateway') gateway?: string,
     @Query('q')       q?: string,
   ) {
-    return this.financeiroService.pagamentos({ ano, mes, gateway, q })
+    return { data: await this.financeiroService.pagamentos({ ano, mes, gateway, q }) }
   }
 
   // ── Receita ───────────────────────────────────────────────────────────────
