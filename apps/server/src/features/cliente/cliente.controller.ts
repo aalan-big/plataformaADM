@@ -49,6 +49,11 @@ export class ClienteController {
     return this.clienteService.desativar(id)
   }
 
+  @Post(':id/reenviar-primeiro-acesso')
+  async reenviarPrimeiroAcesso(@Param('id') id: string) {
+    return this.clienteService.reenviarPrimeiroAcesso(id)
+  }
+
   @Delete('limpar-debug')
   async limparDebug() {
     return this.clienteService.limparTodosDebug()

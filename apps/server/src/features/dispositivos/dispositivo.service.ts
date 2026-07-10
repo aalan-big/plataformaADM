@@ -51,6 +51,7 @@ import {
   validarCnpj
 } from '@startbig/schemas'
 import { EmailService } from '../../core/email/email.service'
+import { dominioDeEmailExiste } from '../../core/validators/email-dominio.validator'
 import { z } from 'zod'
 
 export const autoCadastroSchema = z.object({
@@ -577,6 +578,11 @@ export class DispositivoService {
 
     }
 
+    // 2. Validação do domínio do e-mail (rejeita domínio inexistente/digitado
+    // errado antes de criar o cliente e depender de e-mails que vão falhar)
+    if (!(await dominioDeEmailExiste(dados.email)))
+      throw new BadRequestException('O domínio do e-mail informado não existe ou não aceita e-mails. Verifique se digitou corretamente.')
+
     const { prisma } = require('@startbig/database')
 
     // 3. Pegar um usuário ADMIN padrão para ser o "dono" do cliente
@@ -708,6 +714,18 @@ export class DispositivoService {
       })
     } catch (err) {
       this.logger.warn(`[email] Falha ao enviar boas-vindas para ${dados.email}: ${err instanceof Error ? err.message : err}`)
+    }
+
+    // 10. Enviar e-mail de "criar senha de acesso" (necessário para o
+    // cliente poder usar /erp/auth/login numa reinstalação futura)
+    try {
+      await this.emailService.enviarPrimeiroAcesso({
+        clienteId,
+        email:       dados.email,
+        nomeCliente: dados.nomeOuRazao,
+      })
+    } catch (err) {
+      this.logger.warn(`[email] Falha ao enviar primeiro-acesso para ${dados.email}: ${err instanceof Error ? err.message : err}`)
     }
 
     return {

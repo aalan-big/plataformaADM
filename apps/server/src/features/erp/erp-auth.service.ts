@@ -2,10 +2,7 @@ import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/
 import { randomUUID } from 'crypto'
 import { ZodError, z } from 'zod'
 import bcrypt from 'bcryptjs'
-import { Resend } from 'resend'
 import { DispositivoService } from '../dispositivos/dispositivo.service'
-
-const resend = new Resend(process.env.RESEND_API_KEY)
 
 const loginSchema = z.object({
   email: z.string().email('E-mail inválido.'),
@@ -109,40 +106,5 @@ export class ErpAuthService {
     })
 
     return { mensagem: 'Senha criada com sucesso. Você já pode fazer login no sistema.' }
-  }
-
-  async enviarEmailPrimeiroAcesso(clienteId: string, email: string, nome: string) {
-    const token = randomUUID()
-    const expira = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 dias
-
-    await this.prisma.cliente.update({
-      where: { id: clienteId },
-      data:  {
-        tokenEmail:         token,
-        tokenEmailExpiraEm: expira,
-      },
-    })
-
-    const appUrl = process.env.APP_URL ?? 'https://admin.startbig.com.br'
-
-    try {
-      const { error } = await resend.emails.send({
-        from:    process.env.EMAIL_FROM ?? 'noreply@startbig.com.br',
-        to:      email,
-        subject: 'Bem-vindo ao StartBig — Crie sua senha de acesso',
-        html:    `
-          <p>Olá, <strong>${nome}</strong>!</p>
-          <p>Sua empresa foi cadastrada com sucesso no StartBig.</p>
-          <p>Clique no link abaixo para criar sua senha de acesso ao portal:</p>
-          <p><a href="${appUrl}/primeiro-acesso?token=${token}">Criar minha senha</a></p>
-          <p>Este link expira em 7 dias.</p>
-          <p>Se não foi você quem se cadastrou, ignore este e-mail.</p>
-        `,
-      })
-      if (error) console.warn('[email] primeiro-acesso Resend error:', JSON.stringify(error))
-      else console.log('[email] primeiro-acesso enviado para', email)
-    } catch (err) {
-      console.warn('[email] falha ao enviar primeiro-acesso:', err instanceof Error ? err.message : err)
-    }
   }
 }

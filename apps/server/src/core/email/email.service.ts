@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common'
+import { randomUUID } from 'crypto'
 import { Resend } from 'resend'
+import { prisma } from '@startbig/database'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 const FROM   = process.env.EMAIL_FROM ?? 'noreply@startbig.com.br'
@@ -33,6 +35,44 @@ export class EmailService {
     })
 
     this.logger.log(`Chave de ativação enviada para ${dados.email}`)
+  }
+
+  /**
+   * Gera o token de "criar senha", persiste no cliente (válido por 7 dias)
+   * e envia o e-mail com o link. Usado tanto no cadastro (auto-cadastro do
+   * ERP e cadastro manual pelo admin) quanto num reenvio manual, caso o
+   * cliente perca ou deixe expirar o link original.
+   */
+  async enviarPrimeiroAcesso(dados: {
+    clienteId:   string
+    email:       string
+    nomeCliente: string
+  }) {
+    const token  = randomUUID()
+    const expira = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 dias
+
+    await prisma.cliente.update({
+      where: { id: dados.clienteId },
+      data:  { tokenEmail: token, tokenEmailExpiraEm: expira },
+    })
+
+    const appUrl = process.env.APP_URL ?? 'https://admin.startbig.com.br'
+
+    await enviar({
+      from:    FROM,
+      to:      dados.email,
+      subject: 'Bem-vindo ao StartBig — Crie sua senha de acesso',
+      html:    `
+        <p>Olá, <strong>${dados.nomeCliente}</strong>!</p>
+        <p>Sua empresa foi cadastrada com sucesso no StartBig.</p>
+        <p>Clique no link abaixo para criar sua senha de acesso ao portal:</p>
+        <p><a href="${appUrl}/primeiro-acesso?token=${token}">Criar minha senha</a></p>
+        <p>Este link expira em 7 dias.</p>
+        <p>Se não foi você quem se cadastrou, ignore este e-mail.</p>
+      `,
+    })
+
+    this.logger.log(`E-mail de primeiro acesso enviado para ${dados.email}`)
   }
 
   async enviarRenovacao(dados: {

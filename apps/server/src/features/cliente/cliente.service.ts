@@ -38,6 +38,7 @@ import {
 import { editarClientePF } from './pf/cliente-pf.service'
 import { editarClientePJ } from './pj/cliente-pj.service'
 import { EmailService } from '../../core/email/email.service'
+import { dominioDeEmailExiste } from '../../core/validators/email-dominio.validator'
 
 @Injectable()
 export class ClienteService {
@@ -97,6 +98,9 @@ export class ClienteService {
 
     const existeEmail = await findClienteByEmail(dadosValidados.email)
     if (existeEmail) throw new BadRequestException('E-mail já cadastrado em outro cliente.')
+
+    if (!(await dominioDeEmailExiste(dadosValidados.email)))
+      throw new BadRequestException('O domínio do e-mail informado não existe ou não aceita e-mails. Verifique se digitou corretamente.')
 
     const plano = await prisma.plano.findFirst({ where: { status: 'ATIVO' }, orderBy: { precoMensal: 'asc' } })
     if (!plano) throw new BadRequestException('Nenhum plano ativo cadastrado. Execute o seed do banco antes de registrar clientes.')
@@ -186,6 +190,12 @@ export class ClienteService {
       nomeDispositivo: 'Aguardando ativação',
     }).catch(err => console.error('[email] Falha ao enviar boas-vindas:', err))
 
+    this.emailService.enviarPrimeiroAcesso({
+      clienteId: cliente.id,
+      email:     dadosValidados.email,
+      nomeCliente,
+    }).catch(err => console.error('[email] Falha ao enviar primeiro-acesso:', err))
+
     return {
       msg: `Cliente ${isPF ? 'PF' : 'PJ'} registrado com sucesso`,
       data: { ...cliente, enderecos: enderecoSalvo ? [enderecoSalvo] : [], licencaTrial },
@@ -225,6 +235,22 @@ export class ClienteService {
       if (e instanceof NotFoundException || e instanceof BadRequestException) throw e
       throw new BadRequestException(e instanceof Error ? e.message : 'Erro interno')
     }
+  }
+
+  async reenviarPrimeiroAcesso(id: string) {
+    const cliente = await findClienteById(id)
+    if (!cliente) throw new NotFoundException('Cliente não encontrado.')
+    if (cliente.senhaHash) throw new BadRequestException('Cliente já configurou a senha de acesso.')
+
+    const nomeCliente = cliente.pf?.nomeCompleto ?? cliente.pj?.razaoSocial ?? cliente.email
+
+    await this.emailService.enviarPrimeiroAcesso({
+      clienteId: cliente.id,
+      email:     cliente.email,
+      nomeCliente,
+    })
+
+    return { msg: 'E-mail de criação de senha reenviado com sucesso.' }
   }
 
   async desativar(id: string) {
