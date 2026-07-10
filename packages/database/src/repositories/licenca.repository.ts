@@ -3,7 +3,7 @@ import { prisma } from '../client'
 
 const includeCompleto = {
   cliente: { include: { pf: true, pj: true } },
-  plano:   { select: { nome: true, precoMensal: true, precoTrimestral: true, precoAnual: true, limiteUsuario: true, descontoTrimestral: true, descontoAnual: true } },
+  plano:   { select: { nome: true, precoMensal: true, precoTrimestral: true, precoAnual: true, limiteUsuario: true, descontoTrimestral: true, descontoAnual: true, stripePriceIdMensal: true, stripePriceIdTrimestral: true, stripePriceIdAnual: true } },
 }
 
 export async function findLicencaById(id: string) {

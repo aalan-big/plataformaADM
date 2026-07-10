@@ -59,29 +59,27 @@ export class StripeService {
     meses:         number
     licencaId:     string
     email:         string
-    totalCentavos: number   // já com descontos aplicados, em centavos
+    stripePriceId: string   // Price recorrente pré-criado no catálogo do Stripe
   }): Promise<CheckoutResult> {
     const appUrl = process.env.APP_URL ?? 'http://localhost:3000'
     const label  = dados.meses === 1 ? '1 mês' : `${dados.meses} meses`
 
     const session = await this.stripe.checkout.sessions.create({
       payment_method_types: ['card'],
-      line_items: [{
-        price_data: {
-          currency:     'brl',
-          product_data: { name: `Licença StartBig — ${label}` },
-          unit_amount:  dados.totalCentavos,
-        },
-        quantity: 1,
-      }],
-      mode:           'payment',
+      line_items: [{ price: dados.stripePriceId, quantity: 1 }],
+      mode:           'subscription',
       customer_email: dados.email,
       success_url:    `${appUrl}/pagamento/sucesso?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url:     `${appUrl}/pagamento/cancelado`,
       metadata:       { licencaId: dados.licencaId, meses: String(dados.meses) },
+      // A metadata precisa ir na ASSINATURA também: as renovações automáticas
+      // (invoice.payment_succeeded) só enxergam a subscription, não a session.
+      subscription_data: {
+        metadata: { licencaId: dados.licencaId, meses: String(dados.meses) },
+      },
     })
 
-    this.logger.log(`Checkout Session criada: ${session.id} → licença ${dados.licencaId} (${label})`)
+    this.logger.log(`Checkout Session (assinatura) criada: ${session.id} → licença ${dados.licencaId} (${label}, price ${dados.stripePriceId})`)
     return { url: session.url!, sessionId: session.id }
   }
 

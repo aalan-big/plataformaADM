@@ -140,24 +140,22 @@ export class FinanceiroService {
     if (!licenca.plano) throw new NotFoundException('Plano não encontrado.')
 
     const plano = licenca.plano as any
-    const preco   = Number(plano.precoMensal)
-    const descTri = plano.descontoTrimestral ? Number(plano.descontoTrimestral) / 100 : 0
-    const descAnu = plano.descontoAnual      ? Number(plano.descontoAnual)      / 100 : 0
 
-    let totalBRL: number
-    if (dados.meses === 3) {
-      totalBRL = plano.precoTrimestral ? Number(plano.precoTrimestral) : preco * 3 * (1 - descTri)
-    } else if (dados.meses === 12) {
-      totalBRL = plano.precoAnual ? Number(plano.precoAnual) : preco * 12 * (1 - descAnu)
-    } else {
-      totalBRL = preco * dados.meses
-    }
+    // Assinatura recorrente: cada período usa um Price pré-criado no catálogo do Stripe.
+    let stripePriceId: string | null
+    if (dados.meses === 1)       stripePriceId = plano.stripePriceIdMensal
+    else if (dados.meses === 3)  stripePriceId = plano.stripePriceIdTrimestral
+    else if (dados.meses === 12) stripePriceId = plano.stripePriceIdAnual
+    else throw new BadRequestException('Período inválido — use 1 (mensal), 3 (trimestral) ou 12 (anual).')
+
+    if (!stripePriceId)
+      throw new BadRequestException(`O plano "${plano.nome}" não tem Stripe Price ID configurado para ${dados.meses} mês(es). Cadastre o price_... no plano.`)
 
     const result = await this.stripeService.criarCheckoutSession({
       meses:         dados.meses,
       licencaId:     dados.licencaId,
       email:         licenca.cliente.email,
-      totalCentavos: Math.round(totalBRL * 100),
+      stripePriceId,
     })
 
     return { url: result.url, sessionId: result.sessionId }

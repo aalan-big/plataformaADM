@@ -55,6 +55,46 @@ function SecaoConfirmar() {
   )
 }
 
+function SecaoCobranca() {
+  const [licencaId, setLicencaId] = useState('')
+  const [meses, setMeses]         = useState('1')
+  const [res, setRes]             = useState<ApiResponse | null>(null)
+  const [carregando, setCarregando] = useState(false)
+
+  const url = res?.ok ? (res.data as any)?.url as string | undefined : undefined
+
+  return (
+    <Secao titulo="POST /api/financeiro/gerar-cobranca (Stripe Checkout)">
+      {inp('licencaId (UUID)', licencaId, e => setLicencaId(e.target.value))}
+      <select value={meses} onChange={e => setMeses(e.target.value)}
+        className="w-full bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2 focus:outline-none">
+        <option value="1">Mensal (1 mês)</option>
+        <option value="3">Trimestral (3 meses)</option>
+        <option value="12">Anual (12 meses)</option>
+      </select>
+      <button
+        disabled={carregando || !licencaId}
+        onClick={async () => {
+          setCarregando(true)
+          setRes(await post('/api/financeiro/gerar-cobranca', { licencaId, meses: Number(meses) }))
+          setCarregando(false)
+        }}
+        className="w-full py-2 bg-indigo-700 hover:bg-indigo-600 disabled:bg-slate-600 text-white text-xs font-bold rounded-lg transition-colors">
+        {carregando ? 'Gerando link...' : 'Gerar Link de Pagamento'}
+      </button>
+
+      {url && (
+        <a href={url} target="_blank" rel="noopener noreferrer"
+          className="block text-center py-2 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition-colors">
+          → Abrir Checkout Stripe (cartão teste 4242 4242 4242 4242)
+        </a>
+      )}
+
+      <Console response={res} />
+    </Secao>
+  )
+}
+
 function SecaoReceita() {
   const [ano, setAno] = useState(String(new Date().getFullYear()))
   const [mes, setMes] = useState(String(new Date().getMonth() + 1))
@@ -118,6 +158,7 @@ export function TemaFinanceiro() {
   return (
     <>
       <SecaoConfirmar />
+      <SecaoCobranca />
       <SecaoReceita />
       <SecaoTransacoes />
       <SecaoWebhook />
