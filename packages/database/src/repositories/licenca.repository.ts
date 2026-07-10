@@ -68,6 +68,7 @@ export async function criarLicenca(dados: {
 export async function updateLicenca(id: string, dados: Partial<{
   chaveAtivacao:       string
   status:              string
+  planoId:             string
   isTrial:             boolean
   ultimoPagamento:     Date
   dataVencimento:      Date

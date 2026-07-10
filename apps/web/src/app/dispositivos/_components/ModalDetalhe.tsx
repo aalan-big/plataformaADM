@@ -144,6 +144,10 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
   const [linkStripe, setLinkStripe] = useState('')
   const [linkCopiado, setLinkCopiado] = useState(false)
   const [gerandoLink, setGerandoLink] = useState(false)
+  // Trocar plano
+  const [planos, setPlanos] = useState<{ id: string; nome: string; precoMensal: number }[]>([])
+  const [planoSel, setPlanoSel] = useState('')
+  const [trocandoPlano, setTrocandoPlano] = useState(false)
   // Delete
   const [deletando, setDeletando] = useState(false)
   const [confirmandoDelete, setConfirmandoDelete] = useState(false)
@@ -154,7 +158,7 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
     fetch(`/api/licenca/${licencaId}`)
       .then(r => r.json())
       .then(j => {
-        if (j.data) setLicenca(j.data)
+        if (j.data) { setLicenca(j.data); setPlanoSel(j.data.plano?.id ?? '') }
         else setErro('Licença não encontrada.')
       })
       .catch(() => setErro('Falha ao carregar dados.'))
@@ -162,6 +166,13 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
   }, [licencaId])
 
   useEffect(() => { carregar() }, [carregar])
+
+  useEffect(() => {
+    fetch('/api/licenca/planos')
+      .then(r => r.json())
+      .then(j => setPlanos(j.data ?? []))
+      .catch(() => {})
+  }, [])
 
   async function executarAcao(endpoint: string) {
     setAcao(endpoint)
@@ -213,6 +224,28 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
     await navigator.clipboard.writeText(linkStripe)
     setLinkCopiado(true)
     setTimeout(() => setLinkCopiado(false), 2000)
+  }
+
+  async function trocarPlano() {
+    if (!licenca || !planoSel || planoSel === licenca.plano?.id) return
+    setTrocandoPlano(true)
+    setErro('')
+    try {
+      const res = await fetch(`/api/licenca/${licencaId}/trocar-plano`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planoId: planoSel }),
+      })
+      const j = await res.json()
+      if (!res.ok) { setErro(j.message ?? j.erro ?? 'Erro ao trocar plano.'); return }
+      setLinkStripe('') // o link anterior era do plano antigo
+      carregar()
+      onAtualizar()
+    } catch {
+      setErro('Falha de conexão.')
+    } finally {
+      setTrocandoPlano(false)
+    }
   }
 
   async function excluirLicenca() {
@@ -468,6 +501,38 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
                       )}
                     </div>
                   )}
+                </div>
+
+                {/* ── Plano da licença ───────────────────────────────── */}
+                <div className="border border-slate-700/50 rounded-xl overflow-hidden">
+                  <div className="px-5 py-3 bg-slate-800/40 border-b border-slate-700/50">
+                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Plano da Licença</p>
+                  </div>
+                  <div className="px-5 py-4 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={planoSel}
+                        onChange={e => setPlanoSel(e.target.value)}
+                        className="flex-1 bg-slate-950 border border-slate-700/60 text-slate-200 text-xs rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
+                      >
+                        {planos.length === 0 && <option value="">Carregando planos...</option>}
+                        {planos.map(p => (
+                          <option key={p.id} value={p.id}>{p.nome} · R$ {Number(p.precoMensal).toFixed(2)}/mês</option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={trocarPlano}
+                        disabled={trocandoPlano || !planoSel || planoSel === licenca.plano?.id}
+                        className="shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg transition-colors"
+                      >
+                        {trocandoPlano ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+                        Trocar
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-slate-600">
+                      Troque o plano antes de gerar o link — o valor cobrado segue o plano selecionado.
+                    </p>
+                  </div>
                 </div>
 
                 {/* ── Link de Pagamento ──────────────────────────────── */}

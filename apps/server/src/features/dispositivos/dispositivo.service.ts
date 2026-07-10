@@ -318,6 +318,22 @@ export class DispositivoService {
     return { msg: 'Sessões encerradas. O cliente pode conectar de uma nova máquina.' }
   }
 
+  async trocarPlano(licencaId: string, body: unknown) {
+    const planoId = (body as { planoId?: string })?.planoId
+    if (!planoId || typeof planoId !== 'string')
+      throw new BadRequestException('planoId é obrigatório.')
+
+    const licenca = await findLicencaById(licencaId)
+    if (!licenca) throw new NotFoundException('Licença não encontrada.')
+
+    // findAllPlanos só retorna planos ATIVOS — valida existência e status de uma vez
+    const plano = (await findAllPlanos()).find(p => p.id === planoId)
+    if (!plano) throw new NotFoundException('Plano não encontrado ou inativo.')
+
+    await updateLicenca(licencaId, { planoId })
+    return { msg: `Plano alterado para "${plano.nome}".` }
+  }
+
   async deletarLicenca(licencaId: string) {
     const licenca = await findLicencaById(licencaId)
     if (!licenca) throw new NotFoundException('Licença não encontrada.')

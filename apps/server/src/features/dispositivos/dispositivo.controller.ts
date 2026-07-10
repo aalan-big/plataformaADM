@@ -147,4 +147,9 @@ export class DispositivoController {
   async trocarDispositivo(@Param('id') id: string) {
     return this.dispositivoService.trocarDispositivo(id)
   }
+
+  @Patch(':id/trocar-plano')
+  async trocarPlano(@Param('id') id: string, @Body() body: unknown) {
+    return this.dispositivoService.trocarPlano(id, body)
+  }
 }
