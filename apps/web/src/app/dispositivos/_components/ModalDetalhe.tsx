@@ -148,6 +148,7 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
   const [planos, setPlanos] = useState<{ id: string; nome: string; precoMensal: number }[]>([])
   const [planoSel, setPlanoSel] = useState('')
   const [trocandoPlano, setTrocandoPlano] = useState(false)
+  const [msgPlano, setMsgPlano] = useState('')
   // Delete
   const [deletando, setDeletando] = useState(false)
   const [confirmandoDelete, setConfirmandoDelete] = useState(false)
@@ -230,6 +231,7 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
     if (!licenca || !planoSel || planoSel === licenca.plano?.id) return
     setTrocandoPlano(true)
     setErro('')
+    setMsgPlano('')
     try {
       const res = await fetch(`/api/licenca/${licencaId}/trocar-plano`, {
         method: 'PATCH',
@@ -238,6 +240,7 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
       })
       const j = await res.json()
       if (!res.ok) { setErro(j.message ?? j.erro ?? 'Erro ao trocar plano.'); return }
+      setMsgPlano(j.msg ?? 'Plano atualizado.')
       setLinkStripe('') // o link anterior era do plano antigo
       carregar()
       onAtualizar()
@@ -529,9 +532,13 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
                         Trocar
                       </button>
                     </div>
-                    <p className="text-[11px] text-slate-600">
-                      Troque o plano antes de gerar o link — o valor cobrado segue o plano selecionado.
-                    </p>
+                    {msgPlano ? (
+                      <p className="text-[11px] text-emerald-400">{msgPlano}</p>
+                    ) : (
+                      <p className="text-[11px] text-slate-600">
+                        Upgrade vale na hora (cobrança proporcional); downgrade passa a valer no fim do ciclo já pago.
+                      </p>
+                    )}
                   </div>
                 </div>
 

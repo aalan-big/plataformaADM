@@ -29,6 +29,7 @@ import {
   registrarEventoLicenca,
   findHistoricoByLicenca,
   findAllPlanos,
+  findPlanoById,
   updateLicenca,
   findLicencaByChave,
   resetarConexoes,
@@ -51,6 +52,7 @@ import {
   validarCnpj
 } from '@startbig/schemas'
 import { EmailService } from '../../core/email/email.service'
+import { StripeService } from '../../common/stripe/stripe.service'
 import { dominioDeEmailExiste } from '../../core/validators/email-dominio.validator'
 import { z } from 'zod'
 
@@ -126,7 +128,10 @@ const { privateKey: RSA_PRIVATE_KEY, publicKey: RSA_PUBLIC_KEY } = carregarChave
 export class DispositivoService {
   private readonly logger   = new Logger(DispositivoService.name)
 
-  constructor(private readonly emailService: EmailService) {}
+  constructor(
+    private readonly emailService:  EmailService,
+    private readonly stripeService: StripeService,
+  ) {}
 
   // ── Helpers privados ──────────────────────────────────────────────────────
 
@@ -318,6 +323,9 @@ export class DispositivoService {
     return { msg: 'Sessões encerradas. O cliente pode conectar de uma nova máquina.' }
   }
 
+  // Troca de plano no padrão SaaS: upgrade vale na hora (cobrança proporcional),
+  // downgrade só no fim do ciclo já pago. Usa a assinatura existente (cartão salvo),
+  // sem gerar assinatura nova — o que também elimina a duplicidade na raiz.
   async trocarPlano(licencaId: string, body: unknown) {
     const planoId = (body as { planoId?: string })?.planoId
     if (!planoId || typeof planoId !== 'string')
@@ -326,12 +334,61 @@ export class DispositivoService {
     const licenca = await findLicencaById(licencaId)
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
 
-    // findAllPlanos só retorna planos ATIVOS — valida existência e status de uma vez
-    const plano = (await findAllPlanos()).find(p => p.id === planoId)
-    if (!plano) throw new NotFoundException('Plano não encontrado ou inativo.')
+    const planoNovo = await findPlanoById(planoId)
+    if (!planoNovo || planoNovo.status !== 'ATIVO')
+      throw new NotFoundException('Plano não encontrado ou inativo.')
+    if (planoNovo.id === licenca.planoId)
+      throw new BadRequestException('A licença já está neste plano.')
 
-    await updateLicenca(licencaId, { planoId })
-    return { msg: `Plano alterado para "${plano.nome}".` }
+    const subId = licenca.stripeSubscriptionId
+
+    // Sem assinatura recorrente ativa (trial / pagamento manual): troca direta.
+    // Não há proporção a cobrar nem próximo ciclo para agendar.
+    if (!subId) {
+      await updateLicenca(licencaId, { planoId, planoPendenteId: null })
+      await registrarEventoLicenca(licencaId, { tipo: 'TROCA_PLANO', chaveAtivacao: licenca.chaveAtivacao, observacao: `Plano alterado para "${planoNovo.nome}" (sem assinatura ativa — imediato).` })
+      return { msg: `Plano alterado para "${planoNovo.nome}".`, aplicacao: 'imediata' as const }
+    }
+
+    // Com assinatura: mantém o mesmo período de cobrança e usa o Price equivalente do novo plano.
+    const periodo = await this.stripeService.periodoDaSubscription(subId)
+    const priceDoPeriodo = (p: any): string | null =>
+      periodo === 'anual'        ? p.stripePriceIdAnual
+      : periodo === 'trimestral' ? p.stripePriceIdTrimestral
+      :                            p.stripePriceIdMensal
+    const precoDoPeriodo = (p: any): number =>
+      periodo === 'anual'        ? Number(p.precoAnual      ?? p.precoMensal)
+      : periodo === 'trimestral' ? Number(p.precoTrimestral ?? p.precoMensal)
+      :                            Number(p.precoMensal)
+
+    const novoPriceId = priceDoPeriodo(planoNovo)
+    if (!novoPriceId)
+      throw new BadRequestException(`O plano "${planoNovo.nome}" não tem Stripe Price ID configurado para o período ${periodo}. Cadastre-o antes de trocar.`)
+
+    const precoAtual = precoDoPeriodo(licenca.plano)
+    const precoNovo  = precoDoPeriodo(planoNovo)
+
+    // ── UPGRADE: imediato + cobrança proporcional ──────────────────────────
+    if (precoNovo > precoAtual) {
+      await this.stripeService.atualizarPrecoSubscription(subId, novoPriceId, 'imediato')
+      await updateLicenca(licencaId, { planoId, planoPendenteId: null })
+      await registrarEventoLicenca(licencaId, { tipo: 'TROCA_PLANO', chaveAtivacao: licenca.chaveAtivacao, observacao: `Upgrade imediato para "${planoNovo.nome}" (cobrança proporcional).` })
+      return { msg: `Upgrade para "${planoNovo.nome}" aplicado agora — o cliente paga apenas a diferença proporcional.`, aplicacao: 'imediata' as const }
+    }
+
+    // ── DOWNGRADE: agenda pro fim do ciclo; mantém o plano atual até lá ─────
+    if (precoNovo < precoAtual) {
+      await this.stripeService.atualizarPrecoSubscription(subId, novoPriceId, 'fim_do_ciclo')
+      await updateLicenca(licencaId, { planoPendenteId: planoId })
+      await registrarEventoLicenca(licencaId, { tipo: 'TROCA_PLANO', chaveAtivacao: licenca.chaveAtivacao, observacao: `Downgrade para "${planoNovo.nome}" agendado para o fim do ciclo atual.` })
+      return { msg: `Downgrade para "${planoNovo.nome}" agendado — passa a valer no fim do ciclo já pago. Até lá o cliente mantém o plano atual.`, aplicacao: 'fim_do_ciclo' as const }
+    }
+
+    // ── Mesmo valor no período: troca direta (swap do price, sem cobrança) ──
+    await this.stripeService.atualizarPrecoSubscription(subId, novoPriceId, 'fim_do_ciclo')
+    await updateLicenca(licencaId, { planoId, planoPendenteId: null })
+    await registrarEventoLicenca(licencaId, { tipo: 'TROCA_PLANO', chaveAtivacao: licenca.chaveAtivacao, observacao: `Plano alterado para "${planoNovo.nome}" (mesmo valor).` })
+    return { msg: `Plano alterado para "${planoNovo.nome}".`, aplicacao: 'imediata' as const }
   }
 
   async deletarLicenca(licencaId: string) {

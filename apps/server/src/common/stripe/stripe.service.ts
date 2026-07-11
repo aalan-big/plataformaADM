@@ -154,4 +154,42 @@ export class StripeService {
     await this.stripe.subscriptions.cancel(subscriptionId)
     this.logger.log(`Subscription cancelada: ${subscriptionId}`)
   }
+
+  /**
+   * Descobre o período de cobrança de uma assinatura (mensal/trimestral/anual),
+   * a partir do intervalo do preço atual. Usado na troca de plano para escolher
+   * o Price equivalente do novo plano (mantém o mesmo período de cobrança).
+   */
+  async periodoDaSubscription(subscriptionId: string): Promise<'mensal' | 'trimestral' | 'anual'> {
+    const sub = await this.stripe.subscriptions.retrieve(subscriptionId)
+    const rec = sub.items?.data?.[0]?.price?.recurring
+    const interval = rec?.interval
+    const count    = rec?.interval_count ?? 1
+    if (interval === 'year') return 'anual'
+    if (interval === 'month' && count === 3) return 'trimestral'
+    return 'mensal'
+  }
+
+  /**
+   * Troca o Price de uma assinatura existente (mesma assinatura, cartão já salvo).
+   * - quando = 'imediato'     → upgrade: cobra a diferença proporcional AGORA (proration).
+   * - quando = 'fim_do_ciclo' → downgrade: sem cobrança/estorno agora; o novo preço
+   *   passa a valer só na próxima fatura (fim do período já pago).
+   */
+  async atualizarPrecoSubscription(
+    subscriptionId: string,
+    novoPriceId:    string,
+    quando:         'imediato' | 'fim_do_ciclo',
+  ): Promise<void> {
+    const sub = await this.stripe.subscriptions.retrieve(subscriptionId)
+    const itemId = sub.items?.data?.[0]?.id
+    if (!itemId) throw new BadRequestException('Assinatura sem item de cobrança — não foi possível trocar o plano.')
+
+    await this.stripe.subscriptions.update(subscriptionId, {
+      items:              [{ id: itemId, price: novoPriceId }],
+      proration_behavior: quando === 'imediato' ? 'always_invoice' : 'none',
+    })
+
+    this.logger.log(`Plano da subscription ${subscriptionId} trocado para ${novoPriceId} (${quando})`)
+  }
 }

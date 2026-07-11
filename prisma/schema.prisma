@@ -178,6 +178,7 @@ model Licenca {
   ultimoHeartbeat     DateTime?
   ultimaSincronizacao DateTime?
   stripeSubscriptionId String?
+  planoPendenteId     String?       // plano agendado p/ valer no fim do ciclo (downgrade)
   criadoEm            DateTime      @default(now())
   dataAtivacao        DateTime?
   chaveOrigem         String        @default("MANUAL")

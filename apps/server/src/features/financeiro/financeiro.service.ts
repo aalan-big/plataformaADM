@@ -32,6 +32,7 @@ import {
   findTransacoesByLicencaId,
   findLicencasExpirandoOuVencidas,
   updateLicenca,
+  registrarEventoLicenca,
 } from '@startbig/database'
 import { confirmarPagamentoSchema, gerarCobrancaSchema } from '@startbig/schemas'
 import { EmailService } from '../../core/email/email.service'
@@ -275,6 +276,13 @@ export class FinanceiroService {
         licenca, meses, valor: amountTotal, transacaoId: `inv_${subscriptionId}_${Date.now()}`,
         gateway: 'STRIPE', origem: 'STRIPE', descricao: `Renovação automática Stripe — ${meses} mês(es)`,
       })
+
+      // Downgrade agendado: se havia plano pendente, o novo ciclo é o momento de aplicá-lo
+      const planoPendenteId = (licenca as any).planoPendenteId as string | null
+      if (planoPendenteId) {
+        await updateLicenca(licenca.id, { planoId: planoPendenteId, planoPendenteId: null })
+        await registrarEventoLicenca(licenca.id, { tipo: 'TROCA_PLANO', chaveAtivacao: licenca.chaveAtivacao, observacao: 'Downgrade agendado aplicado no início do novo ciclo.' })
+      }
 
       return { msg: 'Renovação automática processada', data: resultado }
     }
