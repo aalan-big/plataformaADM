@@ -381,7 +381,82 @@ O conteúdo (payload) do token contém: `licencaId`, `hwid`, `plano`, `limite`, 
 | Revalidar licença | POST | `/licenca/validar` | Antes de `proximaValidacaoEm` |
 | Fechar sessão | POST | `/licenca/desconectar` | Ao fechar o ERP |
 | Obter chave pública | GET | `/licenca/chave-publica` | Uma vez, guardar localmente |
+| Consultar planos/preços | GET | `/erp/plano/:licencaId` | Antes de exibir opções de pagamento |
+| Gerar cobrança (checkout) | POST | `/erp/cobranca` | Quando o cliente decide assinar/renovar |
 
 ---
 
-*Documento gerado a partir do código-fonte da plataforma (`apps/server/src/features/dispositivos` e `apps/server/src/features/erp`) em 16/06/2026. Seção de login/reinstalação adicionada em 06/07/2026.*
+## 11. Cobrança e renovação (pagamento recorrente via Stripe)
+
+Quando a licença está vencida (ou o trial acabou), o ERP pode oferecer a assinatura direto pela plataforma. O pagamento é uma **assinatura recorrente** no Stripe: o cliente paga uma vez e, a cada ciclo (mensal/trimestral/anual), o Stripe cobra o cartão automaticamente e a plataforma **renova a licença sozinha** — o ERP não precisa fazer nada na renovação, só continuar chamando `/licenca/validar` normalmente (a `dataVencimento` já vem atualizada).
+
+### 11.1 Consultar preços — `GET /erp/plano/:licencaId`
+
+Retorna os dados do cliente/licença e as opções de período com o preço já calculado (descontos aplicados).
+
+```
+GET https://api.startbig.com.br/erp/plano/{licencaId}
+```
+
+Resposta:
+
+```json
+{
+  "licencaId": "uuid...",
+  "cliente":   { "nome": "Empresa Exemplo LTDA", "email": "contato@empresa.com" },
+  "plano":     "Plano Pro",
+  "status":    "VENCIDA",
+  "dataVencimento": "2026-06-30T00:00:00.000Z",
+  "opcoes": [
+    { "meses": 1,  "label": "Mensal",     "total": 100.00, "desconto": 0    },
+    { "meses": 3,  "label": "Trimestral", "total": 270.00, "desconto": 0.10 },
+    { "meses": 12, "label": "Anual",      "total": 960.00, "desconto": 0.20 }
+  ]
+}
+```
+
+### 11.2 Gerar a cobrança — `POST /erp/cobranca`
+
+Cria uma sessão de checkout do Stripe e devolve a URL de pagamento. O ERP deve **abrir essa URL no navegador** do cliente.
+
+```
+POST https://api.startbig.com.br/erp/cobranca
+Content-Type: application/json
+```
+
+| Campo | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `licencaId` | string (UUID) | ✅ | Licença a ser cobrada |
+| `meses` | number (1, 3 ou 12) | ✅ | Período escolhido — define qual Price recorrente do Stripe será usado |
+
+```json
+{ "licencaId": "uuid...", "meses": 3 }
+```
+
+Resposta:
+
+```json
+{
+  "url": "https://checkout.stripe.com/c/pay/cs_test_...",
+  "sessionId": "cs_test_..."
+}
+```
+
+O cliente conclui o pagamento nessa `url`. A partir daí:
+
+1. **1º pagamento** → a plataforma ativa/renova a licença na hora (webhook `checkout.session.completed`).
+2. **Renovações seguintes** → o Stripe cobra automaticamente a cada ciclo e a plataforma estende a `dataVencimento` (webhook `invoice.payment_succeeded`). **Sem ação do ERP.**
+3. Se o cliente **trocar de plano/período** gerando uma nova cobrança, a assinatura anterior é **cancelada automaticamente** para não cobrar duas vezes.
+
+### 11.3 Como o ERP sabe que o cliente pagou
+
+Não há webhook para o ERP. O ERP descobre pelo fluxo normal: depois do pagamento, a próxima chamada a **`/licenca/validar`** (ou `/licenca/conectar`) já retorna `status: "ATIVA"` com a nova `dataVencimento`. Recomendado: após abrir o checkout, o ERP pode fazer *polling* leve em `/licenca/validar` (ex.: a cada 30–60s por alguns minutos) para detectar a ativação e liberar o uso.
+
+### Erros possíveis
+
+- `404` — licença ou plano não encontrado
+- `400` — período inválido (use 1, 3 ou 12) ou o plano não tem `Stripe Price ID` cadastrado para aquele período
+
+---
+
+*Documento gerado a partir do código-fonte da plataforma (`apps/server/src/features/dispositivos` e `apps/server/src/features/erp`) em 16/06/2026. Seção de login/reinstalação adicionada em 06/07/2026. Seção de cobrança/renovação recorrente adicionada em 11/07/2026.*

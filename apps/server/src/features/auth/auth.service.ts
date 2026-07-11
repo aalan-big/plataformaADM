@@ -18,6 +18,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { findUserByEmail } from '@startbig/database'
+import { getJwtSecret } from '../../core/config/secrets'
 
 @Injectable()
 export class AuthService {
@@ -28,8 +29,7 @@ export class AuthService {
     const valid = await bcrypt.compare(senha, user.senha)
     if (!valid) throw new UnauthorizedException('Credenciais inválidas.')
 
-    const secret = process.env.JWT_SECRET ?? 'chave-secreta-de-desenvolvimento'
-    const token = jwt.sign({ userId: user.id, email: user.email, role: user.tipoUsuario }, secret, { expiresIn: '8h' })
+    const token = jwt.sign({ userId: user.id, email: user.email, role: user.tipoUsuario }, getJwtSecret(), { expiresIn: '8h' })
 
     return { token, user: { id: user.id, nome: user.nome, email: user.email, tipoUsuario: user.tipoUsuario } }
   }

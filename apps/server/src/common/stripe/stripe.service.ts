@@ -34,7 +34,13 @@ export type EventoParsed =
     }
   | {
       tipo:  'invoice.payment_succeeded'
-      dados: { subscriptionId: string; amountTotal: number; billingReason: string | null }
+      dados: {
+        subscriptionId: string
+        amountTotal:    number
+        billingReason:  string | null
+        licencaId:      string | null
+        meses:          number | null
+      }
     }
   | {
       tipo:  'customer.subscription.deleted'
@@ -106,12 +112,24 @@ export class StripeService {
 
     if (event.type === 'invoice.payment_succeeded') {
       const inv = event.data.object as any
+
+      // API 2025+ (basil/dahlia): `invoice.subscription` e `invoice.subscription_details`
+      // foram REMOVIDOS do topo do objeto e movidos para `invoice.parent.subscription_details`.
+      // Mantemos fallback para `inv.subscription` caso o webhook esteja fixado numa API antiga.
+      const subDetails = inv.parent?.subscription_details ?? null
+      const rawSub     = subDetails?.subscription ?? inv.subscription
+      const subscriptionId = typeof rawSub === 'string' ? rawSub : (rawSub?.id ?? '')
+      const metadata   = subDetails?.metadata ?? {}
+
       return {
         tipo:  'invoice.payment_succeeded',
         dados: {
-          subscriptionId: typeof inv.subscription === 'string' ? inv.subscription : '',
-          amountTotal:    inv.amount_paid / 100,
-          billingReason:  inv.billing_reason ?? null,
+          subscriptionId,
+          amountTotal:   inv.amount_paid / 100,
+          billingReason: inv.billing_reason ?? null,
+          // metadata é um snapshot da subscription no momento da fatura — já traz licencaId/meses
+          licencaId:     metadata.licencaId ?? null,
+          meses:         parseInt(metadata.meses ?? '') || null,
         },
       }
     }

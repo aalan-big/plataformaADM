@@ -16,6 +16,7 @@ import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from
 import { Reflector } from '@nestjs/core'
 import jwt from 'jsonwebtoken'
 import { PUBLIC_KEY } from '../decorators/public.decorator'
+import { getJwtSecret } from '../config/secrets'
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -38,8 +39,7 @@ export class AuthGuard implements CanActivate {
     const token = authHeader.slice(7)
 
     try {
-      const secret = process.env.JWT_SECRET ?? 'chave-secreta-de-desenvolvimento'
-      request.user = jwt.verify(token, secret)
+      request.user = jwt.verify(token, getJwtSecret())
       return true
     } catch {
       throw new UnauthorizedException('Token inválido ou expirado.')

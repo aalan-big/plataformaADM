@@ -18,8 +18,12 @@ import 'reflect-metadata'
 import { NestFactory } from '@nestjs/core'
 import { AppModule } from './app.module'
 import { HttpExceptionFilter } from './core/filters/http-exception.filter'
+import { validarSegredosProducao } from './core/config/secrets'
 
 async function bootstrap() {
+  // Em produção, derruba o boot se faltar algum segredo obrigatório (JWT/Stripe)
+  validarSegredosProducao()
+
   const app = await NestFactory.create(AppModule, { rawBody: true })
   app.enableCors()
   app.useGlobalFilters(new HttpExceptionFilter())

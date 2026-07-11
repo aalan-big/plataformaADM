@@ -234,6 +234,18 @@ export class FinanceiroService {
         descricao: `Stripe checkout — ${meses} mês(es)`,
       })
 
+      // Anti-cobrança-duplicada: se a licença já tinha uma assinatura ativa (troca de plano
+      // ou cliente clicou em pagar de novo), cancela a antiga antes de trocar o vínculo —
+      // senão o Stripe continuaria cobrando as duas e as faturas da antiga virariam "fantasma".
+      const subAntiga = (licenca as any).stripeSubscriptionId as string | null
+      if (subscriptionId && subAntiga && subAntiga !== subscriptionId) {
+        try {
+          await this.stripeService.cancelarSubscription(subAntiga)
+        } catch (err) {
+          console.warn(`[stripe] falha ao cancelar assinatura antiga ${subAntiga}:`, err instanceof Error ? err.message : err)
+        }
+      }
+
       // Salva o ID da assinatura para mapear renovações futuras
       if (subscriptionId) {
         await updateLicenca(licencaId, { stripeSubscriptionId: subscriptionId })
@@ -244,16 +256,20 @@ export class FinanceiroService {
 
     // ── 2. Renovação automática (Stripe cobra o cliente todo mês/trimestre/ano)
     if (evento.tipo === 'invoice.payment_succeeded') {
-      const { subscriptionId, amountTotal, billingReason } = (evento as any).dados
+      const { subscriptionId, amountTotal, billingReason, licencaId: metaLicencaId, meses: metaMeses } = (evento as any).dados
 
-      // Ignora a fatura do primeiro pagamento (já tratada acima)
+      // Ignora a fatura do primeiro pagamento (já tratada em checkout.session.completed)
       if (billingReason !== 'subscription_cycle') return { msg: `billing_reason "${billingReason}" ignorado` }
       if (!subscriptionId) return { msg: 'subscriptionId ausente — ignorado' }
 
-      const licenca = await findLicencaByStripeSubscriptionId(subscriptionId)
+      // Idempotência: cada fatura tem um id único do Stripe (transacaoId abaixo usa ele)
+      // Localiza a licença pela assinatura salva no checkout; se não achar, tenta o licencaId da metadata
+      let licenca = await findLicencaByStripeSubscriptionId(subscriptionId)
+      if (!licenca && metaLicencaId) licenca = await findLicencaById(metaLicencaId)
       if (!licenca) return { msg: `Licença com subscription ${subscriptionId} não encontrada — ignorado` }
 
-      const { meses } = await this.stripeService.buscarMetadadosSubscription(subscriptionId)
+      // meses vem da metadata da fatura; só chama a API se por algum motivo não veio
+      const meses = metaMeses ?? (await this.stripeService.buscarMetadadosSubscription(subscriptionId)).meses
 
       const resultado = await this.processarRenovacao({
         licenca, meses, valor: amountTotal, transacaoId: `inv_${subscriptionId}_${Date.now()}`,
