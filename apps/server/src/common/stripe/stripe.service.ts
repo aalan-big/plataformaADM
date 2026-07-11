@@ -35,6 +35,7 @@ export type EventoParsed =
   | {
       tipo:  'invoice.payment_succeeded'
       dados: {
+        invoiceId:      string
         subscriptionId: string
         amountTotal:    number
         billingReason:  string | null
@@ -43,10 +44,14 @@ export type EventoParsed =
       }
     }
   | {
+      tipo:  'invoice.payment_failed'
+      dados: { subscriptionId: string; licencaId: string | null }
+    }
+  | {
       tipo:  'customer.subscription.deleted'
       dados: { subscriptionId: string }
     }
-  | { tipo: Exclude<string, 'checkout.session.completed' | 'invoice.payment_succeeded' | 'customer.subscription.deleted'> }
+  | { tipo: Exclude<string, 'checkout.session.completed' | 'invoice.payment_succeeded' | 'invoice.payment_failed' | 'customer.subscription.deleted'> }
 
 @Injectable()
 export class StripeService {
@@ -112,26 +117,24 @@ export class StripeService {
 
     if (event.type === 'invoice.payment_succeeded') {
       const inv = event.data.object as any
-
-      // API 2025+ (basil/dahlia): `invoice.subscription` e `invoice.subscription_details`
-      // foram REMOVIDOS do topo do objeto e movidos para `invoice.parent.subscription_details`.
-      // Mantemos fallback para `inv.subscription` caso o webhook esteja fixado numa API antiga.
-      const subDetails = inv.parent?.subscription_details ?? null
-      const rawSub     = subDetails?.subscription ?? inv.subscription
-      const subscriptionId = typeof rawSub === 'string' ? rawSub : (rawSub?.id ?? '')
-      const metadata   = subDetails?.metadata ?? {}
-
+      const { subscriptionId, licencaId, meses } = this.extrairDadosFatura(inv)
       return {
         tipo:  'invoice.payment_succeeded',
         dados: {
+          invoiceId:     inv.id,
           subscriptionId,
           amountTotal:   inv.amount_paid / 100,
           billingReason: inv.billing_reason ?? null,
-          // metadata é um snapshot da subscription no momento da fatura — já traz licencaId/meses
-          licencaId:     metadata.licencaId ?? null,
-          meses:         parseInt(metadata.meses ?? '') || null,
+          licencaId,
+          meses,
         },
       }
+    }
+
+    if (event.type === 'invoice.payment_failed') {
+      const inv = event.data.object as any
+      const { subscriptionId, licencaId } = this.extrairDadosFatura(inv)
+      return { tipo: 'invoice.payment_failed', dados: { subscriptionId, licencaId } }
     }
 
     if (event.type === 'customer.subscription.deleted') {
@@ -140,6 +143,23 @@ export class StripeService {
     }
 
     return { tipo: event.type }
+  }
+
+  /**
+   * Extrai assinatura + metadata (licencaId/meses) de uma fatura, lidando com o
+   * novo formato da API 2025+ (dahlia): `invoice.subscription` foi movido para
+   * `invoice.parent.subscription_details`. Mantém fallback para o campo antigo.
+   */
+  private extrairDadosFatura(inv: any): { subscriptionId: string; licencaId: string | null; meses: number | null } {
+    const subDetails = inv.parent?.subscription_details ?? null
+    const rawSub     = subDetails?.subscription ?? inv.subscription
+    const subscriptionId = typeof rawSub === 'string' ? rawSub : (rawSub?.id ?? '')
+    const metadata   = subDetails?.metadata ?? {}
+    return {
+      subscriptionId,
+      licencaId: metadata.licencaId ?? null,
+      meses:     parseInt(metadata.meses ?? '') || null,
+    }
   }
 
   async buscarMetadadosSubscription(subscriptionId: string): Promise<{ licencaId: string | null; meses: number }> {

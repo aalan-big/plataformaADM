@@ -78,7 +78,7 @@ export async function updateLicenca(id: string, dados: Partial<{
   usuariosExtras:      number
   ultimoHeartbeat:      Date
   ultimaSincronizacao:  Date
-  stripeSubscriptionId: string
+  stripeSubscriptionId: string | null
   planoPendenteId:      string | null
 }>) {
   return prisma.licenca.update({ where: { id }, data: dados as any })

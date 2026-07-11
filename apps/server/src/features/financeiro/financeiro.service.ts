@@ -255,25 +255,37 @@ export class FinanceiroService {
       return { msg: 'Pagamento inicial processado', data: resultado }
     }
 
-    // ── 2. Renovação automática (Stripe cobra o cliente todo mês/trimestre/ano)
+    // ── 2. Fatura paga: renovação de ciclo OU ajuste proporcional de plano (upgrade)
     if (evento.tipo === 'invoice.payment_succeeded') {
-      const { subscriptionId, amountTotal, billingReason, licencaId: metaLicencaId, meses: metaMeses } = (evento as any).dados
-
-      // Ignora a fatura do primeiro pagamento (já tratada em checkout.session.completed)
-      if (billingReason !== 'subscription_cycle') return { msg: `billing_reason "${billingReason}" ignorado` }
+      const { invoiceId, subscriptionId, amountTotal, billingReason, licencaId: metaLicencaId, meses: metaMeses } = (evento as any).dados
       if (!subscriptionId) return { msg: 'subscriptionId ausente — ignorado' }
 
-      // Idempotência: cada fatura tem um id único do Stripe (transacaoId abaixo usa ele)
-      // Localiza a licença pela assinatura salva no checkout; se não achar, tenta o licencaId da metadata
+      // Idempotência: o id da fatura é estável e único. Se o Stripe reenviar o mesmo
+      // webhook (entrega "pelo menos uma vez"), não reprocessa — evita renovar/cobrar em dobro.
+      const jaProcessado = await findPagamentoByTransacaoId(invoiceId)
+      if (jaProcessado) return { msg: 'Fatura já processada' }
+
       let licenca = await findLicencaByStripeSubscriptionId(subscriptionId)
       if (!licenca && metaLicencaId) licenca = await findLicencaById(metaLicencaId)
       if (!licenca) return { msg: `Licença com subscription ${subscriptionId} não encontrada — ignorado` }
+
+      // Upgrade: o Stripe cobra a diferença proporcional numa fatura "subscription_update".
+      // Registra o valor no financeiro SEM mexer no vencimento (não é renovação).
+      if (billingReason === 'subscription_update') {
+        if (amountTotal <= 0) return { msg: 'Ajuste de plano sem cobrança — ignorado' }
+        const pagamento = await criarPagamento({ licencaId: licenca.id, clienteId: licenca.clienteId, valor: amountTotal, meses: 0, gateway: 'STRIPE', transacaoId: invoiceId, observacao: 'Ajuste proporcional de plano (upgrade)' })
+        await criarTransacao({ clienteId: licenca.clienteId, licencaId: licenca.id, pagamentoId: pagamento.id, tipo: 'PAGAMENTO_RECEBIDO', valor: amountTotal, origem: 'STRIPE', descricao: 'Ajuste proporcional de plano (upgrade)' })
+        return { msg: 'Ajuste proporcional de plano registrado' }
+      }
+
+      // Só a fatura de ciclo renova a licença (a do 1º pagamento é tratada no checkout)
+      if (billingReason !== 'subscription_cycle') return { msg: `billing_reason "${billingReason}" ignorado` }
 
       // meses vem da metadata da fatura; só chama a API se por algum motivo não veio
       const meses = metaMeses ?? (await this.stripeService.buscarMetadadosSubscription(subscriptionId)).meses
 
       const resultado = await this.processarRenovacao({
-        licenca, meses, valor: amountTotal, transacaoId: `inv_${subscriptionId}_${Date.now()}`,
+        licenca, meses, valor: amountTotal, transacaoId: invoiceId,
         gateway: 'STRIPE', origem: 'STRIPE', descricao: `Renovação automática Stripe — ${meses} mês(es)`,
       })
 
@@ -287,15 +299,39 @@ export class FinanceiroService {
       return { msg: 'Renovação automática processada', data: resultado }
     }
 
-    // ── 3. Assinatura cancelada ──────────────────────────────────────────────
+    // ── 2b. Falha de pagamento na renovação (cartão recusado/vencido) ────────
+    if (evento.tipo === 'invoice.payment_failed') {
+      const { subscriptionId, licencaId: metaLicencaId } = (evento as any).dados
+      let licenca = subscriptionId ? await findLicencaByStripeSubscriptionId(subscriptionId) : null
+      if (!licenca && metaLicencaId) licenca = await findLicencaById(metaLicencaId)
+      if (!licenca) return { msg: 'Licença não encontrada para fatura falha — ignorado' }
+
+      const nomeCliente = !!licenca.cliente.pf
+        ? (licenca.cliente.pf?.nomeCompleto ?? licenca.cliente.email)
+        : (licenca.cliente.pj?.razaoSocial  ?? licenca.cliente.email)
+
+      try {
+        await this.emailService.enviarFalhaPagamento({ email: licenca.cliente.email, nomeCliente, dataVencimento: licenca.dataVencimento })
+      } catch (err) {
+        console.warn('[email] falha ao enviar aviso de pagamento recusado:', err instanceof Error ? err.message : err)
+      }
+
+      // Não bloqueia: o Stripe re-tenta a cobrança nos próximos dias (dunning). Se todas
+      // as tentativas falharem, ele dispara customer.subscription.deleted (tratado abaixo).
+      return { msg: 'Falha de pagamento — cliente notificado' }
+    }
+
+    // ── 3. Assinatura encerrada (cancelada ou após esgotar as tentativas) ─────
     if (evento.tipo === 'customer.subscription.deleted') {
       const { subscriptionId } = (evento as any).dados
       const licenca = await findLicencaByStripeSubscriptionId(subscriptionId)
-      if (licenca) {
-        await updateLicenca(licenca.id, { status: 'BLOQUEADA' })
-        return { msg: 'Assinatura cancelada — licença bloqueada' }
-      }
-      return { msg: 'Licença não encontrada para essa assinatura — ignorado' }
+      if (!licenca) return { msg: 'Licença não encontrada para essa assinatura — ignorado' }
+
+      // Para as renovações futuras, mas mantém o acesso até o fim do período já pago
+      // (a licença expira naturalmente pela dataVencimento, via cron/validar).
+      await updateLicenca(licenca.id, { stripeSubscriptionId: null })
+      await registrarEventoLicenca(licenca.id, { tipo: 'ASSINATURA_CANCELADA', chaveAtivacao: licenca.chaveAtivacao, observacao: 'Assinatura Stripe encerrada — sem renovação automática. Acesso mantido até o vencimento.' })
+      return { msg: 'Assinatura encerrada — acesso mantido até o vencimento' }
     }
 
     return { msg: `Evento ${evento.tipo} ignorado` }
