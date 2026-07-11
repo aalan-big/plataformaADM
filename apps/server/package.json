@@ -17,6 +17,7 @@
     "@startbig/schemas": "*",
     "bcryptjs": "*",
     "dotenv": "*",
+    "helmet": "^8.2.0",
     "jsonwebtoken": "*",
     "nodemailer": "*",
     "reflect-metadata": "*",

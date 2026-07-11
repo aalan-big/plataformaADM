@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "npm run dev --workspace=apps/web",
     "dev:server": "npm run dev --workspace=apps/server",
-    "build": "npm run build --workspace=apps/web",
+    "build": "npm run build --workspace=apps/web && npm run build --workspace=apps/server",
     "start": "npm run start --workspace=apps/web",
     "lint": "npm run lint --workspace=apps/web",
     "db:push": "dotenv -e apps/server/.env -- prisma db push",
