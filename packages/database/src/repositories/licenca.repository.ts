@@ -81,7 +81,17 @@ export async function updateLicenca(id: string, dados: Partial<{
   stripeSubscriptionId: string | null
   planoPendenteId:      string | null
 }>) {
-  return prisma.licenca.update({ where: { id }, data: dados as any })
+  // No Prisma 7, a relação obrigatória `plano` não aceita o escalar `planoId`
+  // direto no update — precisa ser via `plano: { connect }`. Convertemos aqui
+  // para manter a API do repositório simples (callers seguem passando planoId).
+  const { planoId, ...resto } = dados
+  return prisma.licenca.update({
+    where: { id },
+    data: {
+      ...resto,
+      ...(planoId ? { plano: { connect: { id: planoId } } } : {}),
+    } as any,
+  })
 }
 
 export async function atualizarTotalUsuarios(id: string, totalUsuarios: number) {
