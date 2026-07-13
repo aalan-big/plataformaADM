@@ -12,9 +12,11 @@
     "build": "npm run build --workspace=apps/web && npm run build --workspace=apps/server",
     "start": "npm run start --workspace=apps/web",
     "lint": "npm run lint --workspace=apps/web",
+    "postinstall": "prisma generate",
     "db:push": "dotenv -e apps/server/.env -- prisma db push",
     "db:generate": "prisma generate",
-    "db:seed": "dotenv -e apps/server/.env -- tsx prisma/seed.ts"
+    "db:seed": "dotenv -e apps/server/.env -- tsx prisma/seed.ts",
+    "deploy": "git pull && npm install && npm run db:push && pm2 restart api web --update-env"
   },
   "prisma": {
     "seed": "dotenv -e apps/server/.env -- tsx prisma/seed.ts"
