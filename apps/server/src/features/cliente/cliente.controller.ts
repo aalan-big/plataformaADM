@@ -54,6 +54,11 @@ export class ClienteController {
     return this.clienteService.reenviarPrimeiroAcesso(id)
   }
 
+  @Post(':id/definir-senha')
+  async definirSenha(@Param('id') id: string, @Body() body: unknown) {
+    return this.clienteService.definirSenha(id, body)
+  }
+
   @Delete('remover-debug')
   async removerDebug(@Body() body: { ids?: string[] }) {
     return this.clienteService.removerClientesDebug(body?.ids ?? [])

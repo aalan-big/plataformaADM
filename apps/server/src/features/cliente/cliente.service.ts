@@ -15,6 +15,7 @@
  * ============================================================================
  */
 import { randomUUID } from 'crypto'
+import bcrypt from 'bcryptjs'
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common'
 import { ZodError } from 'zod'
 import {
@@ -235,6 +236,26 @@ export class ClienteService {
       if (e instanceof NotFoundException || e instanceof BadRequestException) throw e
       throw new BadRequestException(e instanceof Error ? e.message : 'Erro interno')
     }
+  }
+
+  /**
+   * Define/sobrescreve a senha de acesso do cliente direto pelo painel admin,
+   * gerando o hash bcrypt (mesmo algoritmo do login). Usado para clientes que
+   * ainda não têm senha (ex.: cadastrados antes de a senha virar obrigatória no
+   * auto-cadastro) ou para um reset manual pelo administrador.
+   */
+  async definirSenha(id: string, body: unknown) {
+    const senha = (body as { senha?: unknown })?.senha
+    if (typeof senha !== 'string' || senha.length < 8)
+      throw new BadRequestException('A senha deve ter no mínimo 8 caracteres.')
+
+    const cliente = await findClienteById(id)
+    if (!cliente) throw new NotFoundException('Cliente não encontrado.')
+
+    const senhaHash = await bcrypt.hash(senha, 10)
+    await prisma.cliente.update({ where: { id }, data: { senhaHash } })
+
+    return { msg: 'Senha definida com sucesso. O cliente já pode fazer login com esse e-mail e senha.' }
   }
 
   async reenviarPrimeiroAcesso(id: string) {

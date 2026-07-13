@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Plus, Eye, Pencil, Users, PowerOff, CreditCard } from 'lucide-react'
+import { Search, Plus, Eye, Pencil, Users, PowerOff, CreditCard, KeyRound } from 'lucide-react'
 import ModalCriarCliente from './_components/ModalCriarCliente'
 import ModalEditarCliente from './_components/ModalEditarCliente'
 import ModalConfirmarDesativacao from './_components/ModalConfirmarDesativacao'
 import ModalPerfilCliente from './_components/ModalPerfilCliente'
 import ModalGerarLinkCliente from './_components/ModalGerarLinkCliente'
+import ModalDefinirSenha from './_components/ModalDefinirSenha'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -66,6 +67,7 @@ export default function ClientesPage() {
   const [clientePerfil, setClientePerfil]           = useState<string | null>(null)
   const [clienteRemovendo, setClienteRemovendo]     = useState<Cliente | null>(null)
   const [clienteGerandoLink, setClienteGerandoLink] = useState<Cliente | null>(null)
+  const [clienteSenha, setClienteSenha]             = useState<Cliente | null>(null)
   const [processandoId, setProcessandoId]           = useState<string | null>(null)
 
   const carregar = useCallback(async (q = '') => {
@@ -258,6 +260,13 @@ export default function ClientesPage() {
                           <CreditCard size={14} />
                         </button>
                         <button
+                          onClick={() => setClienteSenha(c)}
+                          title="Definir senha de acesso"
+                          className="p-2 text-amber-400 hover:text-amber-300 hover:bg-amber-500/15 rounded-lg transition-colors"
+                        >
+                          <KeyRound size={14} />
+                        </button>
+                        <button
                           onClick={() => setClienteRemovendo(c)}
                           disabled={processandoId === c.id}
                           title="Remover cliente"
@@ -319,6 +328,14 @@ export default function ClientesPage() {
           clienteId={clienteGerandoLink.id}
           nomeCliente={nomeCliente(clienteGerandoLink)}
           onClose={() => setClienteGerandoLink(null)}
+        />
+      )}
+
+      {clienteSenha && (
+        <ModalDefinirSenha
+          clienteId={clienteSenha.id}
+          nomeCliente={nomeCliente(clienteSenha)}
+          onClose={() => setClienteSenha(null)}
         />
       )}
 
