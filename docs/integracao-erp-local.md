@@ -40,7 +40,8 @@ Content-Type: application/json
 |---|---|---|
 | `documento` | string | CPF (11 dígitos) ou CNPJ (14 dígitos), só números ou formatado — o sistema limpa automaticamente |
 | `nomeOuRazao` | string | Nome completo (PF) ou Razão Social (PJ) |
-| `email` | string | E-mail do cliente — é para onde vai a senha de primeiro acesso |
+| `email` | string | E-mail do cliente — será o "usuário" de login |
+| `senha` | string | Senha de acesso (mínimo 8 caracteres). É gravada já no cadastro e usada depois em `/erp/auth/login` numa reinstalação/troca de máquina |
 
 ### Campos opcionais
 
@@ -81,6 +82,7 @@ Content-Type: application/json
   "documento": "12345678000199",
   "nomeOuRazao": "Empresa Exemplo LTDA",
   "email": "contato@empresa.com",
+  "senha": "SenhaDoCliente123",
   "hwid": "PC-DESKTOP-ABC123",
   "nomeFantasia": "Empresa Exemplo",
   "telefone": "1133334444",
@@ -121,7 +123,7 @@ Content-Type: application/json
 }
 ```
 
-**Importante:** depois do cadastro, a plataforma envia automaticamente um e-mail para o cliente criar a senha de acesso ao painel. A `chaveAtivacao` retornada é o que o ERP deve **guardar localmente** — é ela que será usada em `conectar` e `validar` daqui pra frente.
+**Importante:** a `senha` enviada já é gravada no cadastro — o cliente **não** precisa criar senha por e-mail depois. Essa mesma senha (com o e-mail) é o que ele usará em `/erp/auth/login` caso reinstale o ERP. A `chaveAtivacao` retornada é o que o ERP deve **guardar localmente** — é ela que será usada em `conectar` e `validar` daqui pra frente.
 
 Ganha automaticamente um **trial de 14 dias**, status `ATIVA`.
 
@@ -358,7 +360,7 @@ O conteúdo (payload) do token contém: `licencaId`, `hwid`, `plano`, `limite`, 
 ## 9. Resumo rápido — checklist para o seu amigo implementar no ERP
 
 - [ ] Gerar um `hwid` único e estável por instalação (ex.: hash do serial da placa-mãe/disco)
-- [ ] Na primeira execução sem chave salva → chamar `POST /erp/auto-cadastro`
+- [ ] Na primeira execução sem chave salva → pedir e-mail + senha ao cliente e chamar `POST /erp/auto-cadastro` (a senha é obrigatória e fica gravada para o login futuro)
 - [ ] Se `/erp/auto-cadastro` recusar por e-mail/documento já cadastrado (ex.: reinstalação) → pedir e-mail/senha e chamar `POST /erp/auth/login`
 - [ ] Salvar `chaveAtivacao` localmente (arquivo de config / banco local) — vem no auto-cadastro **e** no login
 - [ ] Ao abrir o programa → chamar `POST /licenca/conectar` com a chave salva

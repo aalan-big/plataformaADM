@@ -19,6 +19,7 @@ import { generateKeyPairSync }                                                  
 import { ZodError }                                                                   from 'zod'
 import { randomUUID }                                                                 from 'crypto'
 import jwt                                                                            from 'jsonwebtoken'
+import bcrypt                                                                         from 'bcryptjs'
 import {
   findLicencaById,
   findLicencasByClienteId,
@@ -60,6 +61,7 @@ export const autoCadastroSchema = z.object({
   documento: z.string().transform(s => s.replace(/\D/g, '')),
   nomeOuRazao: z.string().min(2),
   email: z.string().email(),
+  senha: z.string().min(8, 'A senha deve ter no mínimo 8 caracteres.'),
   hwid: z.string().optional(),
   
   // Campos extras PF
@@ -658,6 +660,11 @@ export class DispositivoService {
 
     const { prisma } = require('@startbig/database')
 
+    // Gera o hash da senha enviada pelo ERP no cadastro. Assim o cliente já sai
+    // do auto-cadastro com senha configurada e consegue usar /erp/auth/login
+    // numa reinstalação futura sem depender do e-mail de primeiro acesso.
+    const senhaHash = await bcrypt.hash(dados.senha, 10)
+
     // 3. Pegar um usuário ADMIN padrão para ser o "dono" do cliente
     const admin = await prisma.usuario.findFirst({ where: { tipoUsuario: 'ADMIN' } })
     if (!admin) throw new BadRequestException('Sistema não configurado para auto-cadastro (Sem administrador master).')
@@ -701,7 +708,7 @@ export class DispositivoService {
     if (isPF) {
       const c = await prisma.cliente.create({
         data: {
-          email: dados.email, usuarioId: admin.id,
+          email: dados.email, senhaHash, usuarioId: admin.id,
           pf: { create: {
             nomeCompleto: dados.nomeOuRazao,
             cpf: dados.documento,
@@ -715,7 +722,7 @@ export class DispositivoService {
     } else {
       const c = await prisma.cliente.create({
         data: {
-          email: dados.email, usuarioId: admin.id,
+          email: dados.email, senhaHash, usuarioId: admin.id,
           pj: { create: {
             razaoSocial: dados.nomeOuRazao,
             cnpj: dados.documento,
@@ -789,17 +796,9 @@ export class DispositivoService {
       this.logger.warn(`[email] Falha ao enviar boas-vindas para ${dados.email}: ${err instanceof Error ? err.message : err}`)
     }
 
-    // 10. Enviar e-mail de "criar senha de acesso" (necessário para o
-    // cliente poder usar /erp/auth/login numa reinstalação futura)
-    try {
-      await this.emailService.enviarPrimeiroAcesso({
-        clienteId,
-        email:       dados.email,
-        nomeCliente: dados.nomeOuRazao,
-      })
-    } catch (err) {
-      this.logger.warn(`[email] Falha ao enviar primeiro-acesso para ${dados.email}: ${err instanceof Error ? err.message : err}`)
-    }
+    // A senha já é definida no próprio auto-cadastro (senhaHash acima), então
+    // não é mais necessário enviar o e-mail de "criar senha de acesso": o
+    // cliente já pode usar /erp/auth/login numa reinstalação futura.
 
     return {
       msg: 'Auto-cadastro concluído com sucesso. Licença Trial de 14 dias gerada.',

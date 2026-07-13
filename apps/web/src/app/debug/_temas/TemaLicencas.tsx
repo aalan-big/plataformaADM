@@ -491,6 +491,7 @@ function SecaoSimularERP() {
   const [acTipo, setAcTipo]       = useState<'PF'|'PJ'>('PJ')
   const [acNome, setAcNome]       = useState('')
   const [acEmail, setAcEmail]     = useState('')
+  const [acSenha, setAcSenha]     = useState('')
   const [loadAc, setLoadAc]       = useState(false)
   const [resultAc, setResultAc]   = useState<ApiResponse | null>(null)
   const tokenAc = (resultAc?.payload as any)?.token as string | undefined
@@ -523,7 +524,7 @@ function SecaoSimularERP() {
 
   const autoCadastro = async () => {
     setLoadAc(true); setResultAc(null)
-    const payload = { tipo: acTipo, documento: acDocumento, nomeOuRazao: acNome, email: acEmail }
+    const payload = { tipo: acTipo, documento: acDocumento, nomeOuRazao: acNome, email: acEmail, senha: acSenha }
     const r = await api(`${ERP_API}/erp/auto-cadastro`, { method: 'POST', body: JSON.stringify(payload) })
     setLoadAc(false); setResultAc(r)
     const chv = (r.payload as any)?.chaveAtivacao
@@ -608,7 +609,7 @@ function SecaoSimularERP() {
         <div className="flex items-center gap-2 mb-4">
           <RotaBadge metodo={abaAtual.metodo} rota={abaAtual.rota} />
           <span className="text-xs text-slate-500">
-            {aba === 'auto-cadastro' && '→ bate na Receita Federal, cria cliente, emite trial e envia e-mail de primeiro acesso'}
+            {aba === 'auto-cadastro' && '→ bate na Receita Federal, cria cliente (com senha já configurada) e emite trial'}
             {aba === 'conectar'    && '→ valida chave, emite JWT RS256 (expira em min(7d, dias até vencimento))'}
             {aba === 'validar'     && '→ verifica licença, renova JWT, marca primeira ativação se AGUARDANDO'}
             {aba === 'desconectar' && '→ encerra sessão, libera slot de usuário'}
@@ -640,7 +641,12 @@ function SecaoSimularERP() {
                 placeholder="admin@empresa.com"
                 value={acEmail} onChange={e => setAcEmail(e.target.value)} />
             </Field>
-            <button onClick={autoCadastro} disabled={loadAc || !acDocumento || !acNome || !acEmail}
+            <Field label="Senha * (mín. 8 caracteres)">
+              <input type="password" className={`${ic} focus:border-fuchsia-500`}
+                placeholder="Senha de acesso do cliente"
+                value={acSenha} onChange={e => setAcSenha(e.target.value)} />
+            </Field>
+            <button onClick={autoCadastro} disabled={loadAc || !acDocumento || !acNome || !acEmail || acSenha.length < 8}
               className="w-full bg-fuchsia-700 hover:bg-fuchsia-600 disabled:bg-slate-600 text-white font-bold py-2 rounded transition">
               {loadAc ? 'Cadastrando e Gerando Trial...' : 'POST /licenca/auto-cadastro'}
             </button>
