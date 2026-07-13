@@ -140,6 +140,16 @@ export class FinanceiroService {
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
     if (!licenca.plano) throw new NotFoundException('Plano não encontrado.')
 
+    // Anti-duplicidade: se a licença já tem assinatura ATIVA no Stripe, gerar uma
+    // nova cobrança criaria uma 2ª assinatura e cobraria o cliente duas vezes.
+    // Nesse caso o caminho certo é "Trocar plano" (ajuste proporcional), não uma
+    // cobrança nova. Só liberamos cobrança nova quando não há assinatura viva.
+    if (licenca.stripeSubscriptionId && await this.stripeService.assinaturaAtiva(licenca.stripeSubscriptionId)) {
+      throw new BadRequestException(
+        'Esta licença já possui uma assinatura ativa. Para mudar de plano ou período, use "Trocar plano" (cobra apenas a diferença proporcional). Para gerar uma cobrança nova, cancele a assinatura atual antes.',
+      )
+    }
+
     const plano = licenca.plano as any
 
     // Assinatura recorrente: cada período usa um Price pré-criado no catálogo do Stripe.

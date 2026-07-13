@@ -176,6 +176,20 @@ export class StripeService {
   }
 
   /**
+   * Diz se uma assinatura ainda está "viva" no Stripe (cobrando). Usado para
+   * impedir a criação de uma 2ª assinatura (cobrança duplicada) quando já existe
+   * uma ativa. Se a assinatura não existir mais, retorna false (não bloqueia).
+   */
+  async assinaturaAtiva(subscriptionId: string): Promise<boolean> {
+    try {
+      const sub = await this.stripe.subscriptions.retrieve(subscriptionId)
+      return ['active', 'trialing', 'past_due', 'unpaid'].includes(sub.status)
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * Descobre o período de cobrança de uma assinatura (mensal/trimestral/anual),
    * a partir do intervalo do preço atual. Usado na troca de plano para escolher
    * o Price equivalente do novo plano (mantém o mesmo período de cobrança).
