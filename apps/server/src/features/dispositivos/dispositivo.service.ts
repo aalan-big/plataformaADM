@@ -669,10 +669,28 @@ export class DispositivoService {
     const admin = await prisma.usuario.findFirst({ where: { tipoUsuario: 'ADMIN' } })
     if (!admin) throw new BadRequestException('Sistema não configurado para auto-cadastro (Sem administrador master).')
 
-    // 4. Pegar o plano base ou criar um Trial
-    let plano = await prisma.plano.findFirst({ where: { precoMensal: 0 } })
-    if (!plano) plano = await prisma.plano.findFirst()
-    if (!plano) throw new BadRequestException('Nenhum plano cadastrado no sistema para vincular a licença.')
+    // 4. Plano da licença trial. Não é só rótulo: o cliente não tem como trocar de
+    // plano sozinho (trocar-plano é rota de admin), então é ESTE plano que define o
+    // Price cobrado quando ele assinar. Ordem: plano fixado por configuração, senão
+    // o mais barato ATIVO. Antes, não havendo plano de preço 0, caía num `findFirst()`
+    // sem filtro nenhum — qualquer plano do catálogo podia ser sorteado, inclusive os
+    // de teste (numa conta com Price de intervalo diário, isso vira cobrança por dia).
+    const planoFixado = process.env.PLANO_AUTOCADASTRO_ID?.trim()
+
+    let plano = planoFixado
+      ? await prisma.plano.findFirst({ where: { id: planoFixado } })
+      : null
+
+    if (planoFixado && !plano)
+      throw new BadRequestException(`PLANO_AUTOCADASTRO_ID aponta para um plano inexistente (${planoFixado}). Corrija a configuração antes de aceitar novos cadastros.`)
+
+    if (!plano)
+      plano = await prisma.plano.findFirst({
+        where:   { status: 'ATIVO' },
+        orderBy: [{ precoMensal: 'asc' }, { criadoEm: 'asc' }],
+      })
+
+    if (!plano) throw new BadRequestException('Nenhum plano ATIVO cadastrado no sistema para vincular a licença.')
 
     // 5. Verificar se cliente já existe
     const existeEmail = await prisma.cliente.findFirst({ where: { email: dados.email } })

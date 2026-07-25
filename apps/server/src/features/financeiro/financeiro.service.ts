@@ -106,6 +106,21 @@ export class FinanceiroService {
     const descTri = plano.descontoTrimestral ? Number(plano.descontoTrimestral) / 100 : 0
     const descAnu = plano.descontoAnual      ? Number(plano.descontoAnual)      / 100 : 0
 
+    // O preço fechado do período manda quando está preenchido: é ele que corresponde
+    // ao Price cadastrado no Stripe, e é o Stripe quem cobra de fato. O cálculo
+    // "mensal × meses × (1 − desconto)" fica só como fallback de plano sem preço fechado
+    // — antes ele valia sempre, e a tela anunciava um valor diferente do cobrado.
+    const totalDoPeriodo = (precoFechado: unknown, meses: number, desconto: number) =>
+      precoFechado != null ? Number(precoFechado) : preco * meses * (1 - desconto)
+
+    // Desconto exibido derivado do total real, para não anunciar um percentual
+    // que não corresponde ao valor que vai ser cobrado.
+    const descontoEfetivo = (total: number, meses: number) =>
+      preco > 0 ? Math.max(0, 1 - total / (preco * meses)) : 0
+
+    const totalTri = parseFloat(totalDoPeriodo(plano.precoTrimestral, 3,  descTri).toFixed(2))
+    const totalAnu = parseFloat(totalDoPeriodo(plano.precoAnual,      12, descAnu).toFixed(2))
+
     const nome = !!licenca.cliente.pf
       ? (licenca.cliente.pf?.nomeCompleto ?? licenca.cliente.email)
       : (licenca.cliente.pj?.razaoSocial  ?? licenca.cliente.email)
@@ -117,9 +132,9 @@ export class FinanceiroService {
       status:         licenca.status,
       dataVencimento: licenca.dataVencimento,
       opcoes: [
-        { meses: 1,  label: 'Mensal',      total: parseFloat(preco.toFixed(2)),                          desconto: 0       },
-        { meses: 3,  label: 'Trimestral',  total: parseFloat((preco * 3  * (1 - descTri)).toFixed(2)),   desconto: descTri },
-        { meses: 12, label: 'Anual',       total: parseFloat((preco * 12 * (1 - descAnu)).toFixed(2)),   desconto: descAnu },
+        { meses: 1,  label: 'Mensal',      total: parseFloat(preco.toFixed(2)), desconto: 0 },
+        { meses: 3,  label: 'Trimestral',  total: totalTri, desconto: descontoEfetivo(totalTri, 3)  },
+        { meses: 12, label: 'Anual',       total: totalAnu, desconto: descontoEfetivo(totalAnu, 12) },
       ],
     }
   }
