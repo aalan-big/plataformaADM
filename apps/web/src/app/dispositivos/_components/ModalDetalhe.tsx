@@ -25,6 +25,19 @@ type HistoricoItem = {
   criadoEm: string
 }
 
+/** Campos de preço dos cards de período. O mesmo formato vale para o plano da
+ *  licença e para os da lista de troca, porque os dois alimentam o mesmo cálculo:
+ *  o card precisa mostrar o preço do plano que o link vai cobrar, seja qual for. */
+type PlanoPreco = {
+  id: string
+  nome: string
+  precoMensal: number
+  precoTrimestral: number | null
+  precoAnual: number | null
+  descontoTrimestral: number | null
+  descontoAnual: number | null
+}
+
 type LicencaDetalhe = {
   id: string
   isTrial: boolean
@@ -147,7 +160,7 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
   const [linkCopiado, setLinkCopiado] = useState(false)
   const [gerandoLink, setGerandoLink] = useState(false)
   // Trocar plano
-  const [planos, setPlanos] = useState<{ id: string; nome: string; precoMensal: number }[]>([])
+  const [planos, setPlanos] = useState<PlanoPreco[]>([])
   const [planoSel, setPlanoSel] = useState('')
   const [trocandoPlano, setTrocandoPlano] = useState(false)
   const [msgPlano, setMsgPlano] = useState('')
@@ -596,10 +609,14 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
 
                       <ArrowRight size={14} className="text-slate-600 shrink-0" />
 
+                      {/* Trocar o destino limpa o link já gerado: ele aponta para o
+                          plano anterior, e deixá-lo na tela faria o rótulo abaixo
+                          chamá-lo pelo nome do plano novo — que não é o que o
+                          cliente pagaria ao abrir. */}
                       <div className="flex-1 min-w-0">
                         <select
                           value={planoSel}
-                          onChange={e => { setPlanoSel(e.target.value); setErroPlano(''); setMsgPlano('') }}
+                          onChange={e => { setPlanoSel(e.target.value); setErroPlano(''); setMsgPlano(''); setLinkStripe(''); setLinkCopiado(false) }}
                           className="w-full bg-slate-950 border border-slate-700/60 text-slate-200 text-xs rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
                         >
                           {planos.length === 0 && <option value="">Carregando planos...</option>}
@@ -698,7 +715,13 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
                     </div>
                     {/* Período + botão */}
                     {(() => {
-                      const plano   = licenca.plano
+                      // Os cards mostram o preço do que o link VAI cobrar, e com
+                      // plano de destino selecionado quem manda é ele. Lendo sempre
+                      // o plano atual, a tela dizia 89,90 enquanto o link gerado
+                      // cobrava 59,90 — o admin não tem como conferir o que enviou.
+                      const destino = planos.find(p => p.id === planoSel)
+                      const plano: PlanoPreco | null =
+                        planoSel && planoSel !== licenca.plano?.id && destino ? destino : licenca.plano
                       const preco   = Number(plano?.precoMensal ?? 0)
                       const descTri = plano?.descontoTrimestral != null ? Number(plano.descontoTrimestral) : 5
                       const descAnu = plano?.descontoAnual      != null ? Number(plano.descontoAnual)      : 10
