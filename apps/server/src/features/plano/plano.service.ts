@@ -25,9 +25,11 @@ import {
   updatePlano,
 } from '@startbig/database'
 import { criarPlanoSchema, editarPlanoSchema } from '@startbig/schemas'
+import { StripeService } from '../../common/stripe/stripe.service'
 
 @Injectable()
 export class PlanoService {
+  constructor(private readonly stripeService: StripeService) {}
 
   /**
    * Utilitário interno para validar o corpo de uma requisição usando um schema Zod.
@@ -106,6 +108,58 @@ export class PlanoService {
     }
 
     return updatePlano(id, dados)
+  }
+
+  /**
+   * Sincroniza este plano com o catálogo do Stripe e regrava os Price IDs.
+   *
+   * Por que existe: Price no Stripe é IMUTÁVEL. Editar `precoMensal` aqui muda só o
+   * valor que a tela exibe — o Stripe continua cobrando o Price antigo, e o cliente
+   * vê um preço e paga outro. Só criar um Price novo e reapontar o plano resolve,
+   * e é isso que este método faz numa operação, sem ninguém copiar `price_` à mão.
+   *
+   * Período sem preço definido fica sem Price: a tela de pagamento deixa de oferecer
+   * a opção, em vez de mostrar um botão que o gateway recusa.
+   *
+   * Assinaturas já existentes NÃO são afetadas — quem contratou por R$ 89,90 segue
+   * pagando R$ 89,90, porque continua vinculado ao Price antigo. O preço novo vale
+   * para quem assinar a partir de agora.
+   */
+  async sincronizarStripe(id: string) {
+    const plano = await findPlanoById(id)
+    if (!plano) throw new NotFoundException('Plano não encontrado.')
+
+    const emCentavos = (v: unknown) =>
+      v == null ? null : Math.round(Number(v) * 100)
+
+    const { produtoId, produtoCriado, resultados } = await this.stripeService.sincronizarCatalogo({
+      nome:      plano.nome,
+      descricao: plano.descricaoCheckout ?? null,
+      periodos: [
+        { periodo: 'mensal',     valorCentavos: emCentavos(plano.precoMensal)     },
+        { periodo: 'trimestral', valorCentavos: emCentavos(plano.precoTrimestral) },
+        { periodo: 'anual',      valorCentavos: emCentavos(plano.precoAnual)      },
+      ],
+    })
+
+    const idDe = (periodo: string) => resultados.find(r => r.periodo === periodo)?.priceId ?? null
+
+    const atualizado = await updatePlano(plano.id, {
+      stripePriceIdMensal:     idDe('mensal'),
+      stripePriceIdTrimestral: idDe('trimestral'),
+      stripePriceIdAnual:      idDe('anual'),
+    })
+
+    return {
+      msg: `Catálogo sincronizado no Stripe (${this.stripeService.emModoLive ? 'LIVE — dinheiro real' : 'TEST'}).`,
+      data: {
+        modo:      this.stripeService.emModoLive ? 'LIVE' : 'TEST',
+        produtoId,
+        produtoCriado,
+        resultados,
+        plano: atualizado,
+      },
+    }
   }
 
   /**

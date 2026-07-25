@@ -45,6 +45,15 @@ export class PlanoController {
     return this.planoService.editar(id, body)
   }
 
+  /**
+   * Cria/atualiza o produto e os Prices deste plano no Stripe e regrava os Price IDs.
+   * É a operação que faz o valor cobrado alcançar o valor cadastrado aqui.
+   */
+  @Post(':id/sincronizar-stripe')
+  async sincronizarStripe(@Param('id') id: string) {
+    return this.planoService.sincronizarStripe(id)
+  }
+
   @Patch(':id/desativar')
   async desativar(@Param('id') id: string) {
     return this.planoService.desativar(id)

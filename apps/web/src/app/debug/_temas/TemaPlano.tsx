@@ -47,6 +47,7 @@ interface Plano {
   valorLicencaAdicional: number | string | null
   descontoTrimestral: number | string | null
   descontoAnual: number | string | null
+  descricaoCheckout: string | null
   stripePriceIdMensal: string | null
   stripePriceIdTrimestral: string | null
   stripePriceIdAnual: string | null
@@ -69,7 +70,7 @@ function BadgeStatus({ status }: { status: string }) {
 }
 
 const camposVazios = {
-  nome: '', limiteUsuario: '1', precoMensal: '',
+  nome: '', descricaoCheckout: '', limiteUsuario: '1', precoMensal: '',
   precoTrimestral: '', precoAnual: '',
   valorLicencaAdicional: '', descontoTrimestral: '', descontoAnual: '',
   stripePriceIdMensal: '', stripePriceIdTrimestral: '', stripePriceIdAnual: '',
@@ -122,6 +123,7 @@ export function TemaPlano() {
     setResultSalvar(null)
     setForm({
       nome: p.nome,
+      descricaoCheckout: p.descricaoCheckout ?? '',
       limiteUsuario: String(p.limiteUsuario),
       precoMensal: String(Number(p.precoMensal)),
       precoTrimestral: p.precoTrimestral != null ? String(Number(p.precoTrimestral)) : '',
@@ -143,6 +145,7 @@ export function TemaPlano() {
 
   const buildBody = () => ({
     nome: form.nome,
+    ...(form.descricaoCheckout ? { descricaoCheckout: form.descricaoCheckout } : {}),
     limiteUsuario: parseInt(form.limiteUsuario) || 1,
     precoMensal: parseFloat(form.precoMensal) || 0,
     ...(form.precoTrimestral    ? { precoTrimestral:       parseFloat(form.precoTrimestral) }    : {}),
@@ -169,6 +172,25 @@ export function TemaPlano() {
     const r = await api(`/api/plano/${id}/${tipo}`, { method: 'PATCH' })
     setLoadAcao(prev => ({ ...prev, [id]: false }))
     setResultAcao(prev => ({ ...prev, [id]: r }))
+    if (r.ok) await listar()
+  }
+
+  // Cria/atualiza produto e Prices deste plano no Stripe e regrava os price_ aqui.
+  // Sem isso, editar o preço acima muda só o valor exibido: o Stripe continua
+  // cobrando o Price antigo, porque Price no Stripe é imutável.
+  const sincronizar = async (p: Plano) => {
+    const ok = window.confirm(
+      `Sincronizar "${p.nome}" com o Stripe?\n\n` +
+      `Cria (ou reaproveita) produto e preços no Stripe com os valores cadastrados aqui ` +
+      `e regrava os Price IDs deste plano.\n\n` +
+      `Assinaturas já existentes NÃO mudam de valor — o preço novo vale para quem assinar a partir de agora.`,
+    )
+    if (!ok) return
+
+    setLoadAcao(prev => ({ ...prev, [p.id]: true }))
+    const r = await api(`/api/plano/${p.id}/sincronizar-stripe`, { method: 'POST' })
+    setLoadAcao(prev => ({ ...prev, [p.id]: false }))
+    setResultAcao(prev => ({ ...prev, [p.id]: r }))
     if (r.ok) await listar()
   }
 
@@ -227,6 +249,23 @@ export function TemaPlano() {
             <input type="number" className={`${ic} focus:border-purple-500`} placeholder="Ex: 20" min={0} max={100}
               value={form.descontoAnual} onChange={fn('descontoAnual')} />
           </Field>
+          <div className="col-span-2">
+            <Field label="Descrição exibida no checkout">
+              <textarea
+                className={`${ic} focus:border-purple-500 h-20 resize-y`}
+                placeholder="O que o cliente lê abaixo do preço, na tela de pagamento. Ex: Gestão completa da sua loja: PDV, ordens de serviço, estoque..."
+                maxLength={500}
+                value={form.descricaoCheckout}
+                onChange={e => setForm(prev => ({ ...prev, descricaoCheckout: e.target.value }))}
+              />
+            </Field>
+            <p className="text-[10px] text-slate-500 mt-1">
+              {form.descricaoCheckout.length}/500 — este texto é <strong className="text-slate-400">público</strong>: aparece
+              para quem vai pagar. Não coloque margem de parceiro, custo ou canal de venda. Só vale no Stripe depois de
+              clicar em <strong className="text-purple-400">Sincronizar Stripe</strong>.
+            </p>
+          </div>
+
           <Field label="Stripe Price ID Mensal">
             <input className={`${ic} focus:border-purple-500 font-mono text-xs`} placeholder="price_..."
               value={form.stripePriceIdMensal} onChange={fn('stripePriceIdMensal')} />
@@ -295,6 +334,25 @@ export function TemaPlano() {
                     {p.valorLicencaAdicional && <span className="text-slate-500">Lic. adicional: <span className="text-slate-300">{fmt(p.valorLicencaAdicional)}</span></span>}
                   </div>
 
+                  {/* Período com preço cadastrado mas sem Price no Stripe some da tela de
+                      pagamento — é a divergência mais fácil de criar sem perceber. */}
+                  {(() => {
+                    const pendentes = ([
+                      ['Mensal',     p.precoMensal,     p.stripePriceIdMensal],
+                      ['Trimestral', p.precoTrimestral, p.stripePriceIdTrimestral],
+                      ['Anual',      p.precoAnual,      p.stripePriceIdAnual],
+                    ] as const)
+                      .filter(([, preco, priceId]) => preco != null && Number(preco) > 0 && !priceId)
+                      .map(([label]) => label)
+
+                    return pendentes.length > 0 ? (
+                      <p className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-600/30 rounded px-2 py-1 mb-2">
+                        Sem preço no Stripe: <strong>{pendentes.join(', ')}</strong> — o cliente não vê{' '}
+                        {pendentes.length > 1 ? 'essas opções' : 'essa opção'} na tela de pagamento. Use “Sincronizar Stripe”.
+                      </p>
+                    ) : null
+                  })()}
+
                   <p className="text-[10px] font-mono text-slate-700 truncate">ID: {p.id}</p>
                 </div>
 
@@ -302,6 +360,11 @@ export function TemaPlano() {
                   <button onClick={() => preencherForm(p)}
                     className="px-3 py-1 rounded text-xs font-bold border border-blue-700/60 text-blue-400 hover:bg-blue-900/30 transition">
                     Editar
+                  </button>
+                  <button onClick={() => sincronizar(p)} disabled={loadAcao[p.id]}
+                    title="Cria/atualiza produto e preços no Stripe e regrava os Price IDs deste plano"
+                    className="px-3 py-1 rounded text-xs font-bold border border-purple-700/60 text-purple-300 hover:bg-purple-900/30 disabled:opacity-50 transition">
+                    {loadAcao[p.id] ? '...' : 'Sincronizar Stripe'}
                   </button>
                   {p.status === 'ATIVO'
                     ? <button onClick={() => acao(p.id, 'desativar')} disabled={loadAcao[p.id]}

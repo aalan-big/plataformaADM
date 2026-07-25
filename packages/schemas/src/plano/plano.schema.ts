@@ -2,6 +2,9 @@ import { z } from 'zod'
 
 export const criarPlanoSchema = z.object({
   nome:                   z.string().min(2),
+  // Exibida ao cliente no checkout do Stripe. O limite é o do próprio campo do
+  // Stripe; acima disso o texto vira um bloco denso na tela de pagamento.
+  descricaoCheckout:      z.string().max(500).optional(),
   limiteUsuario:          z.number().int().min(1),
   precoMensal:            z.number().min(0),
   precoTrimestral:        z.number().min(0).optional(),

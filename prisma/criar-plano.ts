@@ -142,6 +142,9 @@ async function main() {
 
   const dados = {
     nome:                    preset.nome,
+    // Grava também no banco: a partir daí quem manda na descrição é o painel
+    // (/debug → Plano → "Descrição exibida no checkout" + Sincronizar Stripe).
+    descricaoCheckout:       preset.descricao,
     limiteUsuario,
     precoMensal:             preset.precos.mensal.valor     / 100,
     precoTrimestral:         preset.precos.trimestral.valor / 100,

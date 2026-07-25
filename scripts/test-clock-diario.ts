@@ -32,18 +32,21 @@ async function main() {
   console.log(`1) Test clock criado: ${clock.id}`)
 
   const customer = await stripe.customers.create({
-    name:             'Cliente Teste Diário',
-    email:            'teste-diario@startbig.local',
-    test_clock:       clock.id,
-    payment_method:   'pm_card_visa',
-    invoice_settings: { default_payment_method: 'pm_card_visa' },
+    name:       'Cliente Teste Diário',
+    email:      'teste-diario@startbig.local',
+    test_clock: clock.id,
   })
-  console.log(`2) Customer no clock: ${customer.id} (cartão de teste anexado)`)
+
+  // Cria um cartão de teste (tok_visa) e anexa como padrão do customer.
+  const pm = await stripe.paymentMethods.create({ type: 'card', card: { token: 'tok_visa' } })
+  await stripe.paymentMethods.attach(pm.id, { customer: customer.id })
+  await stripe.customers.update(customer.id, { invoice_settings: { default_payment_method: pm.id } })
+  console.log(`2) Customer no clock: ${customer.id} (cartão ${pm.id} anexado)`)
 
   const sub: any = await stripe.subscriptions.create({
     customer:               customer.id,
     items:                  [{ price: PRICE_ID }],
-    default_payment_method: 'pm_card_visa',
+    default_payment_method: pm.id,
     metadata:               { licencaId: LICENCA_ID, meses: '1' },
   })
   console.log(`3) Assinatura criada: ${sub.id} | status: ${sub.status}  (1ª cobrança de hoje)`)

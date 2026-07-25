@@ -38,6 +38,7 @@ export async function countLicencasAtivasByPlano(planoId: string) {
 
 export async function criarPlano(data: {
   nome:                    string
+  descricaoCheckout?:      string
   limiteUsuario:           number
   precoMensal:             number
   precoTrimestral?:        number
@@ -54,6 +55,7 @@ export async function criarPlano(data: {
 
 export async function updatePlano(id: string, data: {
   nome?:                   string
+  descricaoCheckout?:      string | null
   limiteUsuario?:          number
   precoMensal?:            number
   precoTrimestral?:        number | null

@@ -222,6 +222,109 @@ export class StripeService {
   }
 
   /**
+   * Garante que o catálogo do Stripe reflita um plano do nosso banco: acha ou cria o
+   * produto pelo nome, reaplica a descrição (que o cliente LÊ no checkout) e, para
+   * cada período com preço definido, acha ou cria o Price correspondente.
+   *
+   * Existe porque Price no Stripe é imutável: editar o preço no painel muda só o
+   * valor exibido: o Stripe continua cobrando o Price antigo até alguém apontar o
+   * plano para um novo. Este método fecha esse buraco em uma operação.
+   *
+   * Não apaga nem arquiva Price antigo — assinatura viva nele continua válida, e é
+   * assim que o cliente que assinou por R$ 89,90 mantém o preço que contratou.
+   */
+  async sincronizarCatalogo(dados: {
+    nome:      string
+    descricao: string | null
+    metadata?: Record<string, string>
+    periodos:  { periodo: 'mensal' | 'trimestral' | 'anual'; valorCentavos: number | null }[]
+  }): Promise<{
+    produtoId:     string
+    produtoCriado: boolean
+    resultados:    { periodo: string; priceId: string | null; valor: number | null; acao: 'criado' | 'reaproveitado' | 'sem-preco' }[]
+  }> {
+    const RECORRENCIA = {
+      mensal:     { interval: 'month', interval_count: 1 },
+      trimestral: { interval: 'month', interval_count: 3 },
+      anual:      { interval: 'year',  interval_count: 1 },
+    } as const
+
+    const jaExiste = await this.acharProdutoPorNome(dados.nome)
+
+    const produto = jaExiste
+      ? await this.stripe.products.update(jaExiste.id, {
+          description: dados.descricao ?? undefined,
+          ...(dados.metadata ? { metadata: dados.metadata } : {}),
+        })
+      : await this.stripe.products.create({
+          name:        dados.nome,
+          description: dados.descricao ?? undefined,
+          ...(dados.metadata ? { metadata: dados.metadata } : {}),
+        })
+
+    const resultados: { periodo: string; priceId: string | null; valor: number | null; acao: 'criado' | 'reaproveitado' | 'sem-preco' }[] = []
+
+    for (const { periodo, valorCentavos } of dados.periodos) {
+      // Período sem preço no plano não deve ter Price: é o que faz a tela de
+      // pagamento parar de oferecer uma opção que o plano não precifica mais.
+      if (valorCentavos == null || valorCentavos <= 0) {
+        resultados.push({ periodo, priceId: null, valor: null, acao: 'sem-preco' })
+        continue
+      }
+
+      const rec       = RECORRENCIA[periodo]
+      const existente = await this.acharPrice(produto.id, valorCentavos, rec)
+
+      const price = existente ?? (await this.stripe.prices.create({
+        product:     produto.id,
+        currency:    'brl',
+        unit_amount: valorCentavos,
+        recurring:   rec,
+      }))
+
+      resultados.push({
+        periodo,
+        priceId: price.id,
+        valor:   valorCentavos / 100,
+        acao:    existente ? 'reaproveitado' : 'criado',
+      })
+    }
+
+    this.logger.log(`Catálogo sincronizado (${this.modoLive ? 'LIVE' : 'TEST'}): ${dados.nome} → produto ${produto.id}`)
+    return { produtoId: produto.id, produtoCriado: !jaExiste, resultados }
+  }
+
+  /** Produto ATIVO com o nome exato — evita duplicar o catálogo a cada sincronização. */
+  private async acharProdutoPorNome(nome: string) {
+    for await (const p of this.stripe.products.list({ active: true, limit: 100 })) {
+      if (p.name === nome) return p
+    }
+    return null
+  }
+
+  /** Price ATIVO do produto com exatamente o mesmo valor, moeda e periodicidade. */
+  private async acharPrice(
+    produtoId: string,
+    valorCentavos: number,
+    rec: { interval: 'month' | 'year'; interval_count: number },
+  ) {
+    for await (const p of this.stripe.prices.list({ product: produtoId, active: true, limit: 100 })) {
+      if (
+        p.unit_amount === valorCentavos &&
+        p.currency === 'brl' &&
+        p.recurring?.interval === rec.interval &&
+        (p.recurring?.interval_count ?? 1) === rec.interval_count
+      ) return p
+    }
+    return null
+  }
+
+  /** Diz se esta instância está operando com chave live — usado para avisar na UI. */
+  get emModoLive(): boolean {
+    return this.modoLive
+  }
+
+  /**
    * Troca o Price de uma assinatura existente (mesma assinatura, cartão já salvo).
    * - quando = 'imediato'     → upgrade: cobra a diferença proporcional AGORA (proration).
    * - quando = 'fim_do_ciclo' → downgrade: sem cobrança/estorno agora; o novo preço

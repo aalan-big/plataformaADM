@@ -28,6 +28,9 @@ enum TipoTransacao {
 model Plano {
   id                       String    @id @default(uuid())
   nome                     String    @unique
+  /// Texto exibido ao cliente na tela de pagamento do Stripe, abaixo do preço.
+  /// Nada de informação comercial interna aqui (margem, canal, custo) — é público.
+  descricaoCheckout        String?
   limiteUsuario            Int       @default(1)
   precoMensal              Decimal   @db.Decimal(10, 2)
   precoTrimestral          Decimal?  @db.Decimal(10, 2)
