@@ -258,8 +258,8 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
 
     if (!licenca.stripeSubscriptionId)
       return {
-        tipo:  'imediato' as const,
-        aviso: 'Não há assinatura ativa no Stripe: a troca vale na hora e nada é cobrado do cliente.',
+        tipo:  'sem_assinatura' as const,
+        aviso: 'Sem assinatura ativa no Stripe, não há cartão para cobrar a diferença. A troca sai pelo link de pagamento abaixo.',
         cor:   'text-slate-400',
       }
 
@@ -526,40 +526,10 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
 
                   {mostrarAdmin && (
                     <div className="px-5 py-4 space-y-3 border-t border-slate-700/50">
-                      {/* Troca de plano SEM cobrar. Mora aqui dentro, e não no
-                          bloco de plano, porque o caminho normal é vender a
-                          troca: quem chega neste botão precisou abrir a seção e
-                          ler o aviso. Serve para correção e cortesia. */}
-                      {planoSel && planoSel !== licenca.plano?.id && (
-                        <div className="bg-amber-500/5 border border-amber-600/30 rounded-lg px-3 py-3 space-y-2">
-                          <p className="flex items-start gap-2 text-[11px] text-amber-400 leading-relaxed">
-                            <AlertCircle size={12} className="shrink-0 mt-0.5" />
-                            <span>
-                              Mover para <strong>{planos.find(p => p.id === planoSel)?.nome}</strong> sem cobrar nada.
-                              Use só para correção de cadastro ou cortesia — o cliente ganha o plano na hora, de graça.
-                            </span>
-                          </p>
-                          <button
-                            onClick={trocarPlano}
-                            disabled={trocandoPlano}
-                            className="w-full flex items-center justify-center gap-1.5 px-4 py-2 text-[11px] font-semibold text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-600/30 disabled:opacity-40 rounded-lg transition-colors"
-                          >
-                            {trocandoPlano ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
-                            Aplicar troca sem cobrança
-                          </button>
-                          {msgPlano && (
-                            <p className="flex items-start gap-1.5 text-[11px] text-emerald-400">
-                              <CheckCheck size={12} className="shrink-0 mt-0.5" /> {msgPlano}
-                            </p>
-                          )}
-                          {erroPlano && (
-                            <p className="flex items-start gap-1.5 text-[11px] text-red-400">
-                              <AlertCircle size={12} className="shrink-0 mt-0.5" /> {erroPlano}
-                            </p>
-                          )}
-                        </div>
-                      )}
-
+                      {/* Não existe mais atalho para mover a licença de plano sem
+                          cobrar — nem aqui dentro. Plano se vende: ou o Stripe
+                          cobra a diferença na assinatura viva, ou o cliente paga
+                          o link. As duas coisas ficam no bloco Plano da Licença. */}
                       <div className="flex flex-wrap gap-2">
                         {licenca.status !== 'BLOQUEADA' && licenca.status !== 'REVOGADA' && (
                           <BotaoAcao onClick={() => executarAcao('bloquear')} disabled={executando}
@@ -649,23 +619,46 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
                       </div>
                     )}
 
-                    {/* Não existe botão de aplicar aqui, de propósito: a troca é
-                        vendida, não concedida. Selecionar o plano só prepara o
-                        link de pagamento — quem muda a licença é o webhook,
-                        depois que o dinheiro entra. O atalho que aplica sem
-                        cobrar ficou em Controles Administrativos, onde é preciso
-                        abrir a seção e ler o aviso para chegar nele. */}
-                    {planoSel !== licenca.plano?.id ? (
+                    {/* Nenhum caminho daqui move a licença de graça, e qual dos
+                        dois aparece depende de existir assinatura: com cartão
+                        vivo, o Stripe cobra a diferença agora; sem cartão, só o
+                        link de pagamento. Não há terceira opção — plano é venda. */}
+                    {planoSel === licenca.plano?.id ? (
+                      <p className="text-[11px] text-slate-600">
+                        Selecione o plano de destino para gerar a cobrança da troca.
+                      </p>
+                    ) : licenca.stripeSubscriptionId ? (
+                      <>
+                        <button
+                          onClick={trocarPlano}
+                          disabled={trocandoPlano}
+                          className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
+                        >
+                          {trocandoPlano ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+                          Aplicar troca cobrando pelo Stripe
+                        </button>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Usa o cartão já salvo na assinatura. Upgrade cobra a diferença na hora;
+                          downgrade entra no fim do ciclo já pago.
+                        </p>
+                        {msgPlano && (
+                          <p className="flex items-start gap-1.5 text-[11px] text-emerald-400">
+                            <CheckCheck size={12} className="shrink-0 mt-0.5" /> {msgPlano}
+                          </p>
+                        )}
+                        {erroPlano && (
+                          <p className="flex items-start gap-1.5 text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                            <AlertCircle size={12} className="shrink-0 mt-0.5" /> {erroPlano}
+                          </p>
+                        )}
+                      </>
+                    ) : (
                       <p className="flex items-start gap-2 text-[11px] text-blue-400 bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2.5 leading-relaxed">
                         <ArrowRight size={12} className="shrink-0 mt-0.5" />
                         <span>
                           Agora gere o <strong>link de pagamento</strong> abaixo. A licença passa para este plano
                           sozinha quando o cliente pagar — nada muda antes disso.
                         </span>
-                      </p>
-                    ) : (
-                      <p className="text-[11px] text-slate-600">
-                        Selecione o plano de destino para gerar a cobrança da troca.
                       </p>
                     )}
 

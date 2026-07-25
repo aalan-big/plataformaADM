@@ -328,6 +328,13 @@ export class DispositivoService {
   // Troca de plano no padrão SaaS: upgrade vale na hora (cobrança proporcional),
   // downgrade só no fim do ciclo já pago. Usa a assinatura existente (cartão salvo),
   // sem gerar assinatura nova — o que também elimina a duplicidade na raiz.
+  //
+  // Esta rota NÃO move licença de graça. Ela existe para o cliente que já tem
+  // assinatura ativa: o Stripe cobra a diferença e a licença acompanha. Sem
+  // assinatura não há cartão para cobrar aqui, e o caminho passa a ser o link de
+  // pagamento — o checkout carrega o plano de destino e o webhook move a licença
+  // depois que o dinheiro entra. Os dois caminhos juntos cobrem a base inteira,
+  // e em nenhum deles o plano muda antes do pagamento.
   async trocarPlano(licencaId: string, body: unknown) {
     const planoId = (body as { planoId?: string })?.planoId
     if (!planoId || typeof planoId !== 'string')
@@ -344,20 +351,20 @@ export class DispositivoService {
 
     // A licença pode carregar um stripeSubscriptionId que não existe mais nesta
     // conta/modo — típico depois da virada de test para live, onde a assinatura
-    // antiga é de outro catálogo. Consultar o Stripe direto estourava 500 e a
-    // troca "não funcionava" sem explicação. `assinaturaAtiva` já engole o erro
-    // e devolve false, então uma assinatura fantasma vira o caso "sem assinatura".
+    // antiga é de outro catálogo. `assinaturaAtiva` trata esse caso como "não
+    // tem assinatura"; falha de comunicação com o Stripe, essa sim, estoura.
     const subId = licenca.stripeSubscriptionId && await this.stripeService.assinaturaAtiva(licenca.stripeSubscriptionId)
       ? licenca.stripeSubscriptionId
       : null
 
-    // Sem assinatura recorrente ativa (trial / pagamento manual): troca direta.
-    // Não há proporção a cobrar nem próximo ciclo para agendar.
-    if (!subId) {
-      await updateLicenca(licencaId, { planoId, planoPendenteId: null })
-      await registrarEventoLicenca(licencaId, { tipo: 'TROCA_PLANO', chaveAtivacao: licenca.chaveAtivacao, observacao: `Plano alterado para "${planoNovo.nome}" (sem assinatura ativa — imediato).` })
-      return { msg: `Plano alterado para "${planoNovo.nome}".`, aplicacao: 'imediata' as const }
-    }
+    // Sem assinatura recorrente ativa (trial / pagamento manual / assinatura
+    // cancelada): não existe cartão para cobrar a diferença, e mover a licença
+    // aqui seria entregar o plano novo de graça. Manda para o fluxo pago.
+    if (!subId)
+      throw new BadRequestException(
+        `Esta licença não tem assinatura ativa no Stripe, então não há como cobrar a troca por aqui. ` +
+        `Gere o link de pagamento com "${planoNovo.nome}" selecionado: a licença passa para o plano novo sozinha assim que o pagamento cair.`,
+      )
 
     // Com assinatura: mantém o mesmo período de cobrança e usa o Price equivalente do novo plano.
     const periodo = await this.stripeService.periodoDaSubscription(subId)

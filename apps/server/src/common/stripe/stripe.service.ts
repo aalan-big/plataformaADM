@@ -218,13 +218,27 @@ export class StripeService {
    * Diz se uma assinatura ainda está "viva" no Stripe (cobrando). Usado para
    * impedir a criação de uma 2ª assinatura (cobrança duplicada) quando já existe
    * uma ativa. Se a assinatura não existir mais, retorna false (não bloqueia).
+   *
+   * Só o "não existe" (resource_missing — inclui a assinatura de outro modo/conta,
+   * típico depois da virada test → live) vira false. Qualquer outra falha — chave
+   * errada, timeout, indisponibilidade — ESTOURA, de propósito: antes um catch
+   * mudo transformava erro de rede em "não tem assinatura", e quem decide a partir
+   * disso ou dava o plano de graça ou criava uma 2ª assinatura em cima da que já
+   * cobrava. Na dúvida sobre dinheiro, é melhor falhar alto do que adivinhar.
    */
   async assinaturaAtiva(subscriptionId: string): Promise<boolean> {
     try {
       const sub = await this.stripe.subscriptions.retrieve(subscriptionId)
       return ['active', 'trialing', 'past_due', 'unpaid'].includes(sub.status)
-    } catch {
-      return false
+    } catch (err) {
+      const code = (err as { code?: string; statusCode?: number })?.code
+      const http = (err as { statusCode?: number })?.statusCode
+      if (code === 'resource_missing' || http === 404) return false
+
+      this.logger.error(`Falha ao consultar a assinatura ${subscriptionId} no Stripe: ${err instanceof Error ? err.message : err}`)
+      throw new BadRequestException(
+        'Não foi possível confirmar a situação da assinatura no Stripe agora. Tente de novo em alguns instantes — nada foi alterado.',
+      )
     }
   }
 
