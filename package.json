@@ -16,7 +16,7 @@
     "db:push": "dotenv -e apps/server/.env -- prisma db push",
     "db:generate": "prisma generate",
     "db:seed": "dotenv -e apps/server/.env -- tsx prisma/seed.ts",
-    "deploy": "git pull && npm install && npm run db:push && pm2 restart api web --update-env"
+    "deploy": "git pull && npm install && npm run db:push && npm run build && pm2 restart api web --update-env"
   },
   "prisma": {
     "seed": "dotenv -e apps/server/.env -- tsx prisma/seed.ts"

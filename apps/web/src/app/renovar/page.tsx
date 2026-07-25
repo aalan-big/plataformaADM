@@ -189,9 +189,12 @@ function RenovarConteudo() {
           </div>
         )}
 
-        <div className="flex items-center gap-2 text-[11px] text-slate-500">
-          <ShieldCheck size={12} className="text-emerald-400 shrink-0" />
-          Pagamento seguro via Asaas — PIX, Boleto ou Cartão
+        <div className="flex items-start gap-2 text-[11px] text-slate-500">
+          <ShieldCheck size={12} className="text-emerald-400 shrink-0 mt-0.5" />
+          <span>
+            Pagamento seguro via Stripe — cartão de crédito.
+            {opcao && ` Assinatura recorrente: ${formatarReais(opcao.total)} a cada ${opcao.meses === 1 ? 'mês' : `${opcao.meses} meses`}, renovada automaticamente até você cancelar.`}
+          </span>
         </div>
 
         {erroCobranca && (

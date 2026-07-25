@@ -235,10 +235,26 @@ export class FinanceiroService {
       const jaProcessado = await findPagamentoByTransacaoId(sessionId)
       if (jaProcessado) return { msg: 'Pagamento já processado' }
 
-      if (!licencaId) return { msg: 'licencaId ausente nos metadados — ignorado' }
+      if (!licencaId) {
+        await this.alarmarDescarte({
+          evento:     'checkout.session.completed',
+          motivo:     'Sessão sem metadata.licencaId — pagamento nascido fora do fluxo da plataforma (ex.: Payment Link avulso)',
+          referencia: sessionId,
+          valor:      (amountTotal ?? 0) / 100,
+        })
+        return { msg: 'licencaId ausente nos metadados — ignorado' }
+      }
 
       const licenca = await findLicencaById(licencaId)
-      if (!licenca) throw new NotFoundException('Licença não encontrada.')
+      if (!licenca) {
+        await this.alarmarDescarte({
+          evento:     'checkout.session.completed',
+          motivo:     `Licença ${licencaId} não existe mais no banco (apagada depois do checkout?)`,
+          referencia: sessionId,
+          valor:      (amountTotal ?? 0) / 100,
+        })
+        throw new NotFoundException('Licença não encontrada.')
+      }
 
       const resultado = await this.processarRenovacao({
         licenca, meses, valor: (amountTotal ?? 0) / 100, transacaoId: sessionId, gateway: 'STRIPE', origem: 'STRIPE',
@@ -268,7 +284,15 @@ export class FinanceiroService {
     // ── 2. Fatura paga: renovação de ciclo OU ajuste proporcional de plano (upgrade)
     if (evento.tipo === 'invoice.payment_succeeded') {
       const { invoiceId, subscriptionId, amountTotal, billingReason, licencaId: metaLicencaId, meses: metaMeses } = (evento as any).dados
-      if (!subscriptionId) return { msg: 'subscriptionId ausente — ignorado' }
+      if (!subscriptionId) {
+        await this.alarmarDescarte({
+          evento:     'invoice.payment_succeeded',
+          motivo:     'Fatura paga sem assinatura vinculada — impossível saber de quem é',
+          referencia: invoiceId,
+          valor:      amountTotal,
+        })
+        return { msg: 'subscriptionId ausente — ignorado' }
+      }
 
       // Idempotência: o id da fatura é estável e único. Se o Stripe reenviar o mesmo
       // webhook (entrega "pelo menos uma vez"), não reprocessa — evita renovar/cobrar em dobro.
@@ -277,7 +301,15 @@ export class FinanceiroService {
 
       let licenca = await findLicencaByStripeSubscriptionId(subscriptionId)
       if (!licenca && metaLicencaId) licenca = await findLicencaById(metaLicencaId)
-      if (!licenca) return { msg: `Licença com subscription ${subscriptionId} não encontrada — ignorado` }
+      if (!licenca) {
+        await this.alarmarDescarte({
+          evento:     'invoice.payment_succeeded',
+          motivo:     `Nenhuma licença com stripeSubscriptionId ${subscriptionId} — o cliente pagou e a renovação NÃO foi aplicada`,
+          referencia: invoiceId,
+          valor:      amountTotal,
+        })
+        return { msg: `Licença com subscription ${subscriptionId} não encontrada — ignorado` }
+      }
 
       // Upgrade: o Stripe cobra a diferença proporcional numa fatura "subscription_update".
       // Registra o valor no financeiro SEM mexer no vencimento (não é renovação).
@@ -289,7 +321,19 @@ export class FinanceiroService {
       }
 
       // Só a fatura de ciclo renova a licença (a do 1º pagamento é tratada no checkout)
-      if (billingReason !== 'subscription_cycle') return { msg: `billing_reason "${billingReason}" ignorado` }
+      if (billingReason !== 'subscription_cycle') {
+        // 'subscription_create' é o 1º pagamento e já foi processado no checkout — descarte esperado.
+        // Qualquer outro motivo com valor cobrado é dinheiro entrando sem contrapartida: alarma.
+        if (billingReason !== 'subscription_create' && amountTotal > 0) {
+          await this.alarmarDescarte({
+            evento:     'invoice.payment_succeeded',
+            motivo:     `billing_reason inesperado "${billingReason}" — cobrado do cliente, mas nenhuma regra tratou`,
+            referencia: invoiceId,
+            valor:      amountTotal,
+          })
+        }
+        return { msg: `billing_reason "${billingReason}" ignorado` }
+      }
 
       // meses vem da metadata da fatura; só chama a API se por algum motivo não veio
       const meses = metaMeses ?? (await this.stripeService.buscarMetadadosSubscription(subscriptionId)).meses
@@ -314,7 +358,15 @@ export class FinanceiroService {
       const { subscriptionId, licencaId: metaLicencaId } = (evento as any).dados
       let licenca = subscriptionId ? await findLicencaByStripeSubscriptionId(subscriptionId) : null
       if (!licenca && metaLicencaId) licenca = await findLicencaById(metaLicencaId)
-      if (!licenca) return { msg: 'Licença não encontrada para fatura falha — ignorado' }
+      if (!licenca) {
+        await this.alarmarDescarte({
+          evento:     'invoice.payment_failed',
+          motivo:     `Cobrança recusada numa assinatura sem licença correspondente (${subscriptionId}) — cliente não foi avisado`,
+          referencia: subscriptionId ?? '(sem subscription)',
+          valor:      null,
+        })
+        return { msg: 'Licença não encontrada para fatura falha — ignorado' }
+      }
 
       const nomeCliente = !!licenca.cliente.pf
         ? (licenca.cliente.pf?.nomeCompleto ?? licenca.cliente.email)
@@ -335,7 +387,15 @@ export class FinanceiroService {
     if (evento.tipo === 'customer.subscription.deleted') {
       const { subscriptionId } = (evento as any).dados
       const licenca = await findLicencaByStripeSubscriptionId(subscriptionId)
-      if (!licenca) return { msg: 'Licença não encontrada para essa assinatura — ignorado' }
+      if (!licenca) {
+        await this.alarmarDescarte({
+          evento:     'customer.subscription.deleted',
+          motivo:     'Assinatura encerrada sem licença correspondente — ninguém foi desvinculado no banco',
+          referencia: subscriptionId,
+          valor:      null,
+        })
+        return { msg: 'Licença não encontrada para essa assinatura — ignorado' }
+      }
 
       // Para as renovações futuras, mas mantém o acesso até o fim do período já pago
       // (a licença expira naturalmente pela dataVencimento, via cron/validar).
@@ -360,11 +420,23 @@ export class FinanceiroService {
       
       const licencaId = externalReference
       if (!licencaId) {
+        await this.alarmarDescarte({
+          evento:     `asaas:${body.event}`,
+          motivo:     'Pagamento Asaas sem externalReference (licencaId)',
+          referencia: transacaoId,
+          valor:      value ?? null,
+        })
         return { msg: 'externalReference (licencaId) ausente no pagamento Asaas — ignorado' }
       }
 
       const licenca = await findLicencaById(licencaId)
       if (!licenca) {
+        await this.alarmarDescarte({
+          evento:     `asaas:${body.event}`,
+          motivo:     `Licença ${licencaId} do externalReference não existe no banco`,
+          referencia: transacaoId,
+          valor:      value ?? null,
+        })
         return { msg: `Licença não encontrada para externalReference ${licencaId} — ignorado` }
       }
 
@@ -389,6 +461,28 @@ export class FinanceiroService {
     }
 
     return { msg: `Evento Asaas ${body.event} ignorado` }
+  }
+
+  // ── Helper: alarme de descarte ─────────────────────────────────────────────
+
+  /**
+   * Chamado sempre que um evento de DINHEIRO é descartado sem alterar licença nenhuma.
+   * O descarte em si continua sendo a resposta certa (não dá pra adivinhar o dono do
+   * pagamento) — o que não pode é ser silencioso: sem aviso, quem descobre é o cliente,
+   * semanas depois. Nunca propaga erro: alarme quebrado não pode derrubar o webhook.
+   */
+  private async alarmarDescarte(dados: {
+    evento:     string
+    motivo:     string
+    referencia: string
+    valor:      number | null
+  }) {
+    console.warn(`[alarme] ${dados.evento} descartado — ${dados.motivo} (ref ${dados.referencia})`)
+    try {
+      await this.emailService.enviarAlertaWebhookDescartado(dados)
+    } catch (err) {
+      console.error('[alarme] falha ao enviar alerta de descarte:', err instanceof Error ? err.message : err)
+    }
   }
 
   // ── Helper: renovar licença + registrar pagamento + enviar e-mail ──────────

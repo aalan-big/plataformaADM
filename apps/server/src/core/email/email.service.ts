@@ -240,6 +240,61 @@ export class EmailService {
     this.logger.log(`Alerta de troca de dispositivo enviado para ${dados.email}`)
   }
 
+  /**
+   * Alerta OPERACIONAL (vai para você, não para o cliente): um evento de dinheiro
+   * chegou do gateway e foi descartado sem alterar nada. Sem isso o descarte é
+   * silencioso e você só descobre pela reclamação do cliente, semanas depois.
+   * Precisa de ADMIN_ALERT_EMAIL configurada — sem ela, só registra no log.
+   */
+  async enviarAlertaWebhookDescartado(dados: {
+    evento:     string
+    motivo:     string
+    referencia: string
+    valor:      number | null
+  }) {
+    const destino = process.env.ADMIN_ALERT_EMAIL
+    if (!destino) {
+      this.logger.warn(`ADMIN_ALERT_EMAIL não configurada — alerta de descarte não enviado (${dados.evento}: ${dados.motivo})`)
+      return
+    }
+
+    const valor = dados.valor != null
+      ? dados.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+      : '—'
+
+    await enviar({
+      from:    FROM,
+      to:      destino,
+      subject: `[ALERTA] Pagamento descartado sem licença — ${dados.evento}`,
+      html:    `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0f172a;font-family:Arial,sans-serif;">
+  <div style="max-width:540px;margin:40px auto;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;">
+    <div style="background:#7f1d1d;padding:24px 32px;">
+      <p style="margin:0;color:#fff;font-size:17px;font-weight:700;">Evento de pagamento descartado</p>
+      <p style="margin:4px 0 0;color:#fca5a5;font-size:12px;">Nenhuma licença foi alterada — ação manual necessária</p>
+    </div>
+    <div style="padding:28px 32px;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="font-size:13px;">
+        <tr><td style="color:#64748b;padding:6px 0;width:110px;">Evento</td><td style="color:#e2e8f0;font-family:monospace;">${dados.evento}</td></tr>
+        <tr><td style="color:#64748b;padding:6px 0;">Motivo</td><td style="color:#fbbf24;">${dados.motivo}</td></tr>
+        <tr><td style="color:#64748b;padding:6px 0;">Referência</td><td style="color:#e2e8f0;font-family:monospace;">${dados.referencia}</td></tr>
+        <tr><td style="color:#64748b;padding:6px 0;">Valor</td><td style="color:#e2e8f0;">${valor}</td></tr>
+      </table>
+      <p style="color:#94a3b8;font-size:13px;line-height:1.7;margin:22px 0 0;border-top:1px solid #334155;padding-top:18px;">
+        Procure essa referência no painel do Stripe para identificar o cliente. Se o pagamento for legítimo, confirme manualmente pelo painel admin (Financeiro → confirmar pagamento) ou devolva o valor.
+      </p>
+    </div>
+  </div>
+</body>
+</html>`,
+    })
+
+    this.logger.warn(`Alerta de descarte enviado para ${destino}: ${dados.evento} — ${dados.motivo} (${dados.referencia})`)
+  }
+
   private templateVencimento(d: {
     nomeCliente:   string
     diasRestantes: number

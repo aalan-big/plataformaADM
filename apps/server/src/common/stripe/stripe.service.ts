@@ -59,11 +59,15 @@ export class StripeService {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly stripe: any
 
+  /** Modo desta instância, derivado da própria chave (não do NODE_ENV — que alguém pode esquecer de setar). */
+  private readonly modoLive: boolean
+
   constructor() {
     const key = process.env.STRIPE_SECRET_KEY
     if (!key) throw new Error('STRIPE_SECRET_KEY não configurada')
-    this.stripe = new Stripe(key)
-    this.logger.log('StripeService iniciado')
+    this.stripe   = new Stripe(key)
+    this.modoLive = key.startsWith('sk_live')
+    this.logger.log(`StripeService iniciado — modo ${this.modoLive ? 'LIVE (dinheiro real)' : 'TEST'}`)
   }
 
   async criarCheckoutSession(dados: {
@@ -99,6 +103,16 @@ export class StripeService {
     if (!secret) throw new Error('STRIPE_WEBHOOK_SECRET não configurada')
 
     const event = this.stripe.webhooks.constructEvent(rawBody, signature, secret)
+
+    // Guard de ambiente: a chave define o modo desta instância. Um evento de test mode
+    // chegando numa instância live (ou o contrário) significa endpoint/secret trocado na
+    // configuração — recusa ANTES de tocar em qualquer dado. Falha alto de propósito:
+    // aparece como entrega com erro no painel do Stripe em vez de passar despercebido.
+    if (event.livemode !== this.modoLive) {
+      throw new Error(
+        `Evento em modo ${event.livemode ? 'LIVE' : 'TEST'} recebido numa instância ${this.modoLive ? 'LIVE' : 'TEST'} — recusado. Confira STRIPE_SECRET_KEY e STRIPE_WEBHOOK_SECRET deste ambiente.`,
+      )
+    }
 
     if (event.type === 'checkout.session.completed') {
       const s = event.data.object as any
