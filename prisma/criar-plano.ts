@@ -26,10 +26,13 @@ import Stripe from 'stripe'
 import { prisma, findPlanoByNome, criarPlano, updatePlano } from '@startbig/database'
 
 type Preset = {
-  nome:        string
-  descricao:   string
-  /** Preço que o cliente final paga por mês, para conferência da margem. */
-  revendaMensal: number | null
+  nome:      string
+  /** ATENÇÃO: o Stripe EXIBE isto na tela de checkout, para quem vai pagar.
+   *  Nada de informação comercial interna aqui — margem de parceiro, custo, canal.
+   *  Esse tipo de dado vai em `metadata`, que não é mostrado ao cliente. */
+  descricao: string
+  /** Não aparece para o cliente: serve para você se localizar no painel do Stripe. */
+  metadata:  Record<string, string>
   /** Valores em centavos (BRL) — é o que o Stripe cobra de quem assina. */
   precos: {
     mensal:     { valor: number; label: string; recurring: { interval: 'month' | 'year'; interval_count: number } }
@@ -40,9 +43,9 @@ type Preset = {
 
 const PRESETS: Record<string, Preset> = {
   start: {
-    nome:          'Plano Start',
-    descricao:     'Licença StartBig ERP — venda por parceiro (parceiro recebe R$ 30 de repasse por cliente)',
-    revendaMensal: null,
+    nome:      'Plano Start',
+    descricao: 'Licença de uso do StartBig ERP',
+    metadata:  { canal: 'parceiro', repasse_parceiro_mensal: '30.00' },
     precos: {
       mensal:     { valor:   8990, label: 'Mensal',     recurring: { interval: 'month', interval_count: 1 } },
       trimestral: { valor:  25790, label: 'Trimestral', recurring: { interval: 'month', interval_count: 3 } },
@@ -50,9 +53,9 @@ const PRESETS: Record<string, Preset> = {
     },
   },
   startbig: {
-    nome:          'Plano StartBIG',
-    descricao:     'Licença StartBig ERP — venda direta',
-    revendaMensal: null,
+    nome:      'Plano StartBIG',
+    descricao: 'Licença de uso do StartBig ERP',
+    metadata:  { canal: 'direto' },
     precos: {
       mensal:     { valor:  5990, label: 'Mensal',     recurring: { interval: 'month', interval_count: 1 } },
       trimestral: { valor: 17190, label: 'Trimestral', recurring: { interval: 'month', interval_count: 3 } },
@@ -112,10 +115,16 @@ async function main() {
   const stripe = new Stripe(key)
   const limiteUsuario = Number(process.env.LIMITE_USUARIO ?? 1) || 1
 
-  const produto =
-    (await acharProduto(stripe, preset.nome)) ??
-    (await stripe.products.create({ name: preset.nome, description: preset.descricao }))
-  console.log(`[stripe] produto ${produto.id} (${produto.name})`)
+  const jaCriado = await acharProduto(stripe, preset.nome)
+
+  // Existindo, reaplica descrição e metadata em vez de só reaproveitar: assim rodar
+  // de novo conserta um produto que ficou com o texto errado — e a descrição é
+  // exibida ao cliente no checkout, então texto errado ali é texto errado na venda.
+  const produto = jaCriado
+    ? await stripe.products.update(jaCriado.id, { description: preset.descricao, metadata: preset.metadata })
+    : await stripe.products.create({ name: preset.nome, description: preset.descricao, metadata: preset.metadata })
+
+  console.log(`[stripe] produto ${produto.id} (${produto.name}) ${jaCriado ? '— descrição/metadata reaplicadas' : '— criado'}`)
 
   const priceIds: Record<string, string> = {}
 
