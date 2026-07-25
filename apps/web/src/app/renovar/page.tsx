@@ -50,6 +50,9 @@ function RenovarConteudo() {
       const json = await res.json()
       if (!res.ok) throw new Error(json.message ?? 'Erro ao carregar dados.')
       setDados(json.data)
+      // O backend só devolve períodos com preço configurado; a seleção inicial
+      // precisa acompanhar, senão o botão de pagar aponta para um período ausente.
+      if (json.data?.opcoes?.length) setOpcao(json.data.opcoes[0].meses)
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Erro ao carregar dados.')
     } finally {
@@ -99,6 +102,21 @@ function RenovarConteudo() {
   }
 
   if (!dados) return null
+
+  // Plano sem nenhum período com preço configurado: não há o que vender aqui.
+  // Melhor dizer isso com clareza do que exibir um botão que o gateway recusa.
+  if (dados.opcoes.length === 0) {
+    return (
+      <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl p-8 text-center space-y-3">
+        <AlertCircle size={36} className="text-amber-400 mx-auto" />
+        <p className="text-white font-semibold">Assinatura indisponível no momento</p>
+        <p className="text-slate-400 text-sm leading-relaxed">
+          Não há períodos de pagamento configurados para o plano <strong className="text-slate-300">{dados.plano}</strong>.
+          Entre em contato com o suporte para concluir a contratação.
+        </p>
+      </div>
+    )
+  }
 
   const opcao = dados.opcoes.find(o => o.meses === opcaoSelecionada)
 

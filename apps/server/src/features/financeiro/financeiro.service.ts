@@ -131,11 +131,14 @@ export class FinanceiroService {
       plano:          plano.nome,
       status:         licenca.status,
       dataVencimento: licenca.dataVencimento,
+      // Só entra na tela o período que tem Price configurado no plano. Um botão de
+      // pagar que resulta em erro do gateway é pior do que a opção não existir: o
+      // cliente conclui que o sistema está quebrado e desiste da compra.
       opcoes: [
-        { meses: 1,  label: 'Mensal',      total: parseFloat(preco.toFixed(2)), desconto: 0 },
-        { meses: 3,  label: 'Trimestral',  total: totalTri, desconto: descontoEfetivo(totalTri, 3)  },
-        { meses: 12, label: 'Anual',       total: totalAnu, desconto: descontoEfetivo(totalAnu, 12) },
-      ],
+        { meses: 1,  label: 'Mensal',     total: parseFloat(preco.toFixed(2)), desconto: 0,                             priceId: plano.stripePriceIdMensal     },
+        { meses: 3,  label: 'Trimestral', total: totalTri,                     desconto: descontoEfetivo(totalTri, 3),   priceId: plano.stripePriceIdTrimestral },
+        { meses: 12, label: 'Anual',      total: totalAnu,                     desconto: descontoEfetivo(totalAnu, 12),  priceId: plano.stripePriceIdAnual      },
+      ].filter(o => !!o.priceId).map(({ priceId: _priceId, ...opcao }) => opcao),
     }
   }
 
@@ -177,14 +180,27 @@ export class FinanceiroService {
     if (!stripePriceId)
       throw new BadRequestException(`O plano "${plano.nome}" não tem Stripe Price ID configurado para ${dados.meses} mês(es). Cadastre o price_... no plano.`)
 
-    const result = await this.stripeService.criarCheckoutSession({
-      meses:         dados.meses,
-      licencaId:     dados.licencaId,
-      email:         licenca.cliente.email,
-      stripePriceId,
-    })
+    // O Stripe recusa o checkout se o Price não existir no modo da chave em uso
+    // (o caso clássico: Price de teste com chave live). Sem este try, o cliente
+    // recebia a mensagem crua do gateway e nós não ficávamos sabendo de nada.
+    try {
+      const result = await this.stripeService.criarCheckoutSession({
+        meses:         dados.meses,
+        licencaId:     dados.licencaId,
+        email:         licenca.cliente.email,
+        stripePriceId,
+      })
 
-    return { url: result.url, sessionId: result.sessionId }
+      return { url: result.url, sessionId: result.sessionId }
+    } catch (err) {
+      await this.alarmarFalhaCheckout({
+        motivo:     `Plano "${plano.nome}", ${dados.meses} mês(es), price ${stripePriceId}: ${err instanceof Error ? err.message : err}`,
+        referencia: dados.licencaId,
+      })
+      throw new BadRequestException(
+        'Não foi possível iniciar o pagamento agora. Nossa equipe já foi avisada — tente novamente em alguns minutos ou fale com o suporte.',
+      )
+    }
   }
 
   // ── Confirmação manual (admin) ─────────────────────────────────────────────
@@ -494,9 +510,40 @@ export class FinanceiroService {
   }) {
     console.warn(`[alarme] ${dados.evento} descartado — ${dados.motivo} (ref ${dados.referencia})`)
     try {
-      await this.emailService.enviarAlertaWebhookDescartado(dados)
+      await this.emailService.enviarAlertaOperacional({
+        ...dados,
+        titulo:    'Pagamento descartado sem licença',
+        subtitulo: 'Nenhuma licença foi alterada — ação manual necessária',
+        acao:      'Procure essa referência no painel do Stripe para identificar o cliente. Se o pagamento for legítimo, confirme manualmente pelo painel admin (Financeiro → confirmar pagamento) ou devolva o valor.',
+      })
     } catch (err) {
       console.error('[alarme] falha ao enviar alerta de descarte:', err instanceof Error ? err.message : err)
+    }
+  }
+
+  /**
+   * O cliente clicou em pagar e o gateway recusou a criação do checkout. A causa
+   * quase sempre é catálogo desalinhado — Price de outro modo (test/live), Price
+   * arquivado, plano sem Price. É invisível no financeiro (não gera evento nenhum),
+   * então só o alarme revela; para o cliente, é o sistema simplesmente não vender.
+   */
+  private async alarmarFalhaCheckout(dados: {
+    motivo:     string
+    referencia: string
+  }) {
+    console.error(`[alarme] falha ao criar checkout — ${dados.motivo} (licença ${dados.referencia})`)
+    try {
+      await this.emailService.enviarAlertaOperacional({
+        titulo:     'Cliente não conseguiu iniciar o pagamento',
+        subtitulo:  'O Stripe recusou a criação do checkout — nenhuma venda foi feita',
+        evento:     'checkout.session.create',
+        motivo:     dados.motivo,
+        referencia: dados.referencia,
+        valor:      null,
+        acao:       'Confira se o Price do plano existe e está ativo no MESMO modo (test/live) da chave em uso. Price de teste não existe em live: nesse caso, recrie o catálogo em live e reaponte o plano.',
+      })
+    } catch (err) {
+      console.error('[alarme] falha ao enviar alerta de checkout:', err instanceof Error ? err.message : err)
     }
   }
 
