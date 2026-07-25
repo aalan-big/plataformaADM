@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Check, Loader2, AlertCircle, ShieldCheck, ArrowLeft, Lock, UserCheck } from 'lucide-react'
-import { LogoStartBig, BadgeSecao } from './_components/Marca'
+import { LogoStartBig, BadgeSecao } from '@/components/marca/Marca'
 
 type Opcao = { meses: number; label: string; total: number; desconto: number }
 

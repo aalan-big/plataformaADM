@@ -1,41 +1,72 @@
 'use client'
 
-import { XCircle } from 'lucide-react'
+import { XCircle, ArrowLeft } from 'lucide-react'
+import { LogoStartBig } from '@/components/marca/Marca'
+
+const SITE = 'https://startbig.com.br'
 
 export default function PagamentoCanceladoPage() {
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
+    <>
+      <header className="border-b border-[#E9E9E9] bg-white">
+        <div className="max-w-2xl mx-auto px-5 h-16 flex items-center justify-between">
+          <LogoStartBig />
+          <a href={SITE} className="text-sm font-medium text-[#64748B] hover:text-[#045CA1] transition-colors">
+            Ir para o site
+          </a>
+        </div>
+      </header>
 
-        <div className="bg-orange-500/10 border-b border-orange-500/20 px-8 py-8 text-center">
-          <div className="flex justify-center mb-4">
-            <div className="w-16 h-16 rounded-full bg-orange-500/15 border border-orange-500/25 flex items-center justify-center">
-              <XCircle size={32} className="text-orange-400" />
-            </div>
+      <main className="max-w-2xl mx-auto px-5 py-12 sm:py-16">
+        <div className="text-center space-y-4 mb-8">
+          <div className="w-16 h-16 rounded-full bg-[#FEF3C7] border-2 border-[#FDE68A] flex items-center justify-center mx-auto">
+            <XCircle size={32} className="text-[#B45309]" />
           </div>
-          <h1 className="text-2xl font-bold text-white mb-1">Pagamento cancelado</h1>
-          <p className="text-orange-400/80 text-sm">Nenhuma cobrança foi realizada.</p>
+          <div>
+            <h1 className="text-3xl sm:text-4xl font-extrabold text-[#151515] tracking-tight">
+              Pagamento não concluído
+            </h1>
+            <p className="text-[#64748B] mt-2">Nenhuma cobrança foi feita no seu cartão.</p>
+          </div>
         </div>
 
-        <div className="px-8 py-6 space-y-3">
-          <p className="text-sm text-slate-300 text-center leading-relaxed">
-            Você cancelou o processo de pagamento. Sua licença atual não foi alterada.
+        <div className="bg-white border border-[#E9E9E9] rounded-2xl px-6 py-6 shadow-sm space-y-3">
+          <p className="text-sm text-[#334155] leading-relaxed">
+            Você saiu antes de finalizar, e está tudo bem — sua conta e sua licença continuam exatamente como estavam.
           </p>
-          <p className="text-xs text-slate-500 text-center">
-            Se precisar renovar ou tiver dúvidas, entre em contato com o suporte ou tente novamente pelo link enviado.
+          {/* Quem chegou até aqui já se cadastrou: dizer que o acesso continua
+              de pé evita que ele ache que perdeu o que preencheu. */}
+          <p className="text-sm text-[#334155] leading-relaxed">
+            Se você já tinha criado sua conta, ela segue ativa e você pode entrar no sistema normalmente.
+            Para concluir a assinatura, é só voltar e escolher o período de novo.
           </p>
         </div>
 
-        <div className="px-8 pb-6">
-          <button
-            onClick={() => window.close()}
-            className="w-full py-2.5 text-sm text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+        <div className="flex flex-col sm:flex-row gap-3 mt-6">
+          <a
+            href="/contratar"
+            className="flex-1 flex items-center justify-center gap-2 bg-[#045CA1] hover:bg-[#034A82] text-white font-bold py-3.5 rounded-xl transition-colors text-sm"
           >
-            Fechar
-          </button>
+            <ArrowLeft size={15} /> Voltar e assinar
+          </a>
+          <a
+            href={SITE}
+            className="flex-1 flex items-center justify-center border border-[#E9E9E9] text-[#334155] hover:bg-[#F8F7FF] font-semibold py-3.5 rounded-xl transition-colors text-sm"
+          >
+            Ir para o site
+          </a>
         </div>
 
-      </div>
-    </div>
+        <p className="text-xs text-[#64748B] text-center mt-6">
+          Teve algum problema no pagamento? Fale com o suporte que a gente resolve.
+        </p>
+      </main>
+
+      <footer className="border-t border-[#E9E9E9] mt-8">
+        <div className="max-w-2xl mx-auto px-5 py-6 text-center">
+          <p className="text-xs text-[#64748B]">© 2026 StartBIG · Desenvolvido por BIG TEC</p>
+        </div>
+      </footer>
+    </>
   )
 }
