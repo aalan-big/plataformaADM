@@ -25,7 +25,12 @@
 import Stripe from 'stripe'
 import { prisma } from '@startbig/database'
 
-const ALVOS_PADRAO = ['Plano Teste', 'Plano Teste Diário']
+/**
+ * Só o diário por padrão. O "Plano Teste" comum fica no catálogo por decisão do
+ * dono do projeto. O diário é o perigoso: cobra a cada 1 dia, então em live um
+ * cliente que caísse nele teria o cartão debitado diariamente.
+ */
+const ALVOS_PADRAO = ['Plano Teste Diário']
 
 async function main() {
   const alvos = (process.env.PLANOS ?? ALVOS_PADRAO.join(','))
