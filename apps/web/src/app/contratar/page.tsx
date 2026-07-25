@@ -33,6 +33,15 @@ const botaoPrimario =
 const camposVazios = { nomeOuRazao: '', documento: '', senha: '', celular: '' }
 
 /**
+ * Endereço completo e estruturado — exigência de nota fiscal. O do Stripe não
+ * serve para emissão automática: o formato dele é internacional e não tem campo
+ * separado de bairro nem de número, que as prefeituras pedem.
+ */
+const enderecoVazio = {
+  cep: '', logradouro: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '',
+}
+
+/**
  * Resumo do que foi escolhido, repetido em todas as etapas depois da escolha.
  * Ninguém deve chegar no cartão sem ter o valor à vista o tempo todo.
  */
@@ -82,6 +91,8 @@ function ContratarConteudo() {
   const [verificando, setVerificando] = useState(false)
 
   const [form, setForm]             = useState(camposVazios)
+  const [endereco, setEndereco]     = useState(enderecoVazio)
+  const [buscandoCep, setBuscandoCep] = useState(false)
   const [enviando, setEnviando]     = useState(false)
   const [erro, setErro]             = useState('')
 
@@ -108,12 +119,51 @@ function ContratarConteudo() {
 
   const opcaoEscolhida = plano?.opcoes.find(o => o.meses === meses) ?? null
 
+  const setEnd = (k: keyof typeof enderecoVazio, v: string) => setEndereco(prev => ({ ...prev, [k]: v }))
+
+  /**
+   * Preenche o endereço a partir do CEP. Os campos continuam editáveis: CEP de
+   * cidade pequena às vezes não traz logradouro, e o cliente precisa poder
+   * completar na mão em vez de travar.
+   */
+  async function buscarCep(valor: string) {
+    const digitos = valor.replace(/\D/g, '')
+    if (digitos.length !== 8) return
+    setBuscandoCep(true)
+    try {
+      const res  = await fetch(`https://viacep.com.br/ws/${digitos}/json/`)
+      const data = await res.json()
+      if (!data.erro) {
+        setEndereco(prev => ({
+          ...prev,
+          logradouro: data.logradouro || prev.logradouro,
+          bairro:     data.bairro     || prev.bairro,
+          cidade:     data.localidade || prev.cidade,
+          estado:     data.uf         || prev.estado,
+        }))
+      }
+    } catch { /* ViaCEP fora do ar não pode impedir a compra — digita na mão */ }
+    finally { setBuscandoCep(false) }
+  }
+
   const documentoLimpo = form.documento.replace(/\D/g, '')
   const emailValido    = /^\S+@\S+\.\S+$/.test(email)
+
+  // Endereço obrigatório porque é dado de nota fiscal — sem ele a emissão trava
+  // depois, com o dinheiro já recebido e o cliente sem o documento.
+  const enderecoValido =
+    endereco.cep.replace(/\D/g, '').length === 8 &&
+    endereco.logradouro.trim().length >= 3 &&
+    endereco.numero.trim().length >= 1 &&
+    endereco.bairro.trim().length >= 2 &&
+    endereco.cidade.trim().length >= 2 &&
+    endereco.estado.trim().length === 2
+
   const formValido =
     form.nomeOuRazao.trim().length >= 2 &&
     (documentoLimpo.length === 11 || documentoLimpo.length === 14) &&
-    form.senha.length >= 8
+    form.senha.length >= 8 &&
+    enderecoValido
 
   /** Descobre se o e-mail já tem conta e manda para o caminho certo. */
   async function identificar() {
@@ -154,6 +204,15 @@ function ContratarConteudo() {
             email:       email.trim().toLowerCase(),
             senha:       form.senha,
             ...(form.celular.trim() ? { celular: form.celular.trim() } : {}),
+            endereco: {
+              cep:        endereco.cep.replace(/\D/g, ''),
+              logradouro: endereco.logradouro.trim(),
+              numero:     endereco.numero.trim(),
+              bairro:     endereco.bairro.trim(),
+              cidade:     endereco.cidade.trim(),
+              estado:     endereco.estado.trim().toUpperCase(),
+              ...(endereco.complemento.trim() ? { complemento: endereco.complemento.trim() } : {}),
+            },
           }
         : { planoId: plano.id, meses, email: email.trim().toLowerCase(), senha }
 
@@ -430,6 +489,71 @@ function ContratarConteudo() {
                     <p className="text-xs text-[#64748B] mt-1.5">
                       É com ela e o e-mail acima que você entra no sistema.
                     </p>
+                  </div>
+
+                  {/* ── Endereço, para a nota fiscal ── */}
+                  <div className="pt-5 border-t border-[#E9E9E9] space-y-4">
+                    <div>
+                      <h3 className="text-base font-bold text-[#151515]">Endereço</h3>
+                      <p className="text-xs text-[#64748B] mt-0.5">
+                        Usamos para emitir sua nota fiscal. Digite o CEP que o resto preenche sozinho.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div>
+                        <label className={rotulo}>CEP</label>
+                        <div className="relative">
+                          <input
+                            className={campo} value={endereco.cep} inputMode="numeric" maxLength={9}
+                            placeholder="00000-000"
+                            onChange={e => { setEnd('cep', e.target.value); buscarCep(e.target.value) }}
+                            onBlur={e => buscarCep(e.target.value)}
+                          />
+                          {buscandoCep && (
+                            <Loader2 size={14} className="animate-spin text-[#64748B] absolute right-3 top-1/2 -translate-y-1/2" />
+                          )}
+                        </div>
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className={rotulo}>Rua / logradouro</label>
+                        <input className={campo} value={endereco.logradouro}
+                          onChange={e => setEnd('logradouro', e.target.value)} autoComplete="address-line1" />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div>
+                        <label className={rotulo}>Número</label>
+                        <input className={campo} value={endereco.numero} inputMode="numeric"
+                          onChange={e => setEnd('numero', e.target.value)} />
+                      </div>
+                      <div>
+                        <label className={rotulo}>
+                          Complemento <span className="font-normal text-[#94A3B8]">(opcional)</span>
+                        </label>
+                        <input className={campo} value={endereco.complemento} placeholder="Sala, andar..."
+                          onChange={e => setEnd('complemento', e.target.value)} />
+                      </div>
+                      <div>
+                        <label className={rotulo}>Bairro</label>
+                        <input className={campo} value={endereco.bairro}
+                          onChange={e => setEnd('bairro', e.target.value)} />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div className="sm:col-span-2">
+                        <label className={rotulo}>Cidade</label>
+                        <input className={campo} value={endereco.cidade}
+                          onChange={e => setEnd('cidade', e.target.value)} autoComplete="address-level2" />
+                      </div>
+                      <div>
+                        <label className={rotulo}>UF</label>
+                        <input className={`${campo} uppercase`} value={endereco.estado} maxLength={2} placeholder="CE"
+                          onChange={e => setEnd('estado', e.target.value.toUpperCase())} autoComplete="address-level1" />
+                      </div>
+                    </div>
                   </div>
 
                   {erro && <Erro texto={erro} />}
