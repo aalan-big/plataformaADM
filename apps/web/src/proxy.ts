@@ -1,6 +1,30 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
+/**
+ * Páginas que um visitante SEM sessão precisa alcançar.
+ *
+ * Cuidado ao mexer: quase tudo aqui é caminho de CLIENTE, não de admin. Uma
+ * rota de pagamento presa atrás do login não dá erro visível — ela só some a
+ * venda, e quem testa logado como admin nunca percebe. Foi o que aconteceu:
+ * /renovar e /pagamento ficaram protegidas desde sempre, e o cliente que
+ * pagasse cairia na tela de login vindo do Stripe.
+ */
+const ROTAS_PUBLICAS = [
+  '/login',
+  '/contratar',        // contratação de cliente novo (assine.startbig.com.br)
+  '/renovar',          // escolha de período e pagamento
+  '/pagamento',        // retorno do Stripe: /pagamento/sucesso e /cancelado
+  '/primeiro-acesso',  // link de criar senha enviado por e-mail
+  '/confirmar-email',  // link de confirmação enviado por e-mail
+  '/debug',
+]
+
+function ehPublica(pathname: string): boolean {
+  if (pathname === '/') return true
+  return ROTAS_PUBLICAS.some(rota => pathname === rota || pathname.startsWith(`${rota}/`))
+}
+
 export function proxy(request: NextRequest) {
   const token    = request.cookies.get('token')?.value
   const pathname = request.nextUrl.pathname
@@ -8,10 +32,7 @@ export function proxy(request: NextRequest) {
   // Rotas de API gerenciam autenticação por conta própria — nunca redirecionar
   if (pathname.startsWith('/api/')) return NextResponse.next()
 
-  // Rotas públicas de página
-  const publica = pathname === '/login' || pathname === '/' || pathname.startsWith('/debug')
-
-  if (!publica && !token) {
+  if (!ehPublica(pathname) && !token) {
     const loginUrl = new URL('/login', request.url)
     loginUrl.searchParams.set('redirect', pathname)
     return NextResponse.redirect(loginUrl)
