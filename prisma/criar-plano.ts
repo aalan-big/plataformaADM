@@ -44,7 +44,7 @@ type Preset = {
 const PRESETS: Record<string, Preset> = {
   start: {
     nome:      'Plano Start',
-    descricao: 'Licença de uso do StartBig ERP',
+    descricao: 'Gestão completa da sua loja: PDV e vendas, ordens de serviço com histórico por cliente, controle de estoque, equipe com permissões e comissões, relatórios e dashboard, impressão em cupom térmico e A4. Backup em nuvem incluído.',
     metadata:  { canal: 'parceiro', repasse_parceiro_mensal: '30.00' },
     precos: {
       mensal:     { valor:   8990, label: 'Mensal',     recurring: { interval: 'month', interval_count: 1 } },
@@ -54,7 +54,7 @@ const PRESETS: Record<string, Preset> = {
   },
   startbig: {
     nome:      'Plano StartBIG',
-    descricao: 'Licença de uso do StartBig ERP',
+    descricao: 'Gestão completa da sua loja: PDV e vendas, ordens de serviço com histórico por cliente, controle de estoque, equipe com permissões e comissões, relatórios e dashboard, impressão em cupom térmico e A4. Backup em nuvem incluído.',
     metadata:  { canal: 'direto' },
     precos: {
       mensal:     { valor:  5990, label: 'Mensal',     recurring: { interval: 'month', interval_count: 1 } },
