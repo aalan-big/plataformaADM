@@ -96,7 +96,10 @@ async function main() {
   const key = process.env.STRIPE_SECRET_KEY
   if (!key) throw new Error('STRIPE_SECRET_KEY não configurada no .env usado.')
 
-  const ehLive = key.startsWith('sk_live')
+  // Cobre chave secreta (sk_) e restrita (rk_): as duas existem em test e em live,
+  // e classificar uma rk_live como test faria o script criar Price que cobra de
+  // verdade sem pedir a confirmação explícita.
+  const ehLive = /^(sk|rk)_live_/.test(key)
   console.log(`Plano: ${preset.nome}`)
   console.log(`Modo:  ${ehLive ? 'LIVE — dinheiro real' : 'TEST'}\n`)
 

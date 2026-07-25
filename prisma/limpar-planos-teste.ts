@@ -40,7 +40,7 @@ async function main() {
 
   const key = process.env.STRIPE_SECRET_KEY
   if (!key) throw new Error('STRIPE_SECRET_KEY não configurada no .env usado.')
-  const ehLive = key.startsWith('sk_live')
+  const ehLive = /^(sk|rk)_live_/.test(key)   // cobre chave secreta e restrita
   const stripe = new Stripe(key)
 
   console.log(`Modo Stripe: ${ehLive ? 'LIVE' : 'TEST'}`)

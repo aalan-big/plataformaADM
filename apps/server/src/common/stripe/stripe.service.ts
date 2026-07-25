@@ -66,7 +66,10 @@ export class StripeService {
     const key = process.env.STRIPE_SECRET_KEY
     if (!key) throw new Error('STRIPE_SECRET_KEY não configurada')
     this.stripe   = new Stripe(key)
-    this.modoLive = key.startsWith('sk_live')
+    // Vale tanto para a chave secreta (sk_) quanto para a restrita (rk_) — as duas
+    // existem nos dois modos. Olhar só para "sk_live" classificaria uma rk_live como
+    // TEST, e aí o guard abaixo recusaria todo evento real com 400.
+    this.modoLive = /^(sk|rk)_live_/.test(key)
     this.logger.log(`StripeService iniciado — modo ${this.modoLive ? 'LIVE (dinheiro real)' : 'TEST'}`)
   }
 

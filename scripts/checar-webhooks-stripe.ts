@@ -3,7 +3,7 @@ import Stripe from 'stripe'
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string)
 
 async function main() {
-  const modo = (process.env.STRIPE_SECRET_KEY ?? '').startsWith('sk_live') ? 'LIVE' : 'TEST'
+  const modo = /^(sk|rk)_live_/.test(process.env.STRIPE_SECRET_KEY ?? '') ? 'LIVE' : 'TEST'
   console.log(`Modo: ${modo}\n`)
   const eps = await stripe.webhookEndpoints.list({ limit: 20 })
   if (eps.data.length === 0) {
