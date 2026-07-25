@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Check, Loader2, AlertCircle, ShieldCheck, ArrowLeft, Lock, UserCheck } from 'lucide-react'
 import { LogoStartBig, BadgeSecao } from './_components/Marca'
 
@@ -60,7 +61,9 @@ function Erro({ texto }: { texto: string }) {
   )
 }
 
-export default function ContratarPage() {
+function ContratarConteudo() {
+  const params = useSearchParams()
+
   const [planos, setPlanos]         = useState<PlanoPublico[]>([])
   const [carregando, setCarregando] = useState(true)
 
@@ -71,7 +74,10 @@ export default function ContratarPage() {
   const [plano, setPlano]           = useState<PlanoPublico | null>(null)
   const [meses, setMeses]           = useState<number | null>(null)
 
-  const [email, setEmail]           = useState('')
+  // O ERP manda o cliente para cá já com o e-mail dele na URL
+  // (?email=...), então ele não redigita o que o sistema já sabe.
+  const emailDoLink = params.get('email') ?? ''
+  const [email, setEmail]           = useState(emailDoLink)
   const [senha, setSenha]           = useState('')
   const [verificando, setVerificando] = useState(false)
 
@@ -207,7 +213,8 @@ export default function ContratarPage() {
                     Escolha o seu plano
                   </h1>
                   <p className="text-[#64748B] text-sm max-w-lg mx-auto">
-                    Todos os períodos incluem os 14 dias de trial. Você não paga nada nesta tela.
+                    Serve tanto para quem está começando agora quanto para quem já usa o StartBIG.
+                    Você não paga nada nesta tela.
                   </p>
                 </div>
 
@@ -284,8 +291,25 @@ export default function ContratarPage() {
                   <div>
                     <h2 className="text-xl font-extrabold text-[#151515]">Qual o seu e-mail?</h2>
                     <p className="text-sm text-[#64748B] mt-1">
-                      Se você já usa o StartBIG, vamos reconhecer sua conta e pular o cadastro.
+                      Serve para os dois casos — a gente descobre qual é o seu no próximo passo.
                     </p>
+                  </div>
+
+                  {/* Deixa explícito antes de digitar. Quem nunca comprou precisa
+                      saber que está no lugar certo, e não descobrir depois. */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="border border-[#E9E9E9] rounded-xl px-4 py-3.5 bg-white">
+                      <p className="text-sm font-bold text-[#151515]">Ainda não sou cliente</p>
+                      <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+                        Criamos sua conta na próxima tela, em menos de um minuto.
+                      </p>
+                    </div>
+                    <div className="border border-[#E9E9E9] rounded-xl px-4 py-3.5 bg-[#F8F7FF]">
+                      <p className="text-sm font-bold text-[#151515]">Já uso o StartBIG</p>
+                      <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+                        Reconhecemos sua conta e pedimos só a senha.
+                      </p>
+                    </div>
                   </div>
 
                   <div>
@@ -296,6 +320,12 @@ export default function ContratarPage() {
                       onChange={e => { setEmail(e.target.value); setErro('') }}
                       onKeyDown={e => { if (e.key === 'Enter' && emailValido) identificar() }}
                     />
+                    {emailDoLink && email === emailDoLink && (
+                      <p className="flex items-center gap-1.5 text-xs text-[#045CA1] mt-1.5">
+                        <UserCheck size={12} className="shrink-0" />
+                        Preenchemos com o e-mail da sua licença. Pode trocar, se quiser.
+                      </p>
+                    )}
                   </div>
 
                   {erro && <Erro texto={erro} />}
@@ -446,5 +476,24 @@ export default function ContratarPage() {
         </div>
       </footer>
     </>
+  )
+}
+
+/**
+ * O conteúdo lê `?email=` da URL, então precisa de Suspense para o Next
+ * conseguir renderizar a casca antes de conhecer os parâmetros.
+ */
+export default function ContratarPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex flex-col items-center gap-3 text-[#64748B] py-24">
+          <Loader2 size={28} className="animate-spin text-[#045CA1]" />
+          <p className="text-sm">Carregando...</p>
+        </div>
+      }
+    >
+      <ContratarConteudo />
+    </Suspense>
   )
 }
