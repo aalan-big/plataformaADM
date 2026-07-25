@@ -67,32 +67,37 @@ async function main() {
     const priceIds = [plano.stripePriceIdMensal, plano.stripePriceIdTrimestral, plano.stripePriceIdAnual].filter(Boolean) as string[]
     const produtoIds = new Set<string>()
 
+    // Descobre os produtos a partir dos Prices gravados no plano...
     for (const priceId of priceIds) {
-      let price: Stripe.Price
       try {
-        price = await stripe.prices.retrieve(priceId)
+        const price = await stripe.prices.retrieve(priceId)
+        if (typeof price.product === 'string') produtoIds.add(price.product)
       } catch {
         console.log(`  price ${priceId}: não existe nesta conta/modo — ignorado`)
-        continue
-      }
-      if (typeof price.product === 'string') produtoIds.add(price.product)
-
-      for await (const sub of stripe.subscriptions.list({ price: priceId, status: 'all', limit: 100 })) {
-        if (!['active', 'trialing', 'past_due', 'unpaid'].includes(sub.status)) continue
-        console.log(`  assinatura VIVA ${sub.id} (${sub.status}) no price ${priceId}`)
-        if (executar) {
-          await stripe.subscriptions.cancel(sub.id)
-          console.log(`    → cancelada`)
-        }
-      }
-
-      if (price.active) {
-        console.log(`  price ${priceId}: ativo → arquivar`)
-        if (executar) await stripe.prices.update(priceId, { active: false })
       }
     }
 
+    // ...e trabalha sobre TODOS os Prices de cada produto, não só os do registro.
+    // Um produto costuma acumular Prices antigos (valor alterado, período de teste)
+    // que o plano não referencia — e uma assinatura viva num deles continua faturando
+    // e batendo no webhook mesmo depois do produto arquivado.
     for (const produtoId of produtoIds) {
+      for await (const price of stripe.prices.list({ product: produtoId, limit: 100 })) {
+        for await (const sub of stripe.subscriptions.list({ price: price.id, status: 'all', limit: 100 })) {
+          if (!['active', 'trialing', 'past_due', 'unpaid'].includes(sub.status)) continue
+          console.log(`  assinatura VIVA ${sub.id} (${sub.status}) no price ${price.id}`)
+          if (executar) {
+            await stripe.subscriptions.cancel(sub.id)
+            console.log(`    → cancelada`)
+          }
+        }
+
+        if (price.active) {
+          console.log(`  price ${price.id}: ativo → arquivar`)
+          if (executar) await stripe.prices.update(price.id, { active: false })
+        }
+      }
+
       console.log(`  produto ${produtoId}: arquivar`)
       if (executar) await stripe.products.update(produtoId, { active: false })
     }
