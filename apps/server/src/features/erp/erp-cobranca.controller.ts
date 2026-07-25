@@ -29,6 +29,12 @@ export class ErpCobrancaController {
     return this.contratacaoService.planosPublicos()
   }
 
+  /** Diz se o e-mail já tem conta, para o formulário se adaptar. */
+  @Post('identificar')
+  identificar(@Body() body: unknown) {
+    return this.contratacaoService.identificar(body)
+  }
+
   /**
    * Cadastra o cliente e devolve a URL do checkout numa operação só.
    * O header Origin decide para onde o Stripe volta — validado contra allowlist.
@@ -36,5 +42,11 @@ export class ErpCobrancaController {
   @Post('contratar')
   contratar(@Body() body: unknown, @Headers('origin') origin?: string) {
     return this.contratacaoService.contratar(body, origin)
+  }
+
+  /** Mesma coisa para quem já é cliente: prova a identidade com a senha. */
+  @Post('contratar-existente')
+  contratarExistente(@Body() body: unknown, @Headers('origin') origin?: string) {
+    return this.contratacaoService.contratarExistente(body, origin)
   }
 }

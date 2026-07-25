@@ -1,32 +1,28 @@
+import Image from 'next/image'
+
 /**
- * Identidade visual do site reproduzida em código — ícone de barras em quadrado
- * arredondado com o azul da marca, e o wordmark "Start" escuro + "BIG" azul.
+ * Logo da marca, servido de `apps/web/public/logo-startbig.png`.
  *
- * Feito assim, e não com arquivo de imagem, para a página não depender de um
- * asset que vive no outro projeto: um logo quebrado no topo da tela de
- * pagamento derruba a confiança na hora errada.
+ * Arquivo em `public/` é servido na raiz do domínio e versionado junto com o
+ * código — então ele sobe no mesmo deploy da página. Se um dia o arquivo sumir,
+ * o `alt` mantém a identificação da empresa no lugar do ícone quebrado, que é o
+ * mínimo aceitável numa tela que pede CPF e senha.
  */
 export function LogoStartBig({ tamanho = 'md' }: { tamanho?: 'sm' | 'md' }) {
-  const icone = tamanho === 'sm' ? 'w-7 h-7' : 'w-9 h-9'
-  const texto = tamanho === 'sm' ? 'text-base' : 'text-xl'
+  // O logo é horizontal, proporção ~2,7:1 (ícone + wordmark).
+  const altura  = tamanho === 'sm' ? 26 : 34
+  const largura = Math.round(altura * 2.7)
 
   return (
-    <div className="flex items-center gap-2.5">
-      <div
-        className={`${icone} rounded-[10px] flex items-end justify-center gap-[3px] p-2 shrink-0`}
-        style={{ background: 'linear-gradient(145deg, #045CA1 0%, #5590BF 100%)' }}
-        aria-hidden
-      >
-        <span className="w-[3px] h-[35%] rounded-full bg-white/45" />
-        <span className="w-[3px] h-[65%] rounded-full bg-white/75" />
-        <span className="w-[3px] h-full  rounded-full bg-white" />
-      </div>
-
-      <span className={`${texto} font-extrabold tracking-tight`}>
-        <span className="text-[#151515]">Start</span>
-        <span className="text-[#045CA1]">BIG</span>
-      </span>
-    </div>
+    <Image
+      src="/logo-startbig.png"
+      alt="StartBIG"
+      width={largura}
+      height={altura}
+      priority
+      className="h-auto w-auto"
+      style={{ height: altura }}
+    />
   )
 }
 

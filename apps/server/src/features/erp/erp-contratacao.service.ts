@@ -14,9 +14,10 @@
  * intermediário em que o cliente pagou e não há a quem creditar.
  * ============================================================================
  */
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common'
+import { Injectable, BadRequestException, NotFoundException, UnauthorizedException, Logger } from '@nestjs/common'
 import { ZodError, z } from 'zod'
-import { findPlanoById, updateLicenca } from '@startbig/database'
+import bcrypt from 'bcryptjs'
+import { prisma, findPlanoById, updateLicenca } from '@startbig/database'
 import { DispositivoService, autoCadastroSchema } from '../dispositivos/dispositivo.service'
 import { FinanceiroService } from '../financeiro/financeiro.service'
 import { PlanoService } from '../plano/plano.service'
@@ -24,6 +25,18 @@ import { montarOpcoes } from '../plano/plano.precos'
 
 /** Cadastro do auto-cadastro + o que o cliente escolheu comprar. */
 export const contratarSchema = autoCadastroSchema.extend({
+  planoId: z.string().uuid('planoId inválido.'),
+  meses:   z.number().int().refine(m => [1, 3, 12].includes(m), 'Período inválido — use 1, 3 ou 12.'),
+})
+
+export const identificarSchema = z.object({
+  email: z.string().email('E-mail inválido.'),
+})
+
+/** Quem já é cliente não redigita nome e documento — prova quem é com a senha. */
+export const contratarExistenteSchema = z.object({
+  email:   z.string().email('E-mail inválido.'),
+  senha:   z.string().min(1, 'Informe sua senha.'),
   planoId: z.string().uuid('planoId inválido.'),
   meses:   z.number().int().refine(m => [1, 3, 12].includes(m), 'Período inválido — use 1, 3 ou 12.'),
 })
@@ -41,6 +54,99 @@ export class ErpContratacaoService {
   /** Vitrine da página pública. */
   async planosPublicos() {
     return { data: await this.planoService.listarPublicos() }
+  }
+
+  /**
+   * Diz se o e-mail já tem conta, para o formulário se adaptar: cadastro
+   * completo para quem é novo, só a senha para quem já é cliente.
+   *
+   * Isso revela se um endereço tem conta aqui. É o tradeoff que praticamente
+   * todo SaaS aceita, porque a alternativa — descobrir o problema só depois de
+   * preencher tudo — custa conversão. O throttler global limita varredura.
+   */
+  async identificar(body: unknown) {
+    let dados: z.infer<typeof identificarSchema>
+    try {
+      dados = identificarSchema.parse(body)
+    } catch (e) {
+      if (e instanceof ZodError)
+        throw new BadRequestException({ erro: 'Dados inválidos', detalhes: e.issues })
+      throw e
+    }
+
+    const cliente = await prisma.cliente.findFirst({
+      where:  { email: dados.email.toLowerCase() },
+      select: { id: true, senhaHash: true },
+    })
+
+    return {
+      data: {
+        existe: !!cliente,
+        // Cliente antigo pode não ter senha. Dizer "senha incorreta" para quem
+        // nunca criou uma manda a pessoa procurar erro onde não existe.
+        precisaCriarSenha: !!cliente && !cliente.senhaHash,
+      },
+    }
+  }
+
+  /**
+   * Contratação de quem JÁ É CLIENTE: valida e-mail e senha e gera o checkout
+   * da licença que ele já tem.
+   *
+   * Não usa o /erp/auth/login de propósito: aquele fluxo abre sessão de
+   * dispositivo, e o cliente estaria ocupando uma vaga de usuário da própria
+   * licença só por ter pago pelo navegador.
+   */
+  async contratarExistente(body: unknown, origem?: string) {
+    let dados: z.infer<typeof contratarExistenteSchema>
+    try {
+      dados = contratarExistenteSchema.parse(body)
+    } catch (e) {
+      if (e instanceof ZodError)
+        throw new BadRequestException({ erro: 'Dados inválidos', detalhes: e.issues })
+      throw e
+    }
+
+    const cliente = await prisma.cliente.findFirst({
+      where:   { email: dados.email.toLowerCase() },
+      include: {
+        // A mais recente, qualquer status: quem está vencido é justamente
+        // quem quer pagar. Filtrar por ATIVA deixaria esse cliente de fora.
+        dispositivos: { orderBy: { criadoEm: 'desc' }, take: 1, include: { plano: true } },
+      },
+    })
+
+    // Mensagem igual para e-mail inexistente e senha errada — não confirma
+    // qual dos dois falhou para quem estiver testando credenciais.
+    if (!cliente)            throw new UnauthorizedException('E-mail ou senha incorretos.')
+    if (!cliente.senhaHash)
+      throw new BadRequestException('Sua conta ainda não tem senha definida. Verifique seu e-mail para criar uma, ou fale com o suporte.')
+
+    const senhaValida = await bcrypt.compare(dados.senha, cliente.senhaHash)
+    if (!senhaValida)        throw new UnauthorizedException('E-mail ou senha incorretos.')
+
+    const licenca = cliente.dispositivos[0]
+    if (!licenca)
+      throw new BadRequestException('Não encontramos nenhuma licença nesta conta. Fale com o suporte.')
+
+    // Evita cobrar um plano e entregar outro: se a licença dele está em outro
+    // plano, o valor exibido na tela não seria o valor cobrado.
+    if (licenca.planoId !== dados.planoId)
+      throw new BadRequestException(
+        `Sua licença está no plano "${licenca.plano?.nome ?? 'atual'}". Para mudar de plano, fale com o suporte.`,
+      )
+
+    const cobranca = await this.financeiroService.gerarCobranca(
+      { licencaId: licenca.id, meses: dados.meses },
+      origem,
+    )
+
+    this.logger.log(`[contratacao] cliente existente ${dados.email} → ${dados.meses} mês(es) na licença ${licenca.id}`)
+
+    return {
+      msg:  'Identificado. Redirecionando para o pagamento.',
+      data: { url: cobranca.url, licencaId: licenca.id },
+    }
   }
 
   async contratar(body: unknown, origem?: string) {

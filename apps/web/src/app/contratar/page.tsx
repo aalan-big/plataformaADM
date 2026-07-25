@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Check, Loader2, AlertCircle, ShieldCheck, ArrowLeft, Lock } from 'lucide-react'
+import { Check, Loader2, AlertCircle, ShieldCheck, ArrowLeft, Lock, UserCheck } from 'lucide-react'
 import { LogoStartBig, BadgeSecao } from './_components/Marca'
 
 type Opcao = { meses: number; label: string; total: number; desconto: number }
@@ -29,17 +29,51 @@ const botaoPrimario =
   'w-full flex items-center justify-center gap-2 bg-[#045CA1] hover:bg-[#034A82] disabled:bg-[#94A3B8] ' +
   'disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-xl transition-colors'
 
-const camposVazios = { nomeOuRazao: '', documento: '', email: '', senha: '', celular: '' }
+const camposVazios = { nomeOuRazao: '', documento: '', senha: '', celular: '' }
+
+/**
+ * Resumo do que foi escolhido, repetido em todas as etapas depois da escolha.
+ * Ninguém deve chegar no cartão sem ter o valor à vista o tempo todo.
+ */
+function Resumo({ plano, opcao }: { plano: string; opcao: Opcao }) {
+  return (
+    <div className="flex items-center justify-between bg-[#F8F7FF] border border-[#E9E9E9] rounded-2xl px-5 py-4">
+      <div className="min-w-0">
+        <p className="text-sm font-bold text-[#151515]">{plano} · {opcao.label}</p>
+        <p className="text-xs text-[#64748B] mt-0.5">
+          Renova automaticamente a cada {opcao.meses === 1 ? 'mês' : `${opcao.meses} meses`}. Cancele quando quiser.
+        </p>
+      </div>
+      <p className="text-xl font-extrabold text-[#151515] shrink-0 ml-4">
+        {opcao.total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+      </p>
+    </div>
+  )
+}
+
+function Erro({ texto }: { texto: string }) {
+  return (
+    <div className="flex items-start gap-2.5 text-[#B45309] bg-[#FEF3C7] border border-[#FDE68A] rounded-xl px-4 py-3 text-sm">
+      <AlertCircle size={15} className="shrink-0 mt-0.5" />
+      <span>{texto}</span>
+    </div>
+  )
+}
 
 export default function ContratarPage() {
   const [planos, setPlanos]         = useState<PlanoPublico[]>([])
   const [carregando, setCarregando] = useState(true)
 
-  // Período primeiro, cadastro depois: o cliente só digita dados pessoais
-  // depois de decidir o que vai comprar.
-  const [etapa, setEtapa]           = useState<'periodo' | 'cadastro'>('periodo')
+  // Período → identificação por e-mail → o formulário se adapta ao que a
+  // identificação descobrir. O cliente só digita dados pessoais depois de
+  // decidir o que vai comprar, e quem já é cliente não redigita nada.
+  const [etapa, setEtapa]           = useState<'periodo' | 'email' | 'cadastro' | 'senha'>('periodo')
   const [plano, setPlano]           = useState<PlanoPublico | null>(null)
   const [meses, setMeses]           = useState<number | null>(null)
+
+  const [email, setEmail]           = useState('')
+  const [senha, setSenha]           = useState('')
+  const [verificando, setVerificando] = useState(false)
 
   const [form, setForm]             = useState(camposVazios)
   const [enviando, setEnviando]     = useState(false)
@@ -69,28 +103,58 @@ export default function ContratarPage() {
   const opcaoEscolhida = plano?.opcoes.find(o => o.meses === meses) ?? null
 
   const documentoLimpo = form.documento.replace(/\D/g, '')
+  const emailValido    = /^\S+@\S+\.\S+$/.test(email)
   const formValido =
     form.nomeOuRazao.trim().length >= 2 &&
     (documentoLimpo.length === 11 || documentoLimpo.length === 14) &&
-    /^\S+@\S+\.\S+$/.test(form.email) &&
     form.senha.length >= 8
 
-  async function contratar() {
+  /** Descobre se o e-mail já tem conta e manda para o caminho certo. */
+  async function identificar() {
+    setVerificando(true); setErro('')
+    try {
+      const res = await fetch('/api/publico/identificar', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email: email.trim().toLowerCase() }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.message ?? json.erro ?? 'Não foi possível verificar o e-mail.')
+
+      if (json.data.precisaCriarSenha) {
+        setErro('Sua conta ainda não tem senha definida. Verifique seu e-mail para criar uma, ou fale com o suporte.')
+        return
+      }
+
+      setEtapa(json.data.existe ? 'senha' : 'cadastro')
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Erro desconhecido')
+    } finally {
+      setVerificando(false)
+    }
+  }
+
+  /** Envia para o endpoint certo conforme o cliente seja novo ou já existente. */
+  async function enviar(tipo: 'novo' | 'existente') {
     if (!plano || !meses) return
     setEnviando(true); setErro('')
     try {
-      const res = await fetch('/api/publico/contratar', {
+      const rota = tipo === 'novo' ? '/api/publico/contratar' : '/api/publico/contratar-existente'
+      const corpo = tipo === 'novo'
+        ? {
+            planoId: plano.id, meses,
+            nomeOuRazao: form.nomeOuRazao.trim(),
+            documento:   documentoLimpo,
+            email:       email.trim().toLowerCase(),
+            senha:       form.senha,
+            ...(form.celular.trim() ? { celular: form.celular.trim() } : {}),
+          }
+        : { planoId: plano.id, meses, email: email.trim().toLowerCase(), senha }
+
+      const res  = await fetch(rota, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          planoId:     plano.id,
-          meses,
-          nomeOuRazao: form.nomeOuRazao.trim(),
-          documento:   documentoLimpo,
-          email:       form.email.trim().toLowerCase(),
-          senha:       form.senha,
-          ...(form.celular.trim() ? { celular: form.celular.trim() } : {}),
-        }),
+        body:    JSON.stringify(corpo),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.message ?? json.erro ?? 'Não foi possível concluir a contratação.')
@@ -200,9 +264,94 @@ export default function ContratarPage() {
                   </div>
                 ))}
 
-                <button onClick={() => setEtapa('cadastro')} disabled={!opcaoEscolhida} className={botaoPrimario}>
+                <button onClick={() => setEtapa('email')} disabled={!opcaoEscolhida} className={botaoPrimario}>
                   Continuar
                 </button>
+              </>
+            )}
+
+            {/* ── Etapa 2: identificação por e-mail ──────────────────────────── */}
+            {etapa === 'email' && plano && opcaoEscolhida && (
+              <>
+                <button onClick={() => { setEtapa('periodo'); setErro('') }}
+                  className="flex items-center gap-2 text-sm font-medium text-[#64748B] hover:text-[#045CA1] transition-colors">
+                  <ArrowLeft size={15} /> Trocar plano
+                </button>
+
+                <Resumo plano={plano.nome} opcao={opcaoEscolhida} />
+
+                <div className="bg-white border border-[#E9E9E9] rounded-2xl p-6 sm:p-7 space-y-5 shadow-sm">
+                  <div>
+                    <h2 className="text-xl font-extrabold text-[#151515]">Qual o seu e-mail?</h2>
+                    <p className="text-sm text-[#64748B] mt-1">
+                      Se você já usa o StartBIG, vamos reconhecer sua conta e pular o cadastro.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className={rotulo}>E-mail</label>
+                    <input
+                      className={campo} type="email" value={email} autoFocus autoComplete="email"
+                      placeholder="seu@email.com"
+                      onChange={e => { setEmail(e.target.value); setErro('') }}
+                      onKeyDown={e => { if (e.key === 'Enter' && emailValido) identificar() }}
+                    />
+                  </div>
+
+                  {erro && <Erro texto={erro} />}
+
+                  <button onClick={identificar} disabled={verificando || !emailValido} className={botaoPrimario}>
+                    {verificando ? <><Loader2 size={16} className="animate-spin" /> Verificando...</> : 'Continuar'}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* ── Etapa 3b: já é cliente, só a senha ─────────────────────────── */}
+            {etapa === 'senha' && plano && opcaoEscolhida && (
+              <>
+                <button onClick={() => { setEtapa('email'); setSenha(''); setErro('') }}
+                  className="flex items-center gap-2 text-sm font-medium text-[#64748B] hover:text-[#045CA1] transition-colors">
+                  <ArrowLeft size={15} /> Usar outro e-mail
+                </button>
+
+                <Resumo plano={plano.nome} opcao={opcaoEscolhida} />
+
+                <div className="bg-white border border-[#E9E9E9] rounded-2xl p-6 sm:p-7 space-y-5 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <UserCheck size={20} className="text-[#045CA1] shrink-0 mt-0.5" />
+                    <div>
+                      <h2 className="text-xl font-extrabold text-[#151515]">Bem-vindo de volta</h2>
+                      <p className="text-sm text-[#64748B] mt-1">
+                        Já temos sua conta em <strong className="text-[#151515]">{email}</strong>. Confirme a senha e
+                        seguimos direto para o pagamento.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className={rotulo}>Senha</label>
+                    <input
+                      className={campo} type="password" value={senha} autoFocus autoComplete="current-password"
+                      placeholder="Sua senha de acesso"
+                      onChange={e => { setSenha(e.target.value); setErro('') }}
+                      onKeyDown={e => { if (e.key === 'Enter' && senha) enviar('existente') }}
+                    />
+                  </div>
+
+                  {erro && <Erro texto={erro} />}
+
+                  <button onClick={() => enviar('existente')} disabled={enviando || !senha} className={botaoPrimario}>
+                    {enviando
+                      ? <><Loader2 size={16} className="animate-spin" /> Preparando pagamento...</>
+                      : <><Lock size={15} /> Ir para o pagamento</>}
+                  </button>
+
+                  <p className="flex items-center justify-center gap-2 text-xs text-[#64748B]">
+                    <ShieldCheck size={13} className="text-[#10B981] shrink-0" />
+                    Pagamento processado pela Stripe. Seus dados de cartão não passam por nós.
+                  </p>
+                </div>
               </>
             )}
 
@@ -210,28 +359,19 @@ export default function ContratarPage() {
             {etapa === 'cadastro' && plano && opcaoEscolhida && (
               <>
                 <button
-                  onClick={() => setEtapa('periodo')}
+                  onClick={() => { setEtapa('email'); setErro('') }}
                   className="flex items-center gap-2 text-sm font-medium text-[#64748B] hover:text-[#045CA1] transition-colors"
                 >
-                  <ArrowLeft size={15} /> Trocar plano
+                  <ArrowLeft size={15} /> Usar outro e-mail
                 </button>
 
-                {/* Resumo do que foi escolhido, sempre visível */}
-                <div className="flex items-center justify-between bg-[#F8F7FF] border border-[#E9E9E9] rounded-2xl px-5 py-4">
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-[#151515]">{plano.nome} · {opcaoEscolhida.label}</p>
-                    <p className="text-xs text-[#64748B] mt-0.5">
-                      Renova automaticamente a cada {opcaoEscolhida.meses === 1 ? 'mês' : `${opcaoEscolhida.meses} meses`}. Cancele quando quiser.
-                    </p>
-                  </div>
-                  <p className="text-xl font-extrabold text-[#151515] shrink-0 ml-4">{reais(opcaoEscolhida.total)}</p>
-                </div>
+                <Resumo plano={plano.nome} opcao={opcaoEscolhida} />
 
                 <div className="bg-white border border-[#E9E9E9] rounded-2xl p-6 sm:p-7 space-y-5 shadow-sm">
                   <div>
-                    <h2 className="text-xl font-extrabold text-[#151515]">Seus dados</h2>
+                    <h2 className="text-xl font-extrabold text-[#151515]">Crie sua conta</h2>
                     <p className="text-sm text-[#64748B] mt-1">
-                      É com este e-mail e senha que você vai entrar no sistema.
+                      Vamos usar <strong className="text-[#151515]">{email}</strong> como seu acesso ao sistema.
                     </p>
                   </div>
 
@@ -255,28 +395,17 @@ export default function ContratarPage() {
                   </div>
 
                   <div>
-                    <label className={rotulo}>E-mail</label>
-                    <input className={campo} type="email" value={form.email} onChange={e => set('email', e.target.value)}
-                      placeholder="seu@email.com" autoComplete="email" />
+                    <label className={rotulo}>Crie uma senha</label>
+                    <input className={campo} type="password" value={form.senha} onChange={e => set('senha', e.target.value)}
+                      placeholder="Mínimo 8 caracteres" autoComplete="new-password" />
                     <p className="text-xs text-[#64748B] mt-1.5">
-                      É para onde vai a chave de ativação. Confira com atenção.
+                      É com ela e o e-mail acima que você entra no sistema.
                     </p>
                   </div>
 
-                  <div>
-                    <label className={rotulo}>Senha de acesso</label>
-                    <input className={campo} type="password" value={form.senha} onChange={e => set('senha', e.target.value)}
-                      placeholder="Mínimo 8 caracteres" autoComplete="new-password" />
-                  </div>
+                  {erro && <Erro texto={erro} />}
 
-                  {erro && (
-                    <div className="flex items-start gap-2.5 text-[#B45309] bg-[#FEF3C7] border border-[#FDE68A] rounded-xl px-4 py-3 text-sm">
-                      <AlertCircle size={15} className="shrink-0 mt-0.5" />
-                      <span>{erro}</span>
-                    </div>
-                  )}
-
-                  <button onClick={contratar} disabled={enviando || !formValido} className={botaoPrimario}>
+                  <button onClick={() => enviar('novo')} disabled={enviando || !formValido} className={botaoPrimario}>
                     {enviando
                       ? <><Loader2 size={16} className="animate-spin" /> Preparando pagamento...</>
                       : <><Lock size={15} /> Ir para o pagamento</>}
