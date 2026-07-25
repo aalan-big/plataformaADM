@@ -213,10 +213,17 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
     setGerandoLink(true)
     setErroLink('')
     try {
+      // Plano selecionado diferente do atual = troca paga: o checkout é gerado
+      // para o plano de destino e a licença só muda quando o pagamento cair.
+      const trocaPaga = planoSel && planoSel !== licenca.plano?.id
       const res = await fetch('/api/financeiro/gerar-cobranca', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ licencaId: licenca.id, meses: mesesStripe }),
+        body: JSON.stringify({
+          licencaId: licenca.id,
+          meses:     mesesStripe,
+          ...(trocaPaga ? { planoId: planoSel } : {}),
+        }),
       })
       const j = await res.json()
       if (!res.ok) { setErroLink(j.message ?? j.erro ?? 'Erro ao gerar link.'); return }
@@ -614,8 +621,16 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
                       className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
                     >
                       {trocandoPlano ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
-                      {planoSel === licenca.plano?.id ? 'Selecione outro plano' : 'Aplicar troca de plano'}
+                      {planoSel === licenca.plano?.id ? 'Selecione outro plano' : 'Aplicar agora, sem cobrar'}
                     </button>
+
+                    {planoSel !== licenca.plano?.id && (
+                      <p className="text-[11px] text-slate-600 leading-relaxed">
+                        Este botão é o atalho administrativo — muda o plano na hora. Para o cliente pagar antes,
+                        use o <strong className="text-slate-500">link de pagamento</strong> logo abaixo com este
+                        mesmo plano selecionado.
+                      </p>
+                    )}
 
                     {/* Resultado aqui embaixo, junto do botão — não no topo do modal */}
                     {msgPlano && (
@@ -729,16 +744,33 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
                         <AlertCircle size={12} className="shrink-0 mt-0.5" /> {erroLink}
                       </p>
                     )}
-                    {linkStripe ? (
-                      <p className="text-[11px] text-slate-500">
-                        Cobrança do plano <strong className="text-slate-400">{licenca.plano?.nome}</strong>.
-                        Copie e envie ao cliente — o link deixa de valer depois do pagamento.
-                      </p>
-                    ) : (
-                      <p className="text-[11px] text-slate-600">
-                        Gera um checkout do Stripe para o plano atual desta licença. Trocar de plano invalida o link anterior.
-                      </p>
-                    )}
+                    {(() => {
+                      const destino = planos.find(p => p.id === planoSel)
+                      const trocaPaga = !!planoSel && planoSel !== licenca.plano?.id && !!destino
+
+                      if (linkStripe) {
+                        return (
+                          <p className="text-[11px] text-slate-500">
+                            Cobrança do plano <strong className="text-slate-400">{trocaPaga ? destino!.nome : licenca.plano?.nome}</strong>.
+                            Copie e envie ao cliente — o link deixa de valer depois do pagamento.
+                          </p>
+                        )
+                      }
+
+                      // O caminho que o dono do sistema espera: escolhe o plano,
+                      // manda o link, e a licença só muda quando o dinheiro entra.
+                      return trocaPaga ? (
+                        <p className="text-[11px] text-blue-400 bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2 leading-relaxed">
+                          O link será do plano <strong>{destino!.nome}</strong>. A licença só passa para ele
+                          <strong> depois que o cliente pagar</strong> — até lá continua no {licenca.plano?.nome}.
+                        </p>
+                      ) : (
+                        <p className="text-[11px] text-slate-600">
+                          Gera um checkout do plano atual. Para vender uma troca de plano, selecione o plano novo
+                          acima e gere o link daqui — a licença muda sozinha quando o pagamento cair.
+                        </p>
+                      )
+                    })()}
                   </div>
                 </div>
 

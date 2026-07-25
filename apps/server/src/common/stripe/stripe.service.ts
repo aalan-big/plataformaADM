@@ -27,6 +27,7 @@ export type EventoParsed =
         sessionId:      string
         subscriptionId: string | null
         licencaId:      string | null
+        planoId:        string | null
         meses:          number
         amountTotal:    number | null
         email:          string | null
@@ -80,11 +81,23 @@ export class StripeService {
     stripePriceId: string   // Price recorrente pré-criado no catálogo do Stripe
     /** Domínio de retorno. Já validado por quem chama — ver validarOrigem(). */
     appUrl?:       string
+    /**
+     * Plano a aplicar QUANDO o pagamento for confirmado. Viaja na metadata para
+     * o webhook saber o que fazer — é assim que a troca de plano paga funciona
+     * sem alterar nada antes de o dinheiro entrar.
+     */
+    planoId?:      string
   }): Promise<CheckoutResult> {
     // Quem compra em assine.startbig.com.br tem de voltar para assine., não para
     // o painel: trocar de domínio no meio do pagamento parece golpe.
     const appUrl = dados.appUrl ?? process.env.APP_URL ?? 'http://localhost:3000'
     const label  = dados.meses === 1 ? '1 mês' : `${dados.meses} meses`
+
+    const metadados: Record<string, string> = {
+      licencaId: dados.licencaId,
+      meses:     String(dados.meses),
+      ...(dados.planoId ? { planoId: dados.planoId } : {}),
+    }
 
     const session = await this.stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -97,12 +110,10 @@ export class StripeService {
       billing_address_collection: 'required',
       success_url:    `${appUrl}/pagamento/sucesso?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url:     `${appUrl}/pagamento/cancelado`,
-      metadata:       { licencaId: dados.licencaId, meses: String(dados.meses) },
+      metadata:       metadados,
       // A metadata precisa ir na ASSINATURA também: as renovações automáticas
       // (invoice.payment_succeeded) só enxergam a subscription, não a session.
-      subscription_data: {
-        metadata: { licencaId: dados.licencaId, meses: String(dados.meses) },
-      },
+      subscription_data: { metadata: metadados },
     })
 
     this.logger.log(`Checkout Session (assinatura) criada: ${session.id} → licença ${dados.licencaId} (${label}, price ${dados.stripePriceId})`)
@@ -133,6 +144,9 @@ export class StripeService {
           sessionId:      s.id,
           subscriptionId: typeof s.subscription === 'string' ? s.subscription : null,
           licencaId:      s.metadata?.licencaId   ?? null,
+          // Presente quando o checkout foi gerado para trocar de plano: só então
+          // a licença muda de plano, e só se o pagamento vier.
+          planoId:        s.metadata?.planoId     ?? null,
           meses:          parseInt(s.metadata?.meses ?? '1') || 1,
           amountTotal:    s.amount_total,
           email:          s.customer_email,

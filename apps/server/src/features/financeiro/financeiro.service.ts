@@ -20,6 +20,7 @@ import { randomUUID } from 'crypto'
 import {
   findLicencaById,
   findLicencaByStripeSubscriptionId,
+  findPlanoById,
   renovarLicencaComHistorico,
   criarPagamento,
   findPagamentosByClienteId,
@@ -166,7 +167,15 @@ export class FinanceiroService {
       )
     }
 
-    const plano = licenca.plano as any
+    // Cobrança de OUTRO plano (troca paga): o preço vem do plano de destino, e a
+    // licença só é movida quando o pagamento confirmar — nunca antes.
+    let plano = licenca.plano as any
+    if (dados.planoId && dados.planoId !== licenca.planoId) {
+      const destino = await findPlanoById(dados.planoId)
+      if (!destino)                     throw new NotFoundException('Plano de destino não encontrado.')
+      if (destino.status !== 'ATIVO')   throw new BadRequestException('O plano de destino está inativo.')
+      plano = destino
+    }
 
     // Assinatura recorrente: cada período usa um Price pré-criado no catálogo do Stripe.
     let stripePriceId: string | null
@@ -188,6 +197,7 @@ export class FinanceiroService {
         email:         licenca.cliente.email,
         stripePriceId,
         appUrl:        this.validarOrigem(origem),
+        ...(plano.id !== licenca.planoId ? { planoId: plano.id } : {}),
       })
 
       return { url: result.url, sessionId: result.sessionId }
@@ -267,7 +277,7 @@ export class FinanceiroService {
 
     // ── 1. Primeiro pagamento da assinatura ──────────────────────────────────
     if (evento.tipo === 'checkout.session.completed') {
-      const { sessionId, subscriptionId, licencaId, meses, amountTotal, email } = (evento as any).dados
+      const { sessionId, subscriptionId, licencaId, planoId, meses, amountTotal, email } = (evento as any).dados
 
       const jaProcessado = await findPagamentoByTransacaoId(sessionId)
       if (jaProcessado) return { msg: 'Pagamento já processado' }
@@ -282,7 +292,7 @@ export class FinanceiroService {
         return { msg: 'licencaId ausente nos metadados — ignorado' }
       }
 
-      const licenca = await findLicencaById(licencaId)
+      let licenca = await findLicencaById(licencaId)
       if (!licenca) {
         await this.alarmarDescarte({
           evento:     'checkout.session.completed',
@@ -291,6 +301,24 @@ export class FinanceiroService {
           valor:      (amountTotal ?? 0) / 100,
         })
         throw new NotFoundException('Licença não encontrada.')
+      }
+
+      // Troca de plano paga: o checkout foi gerado para outro plano, e é AQUI —
+      // com o pagamento confirmado — que a licença muda. Antes disso ela não
+      // muda em lugar nenhum, então cliente que não paga não sobe de plano.
+      if (planoId && planoId !== licenca.planoId) {
+        const destino = await findPlanoById(planoId)
+        if (destino) {
+          await updateLicenca(licencaId, { planoId, planoPendenteId: null })
+          await registrarEventoLicenca(licencaId, {
+            tipo: 'TROCA_PLANO',
+            chaveAtivacao: licenca.chaveAtivacao,
+            observacao: `Plano alterado para "${destino.nome}" após confirmação do pagamento.`,
+          })
+          licenca = { ...licenca, planoId, plano: destino } as typeof licenca
+        } else {
+          console.warn(`[webhook] planoId ${planoId} da metadata não existe — licença mantida no plano atual`)
+        }
       }
 
       const resultado = await this.processarRenovacao({

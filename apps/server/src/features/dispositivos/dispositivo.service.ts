@@ -342,7 +342,14 @@ export class DispositivoService {
     if (planoNovo.id === licenca.planoId)
       throw new BadRequestException('A licença já está neste plano.')
 
-    const subId = licenca.stripeSubscriptionId
+    // A licença pode carregar um stripeSubscriptionId que não existe mais nesta
+    // conta/modo — típico depois da virada de test para live, onde a assinatura
+    // antiga é de outro catálogo. Consultar o Stripe direto estourava 500 e a
+    // troca "não funcionava" sem explicação. `assinaturaAtiva` já engole o erro
+    // e devolve false, então uma assinatura fantasma vira o caso "sem assinatura".
+    const subId = licenca.stripeSubscriptionId && await this.stripeService.assinaturaAtiva(licenca.stripeSubscriptionId)
+      ? licenca.stripeSubscriptionId
+      : null
 
     // Sem assinatura recorrente ativa (trial / pagamento manual): troca direta.
     // Não há proporção a cobrar nem próximo ciclo para agendar.

@@ -40,6 +40,12 @@ export const validarSchema = z.object({
 export const gerarCobrancaSchema = z.object({
   licencaId: z.string().uuid(),
   meses:     z.number().int().min(1).max(12),
+  /**
+   * Cobrar por OUTRO plano que não o atual da licença. Usado na troca de plano
+   * paga: a licença só muda de plano quando o pagamento cai, não antes.
+   * Ausente = cobra o plano que a licença já tem.
+   */
+  planoId:   z.string().uuid().optional(),
 })
 
 export const confirmarPagamentoSchema = z.object({
