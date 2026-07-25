@@ -2,6 +2,7 @@ export type Plano = {
   id:                      string
   nome:                    string
   descricaoCheckout:       string | null
+  publico:                 boolean
   limiteUsuario:           number
   precoMensal:             number | string
   precoTrimestral:         number | string | null

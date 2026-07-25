@@ -18,6 +18,7 @@ import { Injectable, BadRequestException, NotFoundException } from '@nestjs/comm
 import { ZodError } from 'zod'
 import {
   findAllPlanosAdmin,
+  findPlanosPublicos,
   findPlanoById,
   findPlanoByNome,
   countLicencasAtivasByPlano,
@@ -26,6 +27,7 @@ import {
 } from '@startbig/database'
 import { criarPlanoSchema, editarPlanoSchema } from '@startbig/schemas'
 import { StripeService } from '../../common/stripe/stripe.service'
+import { montarOpcoes } from './plano.precos'
 
 @Injectable()
 export class PlanoService {
@@ -59,6 +61,29 @@ export class PlanoService {
    */
   async listar() {
     return findAllPlanosAdmin()
+  }
+
+  /**
+   * Planos da página pública de contratação: ATIVO e marcados como públicos,
+   * já com os períodos e preços prontos para exibir.
+   *
+   * Devolve só o necessário para vender. Nada de Price ID, desconto bruto ou
+   * qualquer campo interno — é resposta de endpoint aberto na internet.
+   */
+  async listarPublicos() {
+    const planos = await findPlanosPublicos()
+
+    return planos
+      .map(p => ({
+        id:            p.id,
+        nome:          p.nome,
+        descricao:     p.descricaoCheckout,
+        limiteUsuario: p.limiteUsuario,
+        opcoes:        montarOpcoes(p),
+      }))
+      // Plano sem nenhum período com Price não tem como ser comprado: melhor
+      // sumir da vitrine do que virar um card com botão que falha.
+      .filter(p => p.opcoes.length > 0)
   }
 
   /**

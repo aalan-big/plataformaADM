@@ -20,5 +20,7 @@ import { PlanoService } from './plano.service'
 @Module({
   controllers: [PlanoController],
   providers:   [PlanoService],
+  // Exportado porque a contratação pública precisa da vitrine de planos.
+  exports:     [PlanoService],
 })
 export class PlanoModule {}

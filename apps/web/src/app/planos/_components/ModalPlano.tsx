@@ -11,6 +11,7 @@ const vazio = {
   nome: '', descricaoCheckout: '', limiteUsuario: '1',
   precoMensal: '', precoTrimestral: '', precoAnual: '',
   valorLicencaAdicional: '', descontoTrimestral: '', descontoAnual: '',
+  publico: false,
 }
 
 function paraFormulario(p: Plano | null): typeof vazio {
@@ -26,6 +27,7 @@ function paraFormulario(p: Plano | null): typeof vazio {
     valorLicencaAdicional: num(p.valorLicencaAdicional),
     descontoTrimestral:    num(p.descontoTrimestral),
     descontoAnual:         num(p.descontoAnual),
+    publico:               !!p.publico,
   }
 }
 
@@ -40,7 +42,7 @@ export function ModalPlano({
   const [salvando, setSalvando] = useState(false)
   const [erro, setErro]         = useState('')
 
-  const set = (k: keyof typeof vazio, v: string) => setForm(prev => ({ ...prev, [k]: v }))
+  const set = (k: keyof typeof vazio, v: string | boolean) => setForm(prev => ({ ...prev, [k]: v }))
 
   const numeroOuOmitir = (v: string) => (v.trim() === '' ? undefined : Number(v))
 
@@ -51,6 +53,7 @@ export function ModalPlano({
         nome:          form.nome.trim(),
         limiteUsuario: parseInt(form.limiteUsuario) || 1,
         precoMensal:   Number(form.precoMensal) || 0,
+        publico:       form.publico,
         ...(form.descricaoCheckout.trim()   ? { descricaoCheckout:     form.descricaoCheckout.trim() }        : {}),
         ...(numeroOuOmitir(form.precoTrimestral)       != null ? { precoTrimestral:       Number(form.precoTrimestral) }       : {}),
         ...(numeroOuOmitir(form.precoAnual)            != null ? { precoAnual:            Number(form.precoAnual) }            : {}),
@@ -169,6 +172,24 @@ export function ModalPlano({
             Os descontos só entram na conta quando o preço do período está em branco — havendo preço fechado,
             é ele que vale, porque é ele que corresponde ao valor cobrado pelo Stripe.
           </p>
+
+          {/* Visibilidade pública */}
+          <label className="flex items-start gap-3 bg-slate-800/40 border border-slate-700/60 rounded-xl px-4 py-3.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.publico}
+              onChange={e => set('publico', e.target.checked)}
+              className="mt-0.5 w-4 h-4 accent-blue-500 shrink-0"
+            />
+            <span className="text-sm">
+              <span className="font-semibold text-slate-200">Exibir na página pública de contratação</span>
+              <span className="block text-[11px] text-slate-500 mt-1 leading-relaxed">
+                Marcado, o plano aparece em <strong className="text-slate-400">assine.startbig.com.br</strong> e qualquer
+                pessoa pode contratá-lo pelo site. Deixe desmarcado para planos de canal, de parceiro ou de uso interno —
+                eles continuam funcionando normalmente, só não viram vitrine.
+              </span>
+            </span>
+          </label>
 
           {erro && (
             <div className="flex items-start gap-2 text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2.5 text-sm">

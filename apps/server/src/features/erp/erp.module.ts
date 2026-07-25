@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common'
 import { DispositivoModule } from '../dispositivos/dispositivo.module'
 import { FinanceiroModule } from '../financeiro/financeiro.module'
+import { PlanoModule } from '../plano/plano.module'
+import { ErpContratacaoService } from './erp-contratacao.service'
 
 import { ErpLicencaController }  from './erp-licenca.controller'
 import { ErpCobrancaController } from './erp-cobranca.controller'
@@ -11,7 +13,7 @@ import { ErpUsuarioService }     from './erp-usuario.service'
 import { ErpLicencaGuard }       from '../../core/guards/erp-licenca.guard'
 
 @Module({
-  imports:     [DispositivoModule, FinanceiroModule],
+  imports:     [DispositivoModule, FinanceiroModule, PlanoModule],
   controllers: [
     ErpLicencaController,
     ErpCobrancaController,
@@ -21,6 +23,7 @@ import { ErpLicencaGuard }       from '../../core/guards/erp-licenca.guard'
   providers: [
     ErpAuthService,
     ErpUsuarioService,
+    ErpContratacaoService,
     ErpLicencaGuard,
   ],
 })

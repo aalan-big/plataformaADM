@@ -38,6 +38,7 @@ import { confirmarPagamentoSchema, gerarCobrancaSchema } from '@startbig/schemas
 import { EmailService } from '../../core/email/email.service'
 import { StripeService } from '../../common/stripe/stripe.service'
 import { ParceiroService } from '../parceiro/parceiro.service'
+import { montarOpcoes } from '../plano/plano.precos'
 
 @Injectable()
 export class FinanceiroService {
@@ -104,25 +105,6 @@ export class FinanceiroService {
     const plano = licenca.plano
     if (!plano) throw new NotFoundException('Plano não encontrado.')
 
-    const preco   = Number(plano.precoMensal)
-    const descTri = plano.descontoTrimestral ? Number(plano.descontoTrimestral) / 100 : 0
-    const descAnu = plano.descontoAnual      ? Number(plano.descontoAnual)      / 100 : 0
-
-    // O preço fechado do período manda quando está preenchido: é ele que corresponde
-    // ao Price cadastrado no Stripe, e é o Stripe quem cobra de fato. O cálculo
-    // "mensal × meses × (1 − desconto)" fica só como fallback de plano sem preço fechado
-    // — antes ele valia sempre, e a tela anunciava um valor diferente do cobrado.
-    const totalDoPeriodo = (precoFechado: unknown, meses: number, desconto: number) =>
-      precoFechado != null ? Number(precoFechado) : preco * meses * (1 - desconto)
-
-    // Desconto exibido derivado do total real, para não anunciar um percentual
-    // que não corresponde ao valor que vai ser cobrado.
-    const descontoEfetivo = (total: number, meses: number) =>
-      preco > 0 ? Math.max(0, 1 - total / (preco * meses)) : 0
-
-    const totalTri = parseFloat(totalDoPeriodo(plano.precoTrimestral, 3,  descTri).toFixed(2))
-    const totalAnu = parseFloat(totalDoPeriodo(plano.precoAnual,      12, descAnu).toFixed(2))
-
     const nome = !!licenca.cliente.pf
       ? (licenca.cliente.pf?.nomeCompleto ?? licenca.cliente.email)
       : (licenca.cliente.pj?.razaoSocial  ?? licenca.cliente.email)
@@ -133,20 +115,34 @@ export class FinanceiroService {
       plano:          plano.nome,
       status:         licenca.status,
       dataVencimento: licenca.dataVencimento,
-      // Só entra na tela o período que tem Price configurado no plano. Um botão de
-      // pagar que resulta em erro do gateway é pior do que a opção não existir: o
-      // cliente conclui que o sistema está quebrado e desiste da compra.
-      opcoes: [
-        { meses: 1,  label: 'Mensal',     total: parseFloat(preco.toFixed(2)), desconto: 0,                             priceId: plano.stripePriceIdMensal     },
-        { meses: 3,  label: 'Trimestral', total: totalTri,                     desconto: descontoEfetivo(totalTri, 3),   priceId: plano.stripePriceIdTrimestral },
-        { meses: 12, label: 'Anual',      total: totalAnu,                     desconto: descontoEfetivo(totalAnu, 12),  priceId: plano.stripePriceIdAnual      },
-      ].filter(o => !!o.priceId).map(({ priceId: _priceId, ...opcao }) => opcao),
+      // Mesmo cálculo usado pela contratação pública — ver plano.precos.ts.
+      opcoes: montarOpcoes(plano),
     }
   }
 
   // ── Stripe Checkout (assinatura recorrente) ────────────────────────────────
 
-  async gerarCobranca(body: unknown) {
+  /**
+   * Domínios para os quais o checkout pode voltar. O cliente que comprou em
+   * `assine.` precisa voltar para `assine.` — mas a origem chega do navegador,
+   * então nunca é usada crua: valor fora da lista cai no APP_URL. Sem isso,
+   * qualquer um mandaria o cliente para um domínio próprio depois do pagamento.
+   */
+  private validarOrigem(origem?: string): string | undefined {
+    if (!origem) return undefined
+
+    const padrao    = process.env.APP_URL ?? ''
+    const adicionais = (process.env.APP_URLS ?? '').split(',').map(s => s.trim()).filter(Boolean)
+    const permitidas = [padrao, ...adicionais].filter(Boolean).map(u => u.replace(/\/$/, ''))
+
+    const limpa = origem.replace(/\/$/, '')
+    if (permitidas.includes(limpa)) return limpa
+
+    console.warn(`[checkout] origem "${origem}" fora da allowlist — usando APP_URL`)
+    return undefined
+  }
+
+  async gerarCobranca(body: unknown, origem?: string) {
     let dados: ReturnType<typeof gerarCobrancaSchema.parse>
     try {
       dados = gerarCobrancaSchema.parse(body)
@@ -191,6 +187,7 @@ export class FinanceiroService {
         licencaId:     dados.licencaId,
         email:         licenca.cliente.email,
         stripePriceId,
+        appUrl:        this.validarOrigem(origem),
       })
 
       return { url: result.url, sessionId: result.sessionId }

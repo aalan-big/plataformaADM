@@ -36,9 +36,22 @@ export async function countLicencasAtivasByPlano(planoId: string) {
 
 // ── Mutations ─────────────────────────────────────────────────────────────────
 
+/**
+ * Planos que aparecem na página pública de contratação: ATIVO e marcados como
+ * públicos. O filtro mora aqui para que nenhuma tela precise lembrar dele —
+ * esquecer significaria expor preço de canal interno na vitrine.
+ */
+export async function findPlanosPublicos() {
+  return prisma.plano.findMany({
+    where:   { status: 'ATIVO', publico: true },
+    orderBy: { precoMensal: 'asc' },
+  })
+}
+
 export async function criarPlano(data: {
   nome:                    string
   descricaoCheckout?:      string
+  publico?:                boolean
   limiteUsuario:           number
   precoMensal:             number
   precoTrimestral?:        number
@@ -56,6 +69,7 @@ export async function criarPlano(data: {
 export async function updatePlano(id: string, data: {
   nome?:                   string
   descricaoCheckout?:      string | null
+  publico?:                boolean
   limiteUsuario?:          number
   precoMensal?:            number
   precoTrimestral?:        number | null

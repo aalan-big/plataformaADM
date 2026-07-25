@@ -5,6 +5,9 @@ export const criarPlanoSchema = z.object({
   // Exibida ao cliente no checkout do Stripe. O limite é o do próprio campo do
   // Stripe; acima disso o texto vira um bloco denso na tela de pagamento.
   descricaoCheckout:      z.string().max(500).optional(),
+  // Exibir na página pública de contratação. Fora daqui o plano existe, mas
+  // ninguém chega nele pelo site.
+  publico:                z.boolean().optional(),
   limiteUsuario:          z.number().int().min(1),
   precoMensal:            z.number().min(0),
   precoTrimestral:        z.number().min(0).optional(),

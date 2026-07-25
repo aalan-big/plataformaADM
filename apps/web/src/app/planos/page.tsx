@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Layers, Plus, Pencil, RefreshCw, Loader2, AlertTriangle,
-  CheckCircle2, Power, PowerOff, Users, CreditCard,
+  CheckCircle2, Power, PowerOff, Users, CreditCard, Globe,
 } from 'lucide-react'
 import { ModalPlano } from './_components/ModalPlano'
 import {
@@ -195,6 +195,13 @@ export default function PlanosPage() {
                       {p._count?.licencas != null && (
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-800 text-slate-400 border border-slate-700">
                           {p._count.licencas} licença{p._count.licencas === 1 ? '' : 's'}
+                        </span>
+                      )}
+
+                      {p.publico && (
+                        <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-300 border border-purple-500/25"
+                          title="Aparece na página pública de contratação">
+                          <Globe size={10} /> no site
                         </span>
                       )}
                     </div>

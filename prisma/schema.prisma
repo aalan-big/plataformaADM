@@ -42,6 +42,10 @@ model Plano {
   stripePriceIdTrimestral  String?
   stripePriceIdAnual       String?
   status                   String    @default("ATIVO")
+  /// Exibe este plano na página pública de contratação (assine.startbig.com.br).
+  /// Padrão false de propósito: plano de canal ou de uso interno não pode virar
+  /// vitrine por descuido — quem entra no site só vê o que foi marcado aqui.
+  publico                  Boolean   @default(false)
   criadoEm                 DateTime  @default(now())
 
   licencas                 Licenca[]

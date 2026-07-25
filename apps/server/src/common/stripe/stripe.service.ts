@@ -78,8 +78,12 @@ export class StripeService {
     licencaId:     string
     email:         string
     stripePriceId: string   // Price recorrente pré-criado no catálogo do Stripe
+    /** Domínio de retorno. Já validado por quem chama — ver validarOrigem(). */
+    appUrl?:       string
   }): Promise<CheckoutResult> {
-    const appUrl = process.env.APP_URL ?? 'http://localhost:3000'
+    // Quem compra em assine.startbig.com.br tem de voltar para assine., não para
+    // o painel: trocar de domínio no meio do pagamento parece golpe.
+    const appUrl = dados.appUrl ?? process.env.APP_URL ?? 'http://localhost:3000'
     const label  = dados.meses === 1 ? '1 mês' : `${dados.meses} meses`
 
     const session = await this.stripe.checkout.sessions.create({
