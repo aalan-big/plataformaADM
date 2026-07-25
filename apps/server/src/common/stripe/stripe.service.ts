@@ -91,6 +91,10 @@ export class StripeService {
       line_items: [{ price: dados.stripePriceId, quantity: 1 }],
       mode:           'subscription',
       customer_email: dados.email,
+      // Endereço de cobrança é exigência de nota fiscal. Coletar aqui, e não no
+      // nosso formulário, porque nesta tela o cliente já está preenchendo dados
+      // de pagamento — o mesmo campo antes do cartão derrubaria conversão.
+      billing_address_collection: 'required',
       success_url:    `${appUrl}/pagamento/sucesso?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url:     `${appUrl}/pagamento/cancelado`,
       metadata:       { licencaId: dados.licencaId, meses: String(dados.meses) },
