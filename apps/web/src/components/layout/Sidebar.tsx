@@ -1,12 +1,13 @@
 'use client'
 
 import { useRouter, usePathname } from 'next/navigation'
-import { LayoutDashboard, Users, Cpu, DollarSign, Mail, LogOut } from 'lucide-react'
+import { LayoutDashboard, Users, Cpu, Layers, DollarSign, Mail, LogOut } from 'lucide-react'
 
 const itens = [
   { label: 'Dashboard',    href: '/dashboard',    Icone: LayoutDashboard },
   { label: 'Clientes',     href: '/clientes',     Icone: Users           },
   { label: 'Dispositivos', href: '/dispositivos', Icone: Cpu             },
+  { label: 'Planos',       href: '/planos',       Icone: Layers          },
   { label: 'Financeiro',   href: '/financeiro',   Icone: DollarSign      },
   { label: 'E-mails',      href: '/email',        Icone: Mail            },
 ]
