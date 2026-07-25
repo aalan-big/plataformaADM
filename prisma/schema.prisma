@@ -52,16 +52,77 @@ model Plano {
 // ── Parceiro ──────────────────────────────────────────────────────────────────
 model Parceiro {
   id                 String    @id @default(uuid())
+  /// Código público de indicação (ex.: "OTIK22"). É o que o parceiro divulga e o
+  /// que o cliente digita — UUID não serve porque ninguém digita UUID.
+  codigo             String    @unique
   nomeParceiro       String
   documento          String?
-  comissaoPercentual Decimal?  @db.Decimal(5, 2)
+  email              String?
   contatoCelular     String?
   cidadeBase         String?
+  status             String    @default("ATIVO")   // ATIVO | INATIVO
+
+  /// Regra de comissão VIGENTE. Cada comissão gerada guarda uma cópia destes
+  /// valores — mudar a regra aqui nunca reescreve o que já foi apurado.
+  tipoComissao       String    @default("FIXO_MENSAL")  // FIXO_MENSAL | PERCENTUAL
+  /// Usado quando tipoComissao = FIXO_MENSAL: R$ por mês coberto pelo pagamento.
+  valorComissaoFixa  Decimal?  @db.Decimal(10, 2)
+  /// Usado quando tipoComissao = PERCENTUAL: % sobre o valor pago.
+  comissaoPercentual Decimal?  @db.Decimal(5, 2)
+
+  observacoes        String?
   criadoEm           DateTime  @default(now())
 
   clientes           Cliente[]
+  comissoes          ComissaoParceiro[]
 
+  @@index([status])
   @@map("parceiros")
+}
+
+// ── ComissaoParceiro ──────────────────────────────────────────────────────────
+/// Livro-razão de comissões: uma linha por pagamento que gera repasse.
+///
+/// O valor NÃO é recalculado na hora do repasse varrendo pagamentos — é gravado
+/// quando o pagamento entra, junto com uma cópia da regra vigente naquele dia.
+/// É isso que permite reajustar a comissão de um parceiro sem reescrever o
+/// histórico dele, e é a diferença entre um sistema de repasse e uma planilha.
+model ComissaoParceiro {
+  id            String    @id @default(uuid())
+  parceiroId    String
+  clienteId     String
+  licencaId     String?
+  /// Um pagamento gera no máximo uma comissão. O índice único é a trava de
+  /// idempotência: webhook reentregue não paga o parceiro duas vezes.
+  pagamentoId   String    @unique
+
+  /// Competência no formato "2026-07" — é por ela que o repasse é agrupado.
+  competencia   String
+  /// Valor que o cliente pagou, para conferência e para o cálculo percentual.
+  valorBase     Decimal   @db.Decimal(10, 2)
+  /// Meses cobertos pelo pagamento (1, 3 ou 12): comissão fixa é por mês.
+  meses         Int
+
+  /// Cópia da regra no momento da apuração — nunca ler do parceiro para exibir.
+  tipoComissao  String
+  parametro     Decimal   @db.Decimal(10, 2)
+  /// Valor devido ao parceiro por este pagamento.
+  valor         Decimal   @db.Decimal(10, 2)
+
+  status              String    @default("PENDENTE")  // PENDENTE | PAGA | CANCELADA
+  pagoEm              DateTime?
+  referenciaPagamento String?
+  observacao          String?
+  criadoEm            DateTime  @default(now())
+
+  parceiro   Parceiro  @relation(fields: [parceiroId],  references: [id], onDelete: Restrict)
+  cliente    Cliente   @relation(fields: [clienteId],   references: [id], onDelete: Cascade)
+  licenca    Licenca?  @relation(fields: [licencaId],   references: [id], onDelete: SetNull)
+  pagamento  Pagamento @relation(fields: [pagamentoId], references: [id], onDelete: Cascade)
+
+  @@index([parceiroId, status])
+  @@index([competencia])
+  @@map("comissoes_parceiro")
 }
 
 // ── Usuario ───────────────────────────────────────────────────────────────────
@@ -100,6 +161,7 @@ model Cliente {
   dispositivos    Licenca[]
   pagamentos      Pagamento[]
   transacoes      TransacaoHistorico[]
+  comissoes       ComissaoParceiro[]
 
   usuario         Usuario   @relation(fields: [usuarioId],  references: [id])
   parceiroObj     Parceiro? @relation(fields: [parceiroId], references: [id])
@@ -193,6 +255,7 @@ model Licenca {
   pagamentos          Pagamento[]
   transacoes          TransacaoHistorico[]
   sessoes             LicencaSessao[]
+  comissoes           ComissaoParceiro[]
 
   @@index([clienteId])
   @@index([status])
@@ -233,6 +296,7 @@ model Pagamento {
   licenca      Licenca               @relation(fields: [licencaId], references: [id])
   cliente      Cliente               @relation(fields: [clienteId], references: [id])
   transacoes   TransacaoHistorico[]
+  comissao     ComissaoParceiro?
 
   @@index([licencaId])
   @@index([clienteId])
