@@ -7,7 +7,7 @@ import {
   ShieldCheck, ShieldOff, ShieldAlert, ShieldX,
   MonitorOff, UserMinus, UserPlus, RotateCcw,
   Ban, Pause, Trash2, Play, Link2, ExternalLink,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, ArrowRight,
 } from 'lucide-react'
 import ModalGerarChave from './ModalGerarChave'
 
@@ -36,6 +36,8 @@ type LicencaDetalhe = {
   criadoEm: string
   totalUsuarios: number
   usuariosExtras: number
+  /** Presente = assinatura recorrente viva no Stripe. Muda o efeito da troca de plano. */
+  stripeSubscriptionId?: string | null
   plano: { id: string; nome: string; precoMensal: number; precoTrimestral: number | null; precoAnual: number | null; limiteUsuario: number; descontoTrimestral: number | null; descontoAnual: number | null } | null
   cliente: {
     id: string
@@ -149,6 +151,11 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
   const [planoSel, setPlanoSel] = useState('')
   const [trocandoPlano, setTrocandoPlano] = useState(false)
   const [msgPlano, setMsgPlano] = useState('')
+  // Feedback fica em cada seção, não num aviso único no topo do modal: a ação
+  // acontece no rodapé da tela, e mensagem lá em cima passa despercebida —
+  // o usuário clica, nada parece acontecer, e conclui que está quebrado.
+  const [erroPlano, setErroPlano] = useState('')
+  const [erroLink, setErroLink]   = useState('')
   // Delete
   const [deletando, setDeletando] = useState(false)
   const [confirmandoDelete, setConfirmandoDelete] = useState(false)
@@ -204,7 +211,7 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
   async function gerarLinkStripe() {
     if (!licenca) return
     setGerandoLink(true)
-    setErro('')
+    setErroLink('')
     try {
       const res = await fetch('/api/financeiro/gerar-cobranca', {
         method: 'POST',
@@ -212,10 +219,10 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
         body: JSON.stringify({ licencaId: licenca.id, meses: mesesStripe }),
       })
       const j = await res.json()
-      if (!res.ok) { setErro(j.message ?? j.erro ?? 'Erro ao gerar link.'); return }
+      if (!res.ok) { setErroLink(j.message ?? j.erro ?? 'Erro ao gerar link.'); return }
       setLinkStripe(j.url)
     } catch {
-      setErro('Falha de conexão ao gerar link.')
+      setErroLink('Falha de conexão ao gerar link.')
     } finally {
       setGerandoLink(false)
     }
@@ -227,10 +234,62 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
     setTimeout(() => setLinkCopiado(false), 2000)
   }
 
+  /**
+   * O que acontece se trocar para o plano selecionado. Calculado aqui só para
+   * AVISAR antes do clique — quem decide de fato é o backend, comparando os
+   * preços no período da assinatura. Sem isso o admin aperta um botão que pode
+   * cobrar o cliente na hora, sem saber que vai cobrar.
+   */
+  const efeitoDaTroca = (() => {
+    const planoDestino = planos.find(p => p.id === planoSel)
+    const semTroca = { tipo: 'nenhum' as const, aviso: '', cor: 'text-slate-500' }
+
+    if (!licenca || !planoSel || planoSel === licenca.plano?.id || !planoDestino) return semTroca
+
+    const atual = Number(licenca.plano?.precoMensal ?? 0)
+    const novo  = Number(planoDestino.precoMensal ?? 0)
+
+    if (!licenca.stripeSubscriptionId)
+      return {
+        tipo:  'imediato' as const,
+        aviso: 'Não há assinatura ativa no Stripe: a troca vale na hora e nada é cobrado do cliente.',
+        cor:   'text-slate-400',
+      }
+
+    if (novo > atual)
+      return {
+        tipo:  'upgrade' as const,
+        aviso: 'Upgrade: vale na hora, e o Stripe cobra AGORA a diferença proporcional ao que resta do ciclo.',
+        cor:   'text-amber-400',
+      }
+
+    if (novo < atual)
+      return {
+        tipo:  'downgrade' as const,
+        aviso: 'Downgrade: nada é cobrado nem estornado agora. O plano novo passa a valer no fim do ciclo já pago.',
+        cor:   'text-blue-400',
+      }
+
+    return {
+      tipo:  'igual' as const,
+      aviso: 'Mesmo valor mensal: a troca é aplicada sem cobrança.',
+      cor:   'text-slate-400',
+    }
+  })()
+
   async function trocarPlano() {
     if (!licenca || !planoSel || planoSel === licenca.plano?.id) return
+
+    // Troca de plano mexe em dinheiro: upgrade cobra na hora. Confirmar com o
+    // efeito escrito evita clique distraído numa lista de planos.
+    const destino = planos.find(p => p.id === planoSel)
+    const ok = window.confirm(
+      `Trocar o plano desta licença para "${destino?.nome}"?\n\n${efeitoDaTroca.aviso}`,
+    )
+    if (!ok) return
+
     setTrocandoPlano(true)
-    setErro('')
+    setErroPlano('')
     setMsgPlano('')
     try {
       const res = await fetch(`/api/licenca/${licencaId}/trocar-plano`, {
@@ -239,13 +298,13 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
         body: JSON.stringify({ planoId: planoSel }),
       })
       const j = await res.json()
-      if (!res.ok) { setErro(j.message ?? j.erro ?? 'Erro ao trocar plano.'); return }
+      if (!res.ok) { setErroPlano(j.message ?? j.erro ?? 'Erro ao trocar plano.'); return }
       setMsgPlano(j.msg ?? 'Plano atualizado.')
       setLinkStripe('') // o link anterior era do plano antigo
       carregar()
       onAtualizar()
     } catch {
-      setErro('Falha de conexão.')
+      setErroPlano('Falha de conexão.')
     } finally {
       setTrocandoPlano(false)
     }
@@ -511,32 +570,62 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
                   <div className="px-5 py-3 bg-slate-800/40 border-b border-slate-700/50">
                     <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Plano da Licença</p>
                   </div>
-                  <div className="px-5 py-4 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={planoSel}
-                        onChange={e => setPlanoSel(e.target.value)}
-                        className="flex-1 bg-slate-950 border border-slate-700/60 text-slate-200 text-xs rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
-                      >
-                        {planos.length === 0 && <option value="">Carregando planos...</option>}
-                        {planos.map(p => (
-                          <option key={p.id} value={p.id}>{p.nome} · R$ {Number(p.precoMensal).toFixed(2)}/mês</option>
-                        ))}
-                      </select>
-                      <button
-                        onClick={trocarPlano}
-                        disabled={trocandoPlano || !planoSel || planoSel === licenca.plano?.id}
-                        className="shrink-0 flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded-lg transition-colors"
-                      >
-                        {trocandoPlano ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
-                        Trocar
-                      </button>
+                  <div className="px-5 py-4 space-y-3">
+                    {/* De → para, para o admin ver a mudança antes de aplicar */}
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 min-w-0 bg-slate-950/60 border border-slate-700/50 rounded-lg px-3 py-2.5">
+                        <p className="text-[9px] text-slate-600 uppercase tracking-wider">Plano atual</p>
+                        <p className="text-xs font-semibold text-slate-200 truncate">
+                          {licenca.plano?.nome ?? '—'}
+                          {licenca.plano && (
+                            <span className="text-slate-500 font-normal"> · R$ {Number(licenca.plano.precoMensal).toFixed(2)}/mês</span>
+                          )}
+                        </p>
+                      </div>
+
+                      <ArrowRight size={14} className="text-slate-600 shrink-0" />
+
+                      <div className="flex-1 min-w-0">
+                        <select
+                          value={planoSel}
+                          onChange={e => { setPlanoSel(e.target.value); setErroPlano(''); setMsgPlano('') }}
+                          className="w-full bg-slate-950 border border-slate-700/60 text-slate-200 text-xs rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
+                        >
+                          {planos.length === 0 && <option value="">Carregando planos...</option>}
+                          {planos.map(p => (
+                            <option key={p.id} value={p.id}>{p.nome} · R$ {Number(p.precoMensal).toFixed(2)}/mês</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
-                    {msgPlano ? (
-                      <p className="text-[11px] text-emerald-400">{msgPlano}</p>
-                    ) : (
-                      <p className="text-[11px] text-slate-600">
-                        Upgrade vale na hora (cobrança proporcional); downgrade passa a valer no fim do ciclo já pago.
+
+                    {/* O efeito é escrito ANTES do clique. Trocar plano pode cobrar
+                        o cliente na hora, e ninguém deve descobrir isso depois. */}
+                    {efeitoDaTroca.tipo !== 'nenhum' && (
+                      <div className="flex items-start gap-2 bg-slate-950/60 border border-slate-700/40 rounded-lg px-3 py-2.5">
+                        <AlertCircle size={12} className={`shrink-0 mt-0.5 ${efeitoDaTroca.cor}`} />
+                        <p className={`text-[11px] leading-relaxed ${efeitoDaTroca.cor}`}>{efeitoDaTroca.aviso}</p>
+                      </div>
+                    )}
+
+                    <button
+                      onClick={trocarPlano}
+                      disabled={trocandoPlano || !planoSel || planoSel === licenca.plano?.id}
+                      className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
+                    >
+                      {trocandoPlano ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+                      {planoSel === licenca.plano?.id ? 'Selecione outro plano' : 'Aplicar troca de plano'}
+                    </button>
+
+                    {/* Resultado aqui embaixo, junto do botão — não no topo do modal */}
+                    {msgPlano && (
+                      <p className="flex items-start gap-1.5 text-[11px] text-emerald-400">
+                        <CheckCheck size={12} className="shrink-0 mt-0.5" /> {msgPlano}
+                      </p>
+                    )}
+                    {erroPlano && (
+                      <p className="flex items-start gap-1.5 text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                        <AlertCircle size={12} className="shrink-0 mt-0.5" /> {erroPlano}
                       </p>
                     )}
                   </div>
@@ -634,8 +723,21 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
                         </div>
                       )
                     })()}
-                    {linkStripe && (
-                      <p className="text-[11px] text-slate-600">Copie e envie ao cliente. O link expira após o pagamento.</p>
+                    {/* Feedback do link também fica aqui, junto do botão que o gera */}
+                    {erroLink && (
+                      <p className="flex items-start gap-1.5 text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                        <AlertCircle size={12} className="shrink-0 mt-0.5" /> {erroLink}
+                      </p>
+                    )}
+                    {linkStripe ? (
+                      <p className="text-[11px] text-slate-500">
+                        Cobrança do plano <strong className="text-slate-400">{licenca.plano?.nome}</strong>.
+                        Copie e envie ao cliente — o link deixa de valer depois do pagamento.
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-slate-600">
+                        Gera um checkout do Stripe para o plano atual desta licença. Trocar de plano invalida o link anterior.
+                      </p>
                     )}
                   </div>
                 </div>
