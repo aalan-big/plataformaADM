@@ -305,17 +305,15 @@ export default function ContratarPage() {
         )}
       </main>
 
+      {/*
+        Quando as páginas de Política de Privacidade e Termos de Uso existirem no
+        site, elas entram aqui. Link legal ausente numa tela de pagamento é menos
+        ruim que link legal quebrado — mas as duas páginas são esperadas por quem
+        compra e pelo próprio Stripe, então isso é pendência, não decisão.
+      */}
       <footer className="border-t border-[#E9E9E9] mt-8">
-        <div className="max-w-3xl mx-auto px-5 py-6 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="max-w-3xl mx-auto px-5 py-6 text-center">
           <p className="text-xs text-[#64748B]">© 2026 StartBIG · Desenvolvido por BIG TEC</p>
-          <div className="flex items-center gap-5 text-xs">
-            <a href={`${SITE}/politica-de-privacidade`} className="text-[#64748B] hover:text-[#045CA1] transition-colors">
-              Política de Privacidade
-            </a>
-            <a href={`${SITE}/termos-de-uso`} className="text-[#64748B] hover:text-[#045CA1] transition-colors">
-              Termos de Uso
-            </a>
-          </div>
         </div>
       </footer>
     </>
