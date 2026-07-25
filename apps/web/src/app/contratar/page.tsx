@@ -295,21 +295,20 @@ function ContratarConteudo() {
                     </p>
                   </div>
 
-                  {/* Deixa explícito antes de digitar. Quem nunca comprou precisa
-                      saber que está no lugar certo, e não descobrir depois. */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="border border-[#E9E9E9] rounded-xl px-4 py-3.5 bg-white">
-                      <p className="text-sm font-bold text-[#151515]">Ainda não sou cliente</p>
-                      <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
-                        Criamos sua conta na próxima tela, em menos de um minuto.
-                      </p>
-                    </div>
-                    <div className="border border-[#E9E9E9] rounded-xl px-4 py-3.5 bg-[#F8F7FF]">
-                      <p className="text-sm font-bold text-[#151515]">Já uso o StartBIG</p>
-                      <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
-                        Reconhecemos sua conta e pedimos só a senha.
-                      </p>
-                    </div>
+                  {/* Informação, não escolha. Caixa com borda e fundo pede clique, e
+                      clicar aqui não deve decidir nada: quem se acha novo pode já ter
+                      cadastro esquecido, e quem se acha cliente pode não ter conta.
+                      É a verificação do e-mail que sabe a verdade — estes dois textos
+                      só existem para ninguém achar que a página não é para ele. */}
+                  <div className="space-y-2">
+                    <p className="flex items-start gap-2.5 text-sm text-[#334155]">
+                      <Check size={15} className="text-[#10B981] shrink-0 mt-0.5" />
+                      <span><strong className="text-[#151515]">Ainda não é cliente?</strong> Criamos sua conta na próxima tela, em menos de um minuto.</span>
+                    </p>
+                    <p className="flex items-start gap-2.5 text-sm text-[#334155]">
+                      <Check size={15} className="text-[#10B981] shrink-0 mt-0.5" />
+                      <span><strong className="text-[#151515]">Já usa o StartBIG?</strong> Reconhecemos sua conta e pedimos só a senha.</span>
+                    </p>
                   </div>
 
                   <div>
