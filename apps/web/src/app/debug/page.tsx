@@ -7,6 +7,7 @@ import { TemaClientes } from './_temas/TemaClientes'
 import { TemaLicencas } from './_temas/TemaLicencas'
 import { TemaFinanceiro } from './_temas/TemaFinanceiro'
 import { TemaPlano } from './_temas/TemaPlano'
+import { TemaParceiros } from './_temas/TemaParceiros'
 import { TemaErpAuth } from './_temas/TemaErpAuth'
 import { TemaErpUsuario } from './_temas/TemaErpUsuario'
 
@@ -52,7 +53,8 @@ const ROTAS = [
   { modulo: 'ERP — Usuário',   cor: 'text-teal-400',    rotas: ['GET /erp/usuario/dados', 'POST /erp/usuario/alterar-senha', 'POST /erp/usuario/solicitar-novo-email', 'GET /erp/usuario/confirmar-email'] },
   { modulo: 'ERP — Cobrança',  cor: 'text-orange-400',  rotas: ['POST /erp/cobranca', 'GET /erp/plano/:licencaId'] },
   { modulo: 'Financeiro',      cor: 'text-yellow-400',  rotas: ['POST /api/financeiro/confirmar', 'GET /api/financeiro/historico/cliente/:id', 'GET /api/financeiro/historico/licenca/:id', 'GET /api/financeiro/receita', 'POST /api/financeiro/webhook/stripe', 'POST /api/financeiro/webhook/asaas'] },
-  { modulo: 'Planos',          cor: 'text-purple-400',  rotas: ['GET /api/plano', 'POST /api/plano', 'GET /api/plano/:id', 'PUT /api/plano/:id', 'PATCH /api/plano/:id/desativar', 'PATCH /api/plano/:id/reativar'] },
+  { modulo: 'Planos',          cor: 'text-purple-400',  rotas: ['GET /api/plano', 'POST /api/plano', 'GET /api/plano/:id', 'PUT /api/plano/:id', 'PATCH /api/plano/:id/desativar', 'PATCH /api/plano/:id/reativar', 'POST /api/plano/:id/sincronizar-stripe'] },
+  { modulo: 'Parceiros',       cor: 'text-orange-400',  rotas: ['GET /api/parceiro', 'POST /api/parceiro', 'GET /api/parceiro/:id', 'PUT /api/parceiro/:id', 'PATCH /api/parceiro/:id/desativar', 'PATCH /api/parceiro/:id/reativar', 'PATCH /api/parceiro/vincular-cliente', 'GET /api/parceiro/comissoes', 'GET /api/parceiro/repasse', 'POST /api/parceiro/comissoes/pagar'] },
 ]
 
 function MapaRotas() {
@@ -210,6 +212,12 @@ export default function DebugPage() {
           {usuario
             ? <TemaPlano />
             : <Bloqueado modulo="Planos" />}
+        </Tema>
+
+        <Tema titulo={`05b — Parceiros & Comissões${usuario ? '' : ' · faça login primeiro'}`}>
+          {usuario
+            ? <TemaParceiros />
+            : <Bloqueado modulo="Parceiros" />}
         </Tema>
 
         <Tema titulo={`06 — ERP Auth · Login e Primeiro Acesso${usuario ? '' : ' · faça login primeiro'}`}>

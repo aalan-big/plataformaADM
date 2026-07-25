@@ -25,6 +25,7 @@ import { DispositivoModule } from './features/dispositivos/dispositivo.module'
 import { FinanceiroModule } from './features/financeiro/financeiro.module'
 import { CronModule } from './features/cron/cron.module'
 import { PlanoModule } from './features/plano/plano.module'
+import { ParceiroModule } from './features/parceiro/parceiro.module'
 import { ErpModule } from './features/erp/erp.module'
 import { StripeModule } from './common/stripe/stripe.module'
 import { EmailModule } from './core/email/email.module'
@@ -48,6 +49,7 @@ import { RolesGuard } from './core/guards/roles.guard'
     FinanceiroModule,
     CronModule,
     PlanoModule,
+    ParceiroModule,
     ErpModule,
   ],
   providers: [

@@ -16,8 +16,12 @@
 import { Module } from '@nestjs/common'
 import { FinanceiroController } from './financeiro.controller'
 import { FinanceiroService } from './financeiro.service'
+import { ParceiroModule } from '../parceiro/parceiro.module'
+
 @Module({
-  imports:     [],
+  // Parceiro entra aqui porque a comissão é apurada no ato do pagamento, e é
+  // este módulo que registra pagamento.
+  imports:     [ParceiroModule],
   controllers: [FinanceiroController],
   providers:   [FinanceiroService],
   exports:     [FinanceiroService],

@@ -37,12 +37,14 @@ import {
 import { confirmarPagamentoSchema, gerarCobrancaSchema } from '@startbig/schemas'
 import { EmailService } from '../../core/email/email.service'
 import { StripeService } from '../../common/stripe/stripe.service'
+import { ParceiroService } from '../parceiro/parceiro.service'
 
 @Injectable()
 export class FinanceiroService {
   constructor(
-    private readonly stripeService: StripeService,
-    private readonly emailService:  EmailService,
+    private readonly stripeService:   StripeService,
+    private readonly emailService:    EmailService,
+    private readonly parceiroService: ParceiroService,
   ) {}
 
   // ── Dashboard ─────────────────────────────────────────────────────────────
@@ -235,6 +237,13 @@ export class FinanceiroService {
     const pagamento = await criarPagamento({ licencaId: dados.licencaId, clienteId: licenca.clienteId, valor: dados.valor, meses: dados.meses, gateway: 'MANUAL', observacao: dados.observacao })
     await criarTransacao({ clienteId: licenca.clienteId, licencaId: dados.licencaId, pagamentoId: pagamento.id, tipo: 'PAGAMENTO_RECEBIDO', valor: dados.valor, origem: 'MANUAL', descricao: dados.observacao ?? `Pagamento manual — ${dados.meses} mês(es)` })
 
+    // Pagamento manual também gera repasse: o dinheiro entrou igual, e o cliente
+    // continua sendo do parceiro independentemente da forma de pagamento.
+    await this.parceiroService.apurarComissao({
+      id: pagamento.id, clienteId: licenca.clienteId, licencaId: dados.licencaId,
+      valor: dados.valor, meses: dados.meses,
+    })
+
     let emailEnviado = false
     try {
       await this.emailService.enviarChaveAtivacao({ email: licenca.cliente.email, nomeCliente, chave: chaveAtivacao, dataVencimento, nomeDispositivo: licenca.nomeDispositivo ?? 'Dispositivo' })
@@ -348,6 +357,14 @@ export class FinanceiroService {
         if (amountTotal <= 0) return { msg: 'Ajuste de plano sem cobrança — ignorado' }
         const pagamento = await criarPagamento({ licencaId: licenca.id, clienteId: licenca.clienteId, valor: amountTotal, meses: 0, gateway: 'STRIPE', transacaoId: invoiceId, observacao: 'Ajuste proporcional de plano (upgrade)' })
         await criarTransacao({ clienteId: licenca.clienteId, licencaId: licenca.id, pagamentoId: pagamento.id, tipo: 'PAGAMENTO_RECEBIDO', valor: amountTotal, origem: 'STRIPE', descricao: 'Ajuste proporcional de plano (upgrade)' })
+
+        // meses = 0 aqui: na comissão fixa por mês isso dá R$ 0 e nenhuma linha é
+        // criada. Já na comissão percentual, o parceiro recebe sobre a diferença
+        // cobrada no upgrade — que é receita real. Quem decide é a regra dele.
+        await this.parceiroService.apurarComissao({
+          id: pagamento.id, clienteId: licenca.clienteId, licencaId: licenca.id,
+          valor: amountTotal, meses: 0,
+        })
         return { msg: 'Ajuste proporcional de plano registrado' }
       }
 
@@ -578,6 +595,12 @@ export class FinanceiroService {
 
     const pagamento = await criarPagamento({ licencaId: licenca.id, clienteId: licenca.clienteId, valor, meses, gateway, transacaoId })
     await criarTransacao({ clienteId: licenca.clienteId, licencaId: licenca.id, pagamentoId: pagamento.id, tipo: 'PAGAMENTO_RECEBIDO', valor, origem, descricao })
+
+    // Funil único de checkout, renovação automática e Asaas — é aqui que a
+    // comissão recorrente nasce, uma linha por pagamento, proporcional aos meses.
+    await this.parceiroService.apurarComissao({
+      id: pagamento.id, clienteId: licenca.clienteId, licencaId: licenca.id, valor, meses,
+    })
 
     try {
       await this.emailService.enviarRenovacao({ email: licenca.cliente.email, nomeCliente, dataVencimento, nomeDispositivo: licenca.nomeDispositivo ?? 'Dispositivo' })
