@@ -24,6 +24,17 @@ enum TipoTransacao {
   PAGAMENTO_RECEBIDO
 }
 
+enum TipoBackup {
+  BANCO
+  IMAGENS
+}
+
+enum StatusBackup {
+  EMITIDO
+  CONFIRMADO
+  FALHOU
+}
+
 // ── Plano ─────────────────────────────────────────────────────────────────────
 model Plano {
   id                       String    @id @default(uuid())
@@ -166,6 +177,7 @@ model Cliente {
   pagamentos      Pagamento[]
   transacoes      TransacaoHistorico[]
   comissoes       ComissaoParceiro[]
+  backups         Backup[]
 
   usuario         Usuario   @relation(fields: [usuarioId],  references: [id])
   parceiroObj     Parceiro? @relation(fields: [parceiroId], references: [id])
@@ -260,6 +272,7 @@ model Licenca {
   transacoes          TransacaoHistorico[]
   sessoes             LicencaSessao[]
   comissoes           ComissaoParceiro[]
+  backups             Backup[]
 
   @@index([clienteId])
   @@index([status])
@@ -354,7 +367,7 @@ model Log {
 model LicencaSessao {
   id              String   @id @default(uuid())
   licencaId       String
-  hwid            String   
+  hwid            String
   ultimoHeartbeat DateTime @default(now())
 
   licenca         Licenca  @relation(fields: [licencaId], references: [id], onDelete: Cascade)
@@ -362,4 +375,50 @@ model LicencaSessao {
   @@unique([licencaId, hwid])
   @@index([ultimoHeartbeat])
   @@map("licencas_sessoes")
+}
+
+// ── Backup ────────────────────────────────────────────────────────────────────
+/// Diário de EVENTOS de backup — não é um catálogo de arquivos restauráveis.
+///
+/// Na nuvem cada licença tem UM objeto por tipo, sobrescrito todo dia:
+///   clientes/{clienteId}/{licencaId}/banco.zip
+///   clientes/{clienteId}/{licencaId}/imagens.zip
+/// Ou seja: 300 linhas aqui continuam apontando para 1 arquivo só — o de hoje.
+/// Quem exibir isso na tela precisa rotular como "backups realizados" e deixar
+/// separado o "cópia disponível para restaurar: 1". Listar as linhas como se
+/// fossem versões baixáveis é prometer restauração que não existe.
+///
+/// O licencaId entra na chave de propósito: um cliente pode ter várias licenças
+/// (duas lojas, dois PCs, cada uma com banco local próprio). Sem ele as duas
+/// instalações escreveriam no mesmo objeto e uma apagaria o backup da outra.
+model Backup {
+  id               String       @id @default(uuid())
+  clienteId        String
+  licencaId        String
+  /// Máquina que subiu. Se mudar de um dia para o outro sem troca de dispositivo
+  /// registrada, é sinal de instalação paralela subindo banco velho por cima.
+  hwid             String?
+  tipo             TipoBackup
+  chaveS3          String
+  status           StatusBackup @default(EMITIDO)
+  origem           String       @default("AUTOMATICO")  // AUTOMATICO | MANUAL
+  /// Tamanho que o ERP declarou ao pedir a URL — é ele que vai assinado no
+  /// Content-Length, então o upload só é aceito se casar exatamente.
+  tamanhoBytes     Int
+  /// Tamanho que o HeadObject encontrou de verdade depois do upload.
+  tamanhoRealBytes Int?
+  /// SHA-256 do zip. Em `imagens` é o que permite pular upload quando nada mudou
+  /// — o maior corte de custo do backup, já que imagem é o que pesa.
+  checksumSha256   String?
+  erroMensagem     String?
+  emitidoEm        DateTime     @default(now())
+  confirmadoEm     DateTime?
+
+  cliente          Cliente      @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  licenca          Licenca      @relation(fields: [licencaId], references: [id], onDelete: Cascade)
+
+  @@index([licencaId, tipo, emitidoEm])
+  @@index([clienteId])
+  @@index([status, emitidoEm])
+  @@map("backups")
 }

@@ -28,6 +28,7 @@ import { PlanoModule } from './features/plano/plano.module'
 import { ParceiroModule } from './features/parceiro/parceiro.module'
 import { ErpModule } from './features/erp/erp.module'
 import { StripeModule } from './common/stripe/stripe.module'
+import { StorageModule } from './common/storage/storage.module'
 import { EmailModule } from './core/email/email.module'
 import { AuthGuard } from './core/guards/auth.guard'
 import { RolesGuard } from './core/guards/roles.guard'
@@ -40,6 +41,7 @@ import { RolesGuard } from './core/guards/roles.guard'
       limit: 100,
     }]),
     StripeModule,
+    StorageModule,
     EmailModule,
     AuthModule,
     ClienteModule,

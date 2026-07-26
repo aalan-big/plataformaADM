@@ -4,6 +4,11 @@ import { ErpUsuarioService } from './erp-usuario.service'
 import { ErpLicencaGuard } from '../../core/guards/erp-licenca.guard'
 import { Public } from '../../core/decorators/public.decorator'
 
+/// `@Public()` tira do caminho o AuthGuard global (que valida HS256 com o segredo
+/// do painel admin) — sem ele, o token RS256 da licença era rejeitado com
+/// "Token inválido ou expirado." antes de o ErpLicencaGuard rodar, e estas rotas
+/// não respondiam para nenhum ERP. Quem autentica aqui é o ErpLicencaGuard.
+@Public()
 @UseGuards(ErpLicencaGuard)
 @Controller('erp/usuario')
 export class ErpUsuarioController {

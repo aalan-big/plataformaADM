@@ -38,10 +38,19 @@ export class HttpExceptionFilter implements ExceptionFilter {
         ? (rawResponse as Record<string, unknown>).message
         : 'Erro interno do servidor'
 
+    // Código de erro estável, quando quem lançou definiu um. Serve para o cliente
+    // (ERP local) decidir o que fazer sem parsear texto em português — mensagem se
+    // reescreve, `codigo` é contrato. Sem este repasse, o objeto lançado era
+    // achatado e o código se perdia aqui.
+    const codigo = typeof rawResponse === 'object' && rawResponse !== null && 'codigo' in rawResponse
+      ? (rawResponse as Record<string, unknown>).codigo
+      : undefined
+
     res.status(status).json({
       statusCode: status,
       path:       req.url,
       message,
+      ...(codigo !== undefined ? { codigo } : {}),
     })
   }
 }

@@ -10,6 +10,8 @@ import { ErpAuthController }     from './erp-auth.controller'
 import { ErpAuthService }        from './erp-auth.service'
 import { ErpUsuarioController }  from './erp-usuario.controller'
 import { ErpUsuarioService }     from './erp-usuario.service'
+import { ErpBackupController }   from './erp-backup.controller'
+import { ErpBackupService }      from './erp-backup.service'
 import { ErpLicencaGuard }       from '../../core/guards/erp-licenca.guard'
 
 @Module({
@@ -19,11 +21,13 @@ import { ErpLicencaGuard }       from '../../core/guards/erp-licenca.guard'
     ErpCobrancaController,
     ErpAuthController,
     ErpUsuarioController,
+    ErpBackupController,
   ],
   providers: [
     ErpAuthService,
     ErpUsuarioService,
     ErpContratacaoService,
+    ErpBackupService,
     ErpLicencaGuard,
   ],
 })

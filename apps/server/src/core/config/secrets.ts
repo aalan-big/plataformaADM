@@ -40,4 +40,17 @@ export function validarSegredosProducao(): void {
 
   if (faltando.length > 0)
     throw new Error(`Variáveis de ambiente obrigatórias ausentes em produção: ${faltando.join(', ')}`)
+
+  // Credenciais do bucket de backup NÃO derrubam o boot de propósito: a API
+  // inteira ficaria fora do ar num deploy feito antes de o bucket existir, e
+  // licença/cobrança não dependem de backup. Sem elas, só as rotas de backup
+  // respondem BACKUP_NAO_CONFIGURADO — e o aviso abaixo grita no log.
+  const backup = ['BACKUP_S3_BUCKET', 'BACKUP_S3_ACCESS_KEY_ID', 'BACKUP_S3_SECRET_ACCESS_KEY', 'BACKUP_S3_ENDPOINT']
+  const faltandoBackup = backup.filter(k => !process.env[k])
+
+  if (faltandoBackup.length > 0)
+    console.warn(
+      `[BACKUP] Storage em nuvem DESATIVADO — variáveis ausentes: ${faltandoBackup.join(', ')}. ` +
+      `As rotas /erp/backup/* vão recusar com BACKUP_NAO_CONFIGURADO.`,
+    )
 }

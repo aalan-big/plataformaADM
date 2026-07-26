@@ -16,15 +16,35 @@
  */
 import { Injectable, Logger } from '@nestjs/common'
 import { Cron } from '@nestjs/schedule'
-import { marcarLicencasVencidasBatch, findLicencasExpirandoOuVencidas, deletarSessoesInativas } from '@startbig/database'
+import {
+  marcarLicencasVencidasBatch,
+  findLicencasExpirandoOuVencidas,
+  deletarSessoesInativas,
+  findBackupsDeLicencasMortas,
+  findBackupsPendentesExpirados,
+  deletarBackupsDaLicenca,
+  marcarBackupFalhou,
+  podarEventosDeBackup,
+} from '@startbig/database'
 import { EmailService } from '../../core/email/email.service'
+import { StorageService } from '../../common/storage/storage.service'
 
 @Injectable()
 export class CronService {
   private readonly logger = new Logger(CronService.name)
   private readonly DIAS_ALERTA = [7, 3, 1]
 
-  constructor(private readonly emailService: EmailService) {}
+  /// Quanto tempo o backup de um cliente sem licença ativa fica na nuvem antes de
+  /// ser apagado. Também é a janela de recuperação: renovando dentro dela, o
+  /// cliente volta a ter acesso ao próprio arquivo.
+  private readonly RETENCAO_BACKUP_DIAS = 90
+  /// Poda do diário de eventos (as linhas, não os arquivos).
+  private readonly RETENCAO_EVENTOS_DIAS = 180
+
+  constructor(
+    private readonly emailService:  EmailService,
+    private readonly storage:       StorageService,
+  ) {}
 
   @Cron('*/10 * * * *') // A cada 10 minutos
   async handleGarbageCollector() {
@@ -92,6 +112,62 @@ export class CronService {
       this.logger.error('Erro ao processar alertas de vencimento:', err)
     }
 
+    // 3. Fechar uploads de backup que ficaram pendurados
+    await this.fecharBackupsPendurados()
+
+    // 4. Retenção dos backups na nuvem
+    await this.aplicarRetencaoDeBackups()
+
     this.logger.log('Rotinas diárias concluídas.')
+  }
+
+  /**
+   * URL emitida que nunca confirmou. Depois do TTL da URL (10 min) não há mais
+   * como o upload acontecer, então a linha vira FALHOU — senão ela conta para
+   * sempre no limite diário e trava o cliente no dia seguinte.
+   */
+  private async fecharBackupsPendurados() {
+    try {
+      const pendurados = await findBackupsPendentesExpirados(60)
+      for (const b of pendurados) {
+        await marcarBackupFalhou(b.id, 'URL expirou sem confirmação do ERP.')
+      }
+      if (pendurados.length > 0)
+        this.logger.log(`[backup] ${pendurados.length} upload(s) sem confirmação marcado(s) como falha.`)
+    } catch (err) {
+      this.logger.error('Erro ao fechar backups pendurados:', err)
+    }
+  }
+
+  /**
+   * Apaga da nuvem o backup de quem não tem licença ativa há mais de 90 dias.
+   *
+   * Isso NÃO pode ser uma lifecycle rule do bucket: a nuvem não sabe quem está
+   * pagando, ela só enxerga idade e prefixo. Uma regra por idade seria pior que
+   * inútil — apagaria o backup de um cliente ativo cujo PC ficou dois meses
+   * desligado, que é justamente quem mais precisa dele quando voltar.
+   */
+  private async aplicarRetencaoDeBackups() {
+    if (!this.storage.configurado) return
+
+    try {
+      const mortos = await findBackupsDeLicencasMortas(this.RETENCAO_BACKUP_DIAS)
+
+      for (const m of mortos) {
+        const prefixo  = `clientes/${m.clienteId}/${m.licencaId}/`
+        const removidos = await this.storage.removerPrefixo(prefixo)
+        await deletarBackupsDaLicenca(m.licencaId)
+        this.logger.log(
+          `[backup] retenção: ${removidos} objeto(s) removido(s) de ${prefixo} ` +
+          `(licença ${m.licenca.status}, último backup em ${m.emitidoEm.toISOString().slice(0, 10)}).`,
+        )
+      }
+
+      const podados = await podarEventosDeBackup(this.RETENCAO_EVENTOS_DIAS)
+      if (podados.count > 0)
+        this.logger.log(`[backup] ${podados.count} evento(s) antigo(s) podado(s) do histórico.`)
+    } catch (err) {
+      this.logger.error('Erro ao aplicar retenção de backups:', err)
+    }
   }
 }
