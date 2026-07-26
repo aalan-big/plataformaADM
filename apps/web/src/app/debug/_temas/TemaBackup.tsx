@@ -380,6 +380,11 @@ interface Trava {
   descricao: string
   esperado:  string
   corpo:     (hwid: string) => Record<string, unknown>
+  /// Travas que só existem em comparação com um backup anterior. Sem base de
+  /// comparação a API aceita o pedido — que é o certo, senão o primeiro backup
+  /// de todo cliente seria recusado. Mas "aceitar" aqui GRAVA uma linha e queima
+  /// uma da cota diária, então nem se tenta antes de haver base.
+  exigeBackupAnterior?: boolean
 }
 
 const TRAVAS: Trava[] = [
@@ -408,19 +413,46 @@ const TRAVAS: Trava[] = [
     corpo:     h => ({ hwid: h, tipo: 'banco', tamanhoBytes: 10 }),
   },
   {
-    nome:      'Queda suspeita de tamanho',
-    descricao: 'Só dispara se já existe um backup bem maior. Protege a única cópia boa.',
-    esperado:  '409 · BACKUP_TAMANHO_SUSPEITO',
-    corpo:     h => ({ hwid: h, tipo: 'banco', tamanhoBytes: 1024 }),
+    nome:                'Queda suspeita de tamanho',
+    descricao:           'Só dispara se já existe um backup bem maior. Protege a única cópia boa.',
+    esperado:            '409 · BACKUP_TAMANHO_SUSPEITO',
+    corpo:               h => ({ hwid: h, tipo: 'banco', tamanhoBytes: 1024 }),
+    exigeBackupAnterior: true,
   },
 ]
 
+interface SaidaTrava {
+  status:      number
+  codigo:      string
+  msg:         string
+  naoAplicavel?: boolean
+}
+
 function SecaoTravas({ token }: { token: string }) {
   const [rodando, setRodando] = useState<string | null>(null)
-  const [saidas,  setSaidas]  = useState<Record<string, { status: number; codigo: string; msg: string }>>({})
+  const [saidas,  setSaidas]  = useState<Record<string, SaidaTrava>>({})
 
   const testar = async (t: Trava) => {
     setRodando(t.nome)
+
+    // Antes de tentar uma trava comparativa, confere se existe base de comparação.
+    // Sem ela a API aceitaria o pedido — e aceitar grava linha e queima cota, o
+    // que transformaria um teste de leitura num efeito colateral silencioso.
+    if (t.exigeBackupAnterior) {
+      const st = await api(`${API}/erp/backup/status`, token)
+      const copia = (st.payload as { copiaAtual?: Record<string, unknown | null> })?.copiaAtual
+      if (!copia?.banco) {
+        setSaidas(s => ({
+          ...s,
+          [t.nome]: {
+            status: 0, codigo: 'AGUARDANDO BASE', naoAplicavel: true,
+            msg: 'Ainda não existe backup para comparar. Rode o Ciclo Completo primeiro e teste de novo.',
+          },
+        }))
+        setRodando(null); return
+      }
+    }
+
     const r = await api(`${API}/erp/backup/url-upload`, token, {
       method: 'POST',
       body:   JSON.stringify(t.corpo(hwidDoToken(token))),
@@ -445,19 +477,22 @@ function SecaoTravas({ token }: { token: string }) {
       </div>
       <p className="text-slate-500 text-xs mb-4">
         Cada botão tenta uma coisa que deve ser <strong>recusada</strong>. Recusa aqui é sucesso —
-        é o que impede backup corrompido e fatura inesperada. Nenhum deles sobe arquivo.
+        é o que impede backup corrompido e fatura inesperada. Nenhum sobe arquivo, e como a recusa
+        acontece antes de gravar, nenhum consome sua cota diária.
       </p>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
         {TRAVAS.map(t => {
           const s        = saidas[t.nome]
-          const recusou  = s && s.status >= 400
-          const aceitou  = s && s.status < 400
+          const naoAplic = s?.naoAplicavel
+          const recusou  = s && !naoAplic && s.status >= 400
+          const aceitou  = s && !naoAplic && s.status < 400
 
           return (
             <div key={t.nome} className={`p-3 rounded border ${
               aceitou ? 'border-red-700/60 bg-red-950/20'
               : recusou ? 'border-emerald-700/50 bg-emerald-950/20'
+              : naoAplic ? 'border-slate-600/60 bg-slate-800/30'
               : 'border-slate-700/50 bg-[#0f172a]'
             }`}>
               <div className="flex items-start justify-between gap-2 mb-1">
@@ -471,8 +506,12 @@ function SecaoTravas({ token }: { token: string }) {
               <p className="text-[10px] font-mono text-slate-600">espera: {t.esperado}</p>
 
               {s && (
-                <p className={`text-[11px] font-mono mt-1.5 ${aceitou ? 'text-red-400' : 'text-emerald-400'}`}>
-                  {aceitou ? '✘ PASSOU — trava não funcionou!' : `✔ ${s.status} · ${s.codigo}`}
+                <p className={`text-[11px] font-mono mt-1.5 ${
+                  aceitou ? 'text-red-400' : naoAplic ? 'text-slate-400' : 'text-emerald-400'
+                }`}>
+                  {aceitou   ? '✘ PASSOU — trava não funcionou!'
+                   : naoAplic ? `— ${s.codigo}`
+                   : `✔ ${s.status} · ${s.codigo}`}
                   {s.msg && <span className="block opacity-70 mt-0.5">{s.msg}</span>}
                 </p>
               )}
