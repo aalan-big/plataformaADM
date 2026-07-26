@@ -150,6 +150,93 @@ Três coisas do lado do ERP que definem se o backup funciona bem ou mal, detalha
 
 ---
 
-## 7. Ambiente de teste
+## 7. Backup — o que construir no ERP
+
+São quatro chamadas por pacote, e o ERP faz o ciclo duas vezes por dia: uma para `banco`, outra para `imagens`.
+
+### O motor de empacotamento
+
+```python
+# BANCO — nunca copiar o arquivo com o banco aberto
+conn.execute("VACUUM INTO 'tmp/banco.db'")     # export consistente
+zipar(['tmp/banco.db', 'manifest.json'], 'tmp/banco.zip')
+
+# IMAGENS — a pasta de fotos do ERP
+zipar_pasta('dados/imagens/', 'tmp/imagens.zip')
+
+# Medir DEPOIS de fechar o zip — este número vai na assinatura
+tamanho  = os.path.getsize('tmp/banco.zip')
+checksum = sha256_do_arquivo('tmp/banco.zip')
+```
+
+O `manifest.json` dentro do zip deve conter: versão do ERP, versão do schema do banco, data/hora, e o tamanho e sha256 de cada arquivo. É o que permite saber, na hora de restaurar, se aquele backup é compatível com a versão instalada.
+
+### O ciclo
+
+```python
+# 1) Pedir a URL
+r = requests.post(
+    f"{BASE}/erp/backup/url-upload",
+    headers={"Authorization": f"Bearer {token_licenca}"},
+    json={
+        "hwid":           hwid,
+        "tipo":           "banco",          # ou "imagens"
+        "tamanhoBytes":   tamanho,
+        "checksumSha256": checksum,         # obrigatório em "imagens"
+        "origem":         "AUTOMATICO",     # "MANUAL" se o usuário clicou
+    },
+)
+
+if r.status_code != 200:
+    codigo = r.json().get("codigo")
+    # 403 / 429 / 409 → mostrar a mensagem e PARAR. Não repetir.
+    return
+
+dados = r.json()
+
+# 2) O servidor pode dizer que não precisa enviar
+if dados["acao"] == "PULAR":
+    marcar_backup_em_dia(dados["ultimoEm"])
+    return                                   # não chamar /confirmar
+
+# 3) Subir direto no bucket — SEM Authorization aqui
+with open("tmp/banco.zip", "rb") as f:
+    conteudo = f.read()                      # ler em memória, ver o aviso abaixo
+
+envio = requests.put(
+    dados["url"],
+    headers=dados["headers"],                # usar exatamente o que veio
+    data=conteudo,
+)
+
+# 4) Confirmar SEMPRE, inclusive na falha
+requests.post(
+    f"{BASE}/erp/backup/confirmar",
+    headers={"Authorization": f"Bearer {token_licenca}"},
+    json={
+        "uploadId":     dados["uploadId"],
+        "hwid":         hwid,
+        "ok":           envio.ok,
+        "tamanhoBytes": tamanho,
+        "erro":         None if envio.ok else f"HTTP {envio.status_code}",
+    },
+)
+```
+
+### Três armadilhas que custam horas
+
+**Não passe um arquivo aberto para o `data=` do `requests`.** Com `data=open(...)`, a biblioteca usa *chunked transfer encoding* e **não envia o `Content-Length`** — a assinatura falha com `403 SignatureDoesNotMatch`, e a mensagem não diz nada sobre isso. Leia os bytes (`f.read()`) ou monte a requisição garantindo o header. Para arquivos grandes, use um objeto que exponha o tamanho e force o header explicitamente.
+
+**Não mande `Authorization` no `PUT`.** A credencial está dentro da URL assinada. Mandar o cabeçalho junto invalida a assinatura.
+
+**Calcule o tamanho depois de fechar o zip.** Medir antes, ou reescrever o arquivo entre o pedido da URL e o envio, muda o número e derruba a assinatura.
+
+### Agendamento
+
+Um backup por dia de cada tipo, em horário de baixo movimento. A cota padrão é **2 de banco e 1 de imagens por dia** — o suficiente para o automático mais um manual do usuário. Se o envio falhar, chame `/confirmar` com `ok: false` e **tente de novo só no próximo ciclo**: a vaga é devolvida, mas insistir em looping bate no limite e trava o dia.
+
+---
+
+## 8. Ambiente de teste
 
 O painel administrativo tem um laboratório em `/debug` que exercita todas essas rotas com token real e mostra requisição e resposta cruas. É útil para conferir o formato exato de um payload antes de escrever o código, e para comparar quando algo não bater.
