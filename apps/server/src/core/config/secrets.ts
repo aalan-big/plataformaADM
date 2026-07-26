@@ -48,9 +48,21 @@ export function validarSegredosProducao(): void {
   const backup = ['BACKUP_S3_BUCKET', 'BACKUP_S3_ACCESS_KEY_ID', 'BACKUP_S3_SECRET_ACCESS_KEY', 'BACKUP_S3_ENDPOINT']
   const faltandoBackup = backup.filter(k => !process.env[k])
 
+  // Diz o que aconteceu nos DOIS casos, e com data. Confirmar que está tudo bem
+  // pela ausência de um aviso é sinal fraco: num `pm2 logs` com vários boots
+  // misturados, um aviso antigo sem timestamp parece o de agora — e não dá para
+  // distinguir "não avisou porque está tudo certo" de "não avisou porque este
+  // trecho do log não é deste boot".
+  const carimbo = new Date().toISOString()
+
   if (faltandoBackup.length > 0)
     console.warn(
-      `[BACKUP] Storage em nuvem DESATIVADO — variáveis ausentes: ${faltandoBackup.join(', ')}. ` +
+      `[BACKUP ${carimbo}] Storage em nuvem DESATIVADO — variáveis ausentes: ${faltandoBackup.join(', ')}. ` +
       `As rotas /erp/backup/* vão recusar com BACKUP_NAO_CONFIGURADO.`,
+    )
+  else
+    console.log(
+      `[BACKUP ${carimbo}] Storage em nuvem ATIVO — bucket "${process.env.BACKUP_S3_BUCKET}" ` +
+      `em ${process.env.BACKUP_S3_ENDPOINT}.`,
     )
 }
