@@ -59,10 +59,22 @@ export class StorageService {
     }
 
     if (!this.clienteCache) {
+      const endpointCustomizado = Boolean(process.env.BACKUP_S3_ENDPOINT)
+
       this.clienteCache = new S3Client({
         // R2 não tem região de verdade — 'auto' é o valor que a Cloudflare pede.
         region:   process.env.BACKUP_S3_REGION || 'auto',
         endpoint: process.env.BACKUP_S3_ENDPOINT || undefined,
+
+        // Com endpoint próprio (R2), endereço no formato
+        // <endpoint>/<bucket>/<chave>. O padrão do SDK seria pendurar o bucket
+        // como subdomínio — o que exige que o nome dele seja válido em DNS e
+        // falha com NoSuchBucket, um erro que não diz nada sobre a causa. O
+        // path-style o R2 sempre aceita. Na AWS mantém-se o padrão dela.
+        forcePathStyle: process.env.BACKUP_S3_PATH_STYLE
+          ? process.env.BACKUP_S3_PATH_STYLE === 'true'
+          : endpointCustomizado,
+
         credentials: {
           accessKeyId:     process.env.BACKUP_S3_ACCESS_KEY_ID as string,
           secretAccessKey: process.env.BACKUP_S3_SECRET_ACCESS_KEY as string,
