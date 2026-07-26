@@ -23,6 +23,7 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  ListBucketsCommand,
   DeleteObjectsCommand,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
@@ -149,6 +150,16 @@ export class StorageService {
       if (nome === 'NotFound' || nome === 'NoSuchKey') return null
       throw err
     }
+  }
+
+  /**
+   * Nomes dos buckets que a credencial enxerga. Só para diagnóstico: é o que
+   * separa "nome errado" de "bucket em outra conta ou jurisdição", que produzem
+   * o mesmo NoSuchBucket. Pode ser negado se o token só tem permissão de objeto.
+   */
+  async listarBuckets(): Promise<string[]> {
+    const r = await this.cliente.send(new ListBucketsCommand({}))
+    return (r.Buckets ?? []).map(b => b.Name as string).filter(Boolean)
   }
 
   /** Apaga tudo sob um prefixo. Usado só pela rotina de retenção. */

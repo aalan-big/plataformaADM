@@ -55,10 +55,36 @@ async function main() {
   const conteudo = Buffer.from('startbig-backup-smoke-test\n'.repeat(40), 'utf8')
   const tamanho  = conteudo.byteLength
 
+  // ── 0. O que a credencial enxerga ─────────────────────────────────────────
+  // NoSuchBucket com nome certo quase sempre é bucket em OUTRA conta ou em
+  // jurisdição separada (bucket criado como "European Union" só responde no
+  // endpoint <conta>.eu.r2.cloudflarestorage.com). Listar resolve a dúvida em
+  // um passo. Pode ser negado se o token só tem permissão de objeto — o que
+  // também é informação, não erro.
+  console.log('\n0) Buckets visíveis para esta credencial')
+  try {
+    const nomes = await storage.listarBuckets()
+    if (nomes.length === 0) console.log('    (nenhum bucket nesta conta/jurisdição)')
+    else nomes.forEach(n => console.log(`    · ${n}${n === process.env.BACKUP_S3_BUCKET ? '   ← o configurado' : ''}`))
+
+    if (nomes.length > 0 && !nomes.includes(process.env.BACKUP_S3_BUCKET ?? ''))
+      console.log(
+        `\n\x1b[33m  O bucket "${process.env.BACKUP_S3_BUCKET}" NÃO está nesta lista.\n` +
+        `  Ou o nome difere, ou ele foi criado em outra conta, ou em jurisdição\n` +
+        `  separada (aí o endpoint precisa do .eu.).\x1b[0m`,
+      )
+  } catch (e) {
+    console.log(`    não foi possível listar (${e instanceof Error ? e.message : e})`)
+    console.log('    normal se o token só tem permissão de objeto — segue o teste')
+  }
+
   // ── 1. Assinar ────────────────────────────────────────────────────────────
   console.log('\n1) Assinar URL de upload')
   const assinado = await storage.gerarUrlUpload({ chave: CHAVE, tamanhoBytes: tamanho })
+  const alvo = new URL(assinado.url)
   ok(`URL assinada para ${tamanho} bytes, expira em ${assinado.expiraEm.toISOString()}`)
+  console.log(`    endereço final: ${alvo.host}${alvo.pathname}`)
+  console.log(`    formato: ${alvo.host.startsWith(process.env.BACKUP_S3_BUCKET + '.') ? 'virtual-hosted (bucket no subdomínio)' : 'path-style (bucket no caminho)'}`)
 
   // ── 2. Upload com o tamanho CERTO ─────────────────────────────────────────
   console.log('\n2) PUT com o tamanho exato (deve ser aceito)')
