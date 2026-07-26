@@ -84,6 +84,11 @@ export async function POST(request: Request) {
       bytesEnviados:  conteudo.byteLength,
       etag:           resposta.headers.get('etag'),
       respostaBucket: texto.slice(0, 1500) || null,
+      // Endereço montado, SEM a query da assinatura (que é credencial temporária
+      // e não deve aparecer em tela nem em log). É o que distingue erro de
+      // configuração — bucket no lugar errado do endpoint, conta trocada — de
+      // erro de assinatura.
+      destino: { host: destino.host, caminho: destino.pathname },
     }, { status: 200 })   // 200 = a ponte funcionou; o resultado do PUT vai no corpo
   } catch (err) {
     return NextResponse.json(

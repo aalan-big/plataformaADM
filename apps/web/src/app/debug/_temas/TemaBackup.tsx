@@ -97,7 +97,7 @@ function LinhaPasso({ passo, n }: { passo: Passo; n: number }) {
       <span className="font-black text-xs w-4 shrink-0 text-center">{icone}</span>
       <div className="min-w-0 flex-1">
         <p className="text-xs font-bold">{n}. {passo.nome}</p>
-        {passo.detalhe && <p className="text-[11px] opacity-80 font-mono break-all mt-0.5">{passo.detalhe}</p>}
+        {passo.detalhe && <p className="text-[11px] opacity-80 font-mono break-all whitespace-pre-line mt-0.5">{passo.detalhe}</p>}
       </div>
     </div>
   )
@@ -175,17 +175,23 @@ function SecaoCiclo({ token, onFim }: { token: string; onFim: () => void }) {
     })
     const resultadoPonte = await ponte.json() as {
       ok?: boolean; status?: number; respostaBucket?: string; erro?: string; etag?: string
+      destino?: { host: string; caminho: string }
     }
+
+    const enderecoUsado = resultadoPonte.destino
+      ? `${resultadoPonte.destino.host}${resultadoPonte.destino.caminho}`
+      : '(endereço não informado)'
 
     if (!resultadoPonte.ok) {
       atualizar(2, {
         estado:  'erro',
-        detalhe: `HTTP ${resultadoPonte.status ?? ponte.status} — ${resultadoPonte.erro ?? resultadoPonte.respostaBucket ?? 'sem detalhe'}`,
+        detalhe: `HTTP ${resultadoPonte.status ?? ponte.status} — ${resultadoPonte.erro ?? resultadoPonte.respostaBucket ?? 'sem detalhe'}\n` +
+                 `endereço: ${enderecoUsado}`,
       })
       setRes({ ok: false, status: resultadoPonte.status ?? ponte.status, payload: resultadoPonte })
       setLoad(false); return
     }
-    atualizar(2, { estado: 'ok', detalhe: `HTTP ${resultadoPonte.status} · etag ${resultadoPonte.etag ?? '—'}` })
+    atualizar(2, { estado: 'ok', detalhe: `HTTP ${resultadoPonte.status} · ${enderecoUsado}` })
 
     // 4. Confirmar (a API confere no bucket antes de acreditar)
     atualizar(3, { estado: 'rodando' })

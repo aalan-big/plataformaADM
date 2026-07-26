@@ -68,7 +68,20 @@ export class StorageService {
           secretAccessKey: process.env.BACKUP_S3_SECRET_ACCESS_KEY as string,
         },
       })
-      this.logger.log(`Storage de backup pronto (bucket: ${this.bucket}).`)
+      const endpoint = process.env.BACKUP_S3_ENDPOINT ?? '(padrão AWS)'
+      this.logger.log(`Storage de backup pronto — bucket "${this.bucket}" em ${endpoint}`)
+
+      // O painel da Cloudflare mostra a "S3 API" do bucket já com o nome dele no
+      // fim da URL. Colado inteiro no endpoint, o bucket entra duas vezes no
+      // endereço final e todo upload morre com NoSuchBucket — erro que não diz
+      // nada sobre a causa. Melhor gritar aqui, uma vez, do que a cada upload.
+      try {
+        if (new URL(endpoint).pathname.replace(/\/+$/, '') !== '')
+          this.logger.warn(
+            `BACKUP_S3_ENDPOINT contém caminho — deve terminar no domínio, sem o nome do bucket. ` +
+            `Do jeito que está, o R2 deve responder NoSuchBucket.`,
+          )
+      } catch { /* endpoint ausente = AWS padrão, nada a validar */ }
     }
 
     return this.clienteCache

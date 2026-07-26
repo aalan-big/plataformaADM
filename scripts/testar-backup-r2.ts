@@ -37,6 +37,19 @@ async function main() {
     process.exit(1)
   }
   ok(`credenciais lidas (bucket: ${process.env.BACKUP_S3_BUCKET})`)
+  console.log(`    endpoint: ${process.env.BACKUP_S3_ENDPOINT}`)
+
+  // Erro de configuração mais comum: o painel da Cloudflare mostra a "S3 API" do
+  // bucket como https://<conta>.r2.cloudflarestorage.com/<bucket>, e o nome do
+  // bucket vem colado junto no endpoint. Aí ele entra duas vezes no endereço
+  // final e o R2 responde NoSuchBucket.
+  const endpoint = process.env.BACKUP_S3_ENDPOINT ?? ''
+  if (new URL(endpoint).pathname.replace(/\/$/, '') !== '')
+    console.log(
+      `\n\x1b[33m  Atenção: o endpoint tem caminho ("${new URL(endpoint).pathname}").\n` +
+      `  BACKUP_S3_ENDPOINT deve terminar em .r2.cloudflarestorage.com, sem o nome\n` +
+      `  do bucket — ele vai separado em BACKUP_S3_BUCKET.\x1b[0m`,
+    )
 
   // Conteúdo determinístico para conferir byte a byte no download.
   const conteudo = Buffer.from('startbig-backup-smoke-test\n'.repeat(40), 'utf8')
