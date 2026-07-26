@@ -206,9 +206,16 @@ export class StorageService {
     return pastas
   }
 
-  /** Apaga tudo sob um prefixo. Usado só pela rotina de retenção. */
-  async removerPrefixo(prefixo: string): Promise<number> {
-    let removidos       = 0
+  /**
+   * Apaga tudo sob um prefixo. Usado pelas rotinas de limpeza.
+   *
+   * Com `simular`, percorre exatamente a mesma listagem mas não envia o comando
+   * de exclusão — devolve quantos objetos seriam apagados. É o mesmo caminho de
+   * código, e não uma reimplementação: simulação que roda por outro caminho não
+   * prova nada sobre o que vai acontecer de verdade.
+   */
+  async removerPrefixo(prefixo: string, opcoes: { simular?: boolean } = {}): Promise<number> {
+    let afetados        = 0
     let continuationTok: string | undefined
 
     do {
@@ -220,16 +227,18 @@ export class StorageService {
 
       const chaves = (lista.Contents ?? []).map(o => ({ Key: o.Key as string })).filter(o => o.Key)
       if (chaves.length > 0) {
-        await this.cliente.send(new DeleteObjectsCommand({
-          Bucket: this.bucket,
-          Delete: { Objects: chaves },
-        }))
-        removidos += chaves.length
+        if (!opcoes.simular) {
+          await this.cliente.send(new DeleteObjectsCommand({
+            Bucket: this.bucket,
+            Delete: { Objects: chaves },
+          }))
+        }
+        afetados += chaves.length
       }
 
       continuationTok = lista.IsTruncated ? lista.NextContinuationToken : undefined
     } while (continuationTok)
 
-    return removidos
+    return afetados
   }
 }

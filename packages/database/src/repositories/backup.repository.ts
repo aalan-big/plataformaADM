@@ -254,6 +254,13 @@ export async function findLicencasParaAvisoDeRetencao(dias: number) {
 
 /// Poda do diário de eventos. O arquivo na nuvem é um só; guardar 5 anos de
 /// linhas dizendo "subiu 31 MB" não serve para nada além de engordar a tabela.
+/// Quantos eventos a poda removeria. Existe para o modo simulação poder
+/// informar o número sem apagar nada.
+export async function contarEventosAntigosDeBackup(dias: number) {
+  const limite = new Date(Date.now() - dias * 24 * 60 * 60 * 1000)
+  return prisma.backup.count({ where: { emitidoEm: { lt: limite } } })
+}
+
 export async function podarEventosDeBackup(dias: number) {
   const limite = new Date(Date.now() - dias * 24 * 60 * 60 * 1000)
   return prisma.backup.deleteMany({ where: { emitidoEm: { lt: limite } } })

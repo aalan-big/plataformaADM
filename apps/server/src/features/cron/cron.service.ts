@@ -27,6 +27,7 @@ import {
   deletarBackupsDaLicenca,
   marcarBackupFalhou,
   podarEventosDeBackup,
+  contarEventosAntigosDeBackup,
 } from '@startbig/database'
 import { EmailService } from '../../core/email/email.service'
 import { StorageService } from '../../common/storage/storage.service'
@@ -179,8 +180,9 @@ export class CronService {
    * Varre por prefixo com delimitador, então é uma chamada por cliente e não uma
    * por arquivo.
    */
-  private async removerBackupsOrfaos() {
+  async removerBackupsOrfaos(opcoes: { simular?: boolean } = {}) {
     if (!this.storage.configurado) return
+    const marca = opcoes.simular ? '[SIMULAÇÃO] ' : ''
 
     try {
       const idsValidos = new Set(await findTodosIdsDeLicenca())
@@ -188,29 +190,40 @@ export class CronService {
       // Trava de segurança: banco vazio (ou consulta que falhou e devolveu nada)
       // apagaria o bucket inteiro. Nenhuma limpeza vale esse risco.
       if (idsValidos.size === 0) {
-        this.logger.warn('[backup] varredura de órfãos abortada: nenhuma licença no banco.')
+        this.logger.warn(`${marca}[backup] varredura de órfãos abortada: nenhuma licença no banco.`)
         return
       }
 
       const clientes = await this.storage.listarPastas('clientes/')
-      let removidos = 0
+      let afetados = 0
 
       for (const clienteId of clientes) {
         const licencas = await this.storage.listarPastas(`clientes/${clienteId}/`)
 
         for (const licencaId of licencas) {
-          if (idsValidos.has(licencaId)) continue
-
           const prefixo = `clientes/${clienteId}/${licencaId}/`
-          const n = await this.storage.removerPrefixo(prefixo)
-          removidos += n
-          this.logger.log(`[backup] órfão removido: ${prefixo} (${n} objeto(s)) — licença não existe mais.`)
+
+          if (idsValidos.has(licencaId)) {
+            // Na simulação vale mostrar o que fica, não só o que sai: é olhando
+            // a lista de MANTER que se percebe uma pasta legítima prestes a ser
+            // apagada por engano.
+            if (opcoes.simular) this.logger.log(`${marca}[backup] MANTER  ${prefixo} (licença existe)`)
+            continue
+          }
+
+          const n = await this.storage.removerPrefixo(prefixo, opcoes)
+          afetados += n
+          this.logger.log(
+            `${marca}[backup] ${opcoes.simular ? 'REMOVERIA' : 'órfão removido:'} ${prefixo} ` +
+            `(${n} objeto(s)) — licença não existe mais.`,
+          )
         }
       }
 
-      if (removidos === 0) this.logger.debug('[backup] varredura de órfãos: nada a remover.')
+      if (afetados === 0) this.logger.log(`${marca}[backup] varredura de órfãos: nada a remover.`)
     } catch (err) {
       this.logger.error('Erro na varredura de backups órfãos:', err)
+      throw err
     }
   }
 
@@ -240,27 +253,38 @@ export class CronService {
    * inútil — apagaria o backup de um cliente ativo cujo PC ficou dois meses
    * desligado, que é justamente quem mais precisa dele quando voltar.
    */
-  private async aplicarRetencaoDeBackups() {
+  async aplicarRetencaoDeBackups(opcoes: { simular?: boolean } = {}) {
     if (!this.storage.configurado) return
+    const marca = opcoes.simular ? '[SIMULAÇÃO] ' : ''
 
     try {
       const mortos = await findBackupsDeLicencasMortas(this.RETENCAO_BACKUP_DIAS)
 
+      if (mortos.length === 0)
+        this.logger.log(`${marca}[backup] retenção: nenhuma licença elegível.`)
+
       for (const m of mortos) {
-        const prefixo  = `clientes/${m.clienteId}/${m.licencaId}/`
-        const removidos = await this.storage.removerPrefixo(prefixo)
-        await deletarBackupsDaLicenca(m.licencaId)
+        const prefixo   = `clientes/${m.clienteId}/${m.licencaId}/`
+        const afetados  = await this.storage.removerPrefixo(prefixo, opcoes)
+        if (!opcoes.simular) await deletarBackupsDaLicenca(m.licencaId)
+
         this.logger.log(
-          `[backup] retenção: ${removidos} objeto(s) removido(s) de ${prefixo} ` +
-          `(licença ${m.licenca.status}, último backup em ${m.emitidoEm.toISOString().slice(0, 10)}).`,
+          `${marca}[backup] retenção: ${afetados} objeto(s) ${opcoes.simular ? 'seriam removidos' : 'removido(s)'} ` +
+          `de ${prefixo} (licença ${m.licenca.status}, último backup em ${m.emitidoEm.toISOString().slice(0, 10)}).`,
         )
       }
 
-      const podados = await podarEventosDeBackup(this.RETENCAO_EVENTOS_DIAS)
-      if (podados.count > 0)
-        this.logger.log(`[backup] ${podados.count} evento(s) antigo(s) podado(s) do histórico.`)
+      if (opcoes.simular) {
+        const antigos = await contarEventosAntigosDeBackup(this.RETENCAO_EVENTOS_DIAS)
+        this.logger.log(`${marca}[backup] poda de histórico: ${antigos} evento(s) seriam removidos.`)
+      } else {
+        const podados = await podarEventosDeBackup(this.RETENCAO_EVENTOS_DIAS)
+        if (podados.count > 0)
+          this.logger.log(`[backup] ${podados.count} evento(s) antigo(s) podado(s) do histórico.`)
+      }
     } catch (err) {
       this.logger.error('Erro ao aplicar retenção de backups:', err)
+      throw err
     }
   }
 }
