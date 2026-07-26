@@ -27,6 +27,7 @@ import { CronModule } from './features/cron/cron.module'
 import { PlanoModule } from './features/plano/plano.module'
 import { ParceiroModule } from './features/parceiro/parceiro.module'
 import { ErpModule } from './features/erp/erp.module'
+import { BackupModule } from './features/backup/backup.module'
 import { StripeModule } from './common/stripe/stripe.module'
 import { StorageModule } from './common/storage/storage.module'
 import { EmailModule } from './core/email/email.module'
@@ -53,6 +54,7 @@ import { RolesGuard } from './core/guards/roles.guard'
     PlanoModule,
     ParceiroModule,
     ErpModule,
+    BackupModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

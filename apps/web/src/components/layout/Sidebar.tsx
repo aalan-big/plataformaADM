@@ -1,16 +1,17 @@
 'use client'
 
 import { useRouter, usePathname } from 'next/navigation'
-import { LayoutDashboard, Users, Cpu, Layers, Handshake, DollarSign, Mail, LogOut } from 'lucide-react'
+import { LayoutDashboard, Users, Cpu, Layers, Handshake, DollarSign, Mail, HardDriveDownload, LogOut } from 'lucide-react'
 
 const itens = [
-  { label: 'Dashboard',    href: '/dashboard',    Icone: LayoutDashboard },
-  { label: 'Clientes',     href: '/clientes',     Icone: Users           },
-  { label: 'Dispositivos', href: '/dispositivos', Icone: Cpu             },
-  { label: 'Planos',       href: '/planos',       Icone: Layers          },
-  { label: 'Parceiros',    href: '/parceiros',    Icone: Handshake       },
-  { label: 'Financeiro',   href: '/financeiro',   Icone: DollarSign      },
-  { label: 'E-mails',      href: '/email',        Icone: Mail            },
+  { label: 'Dashboard',    href: '/dashboard',    Icone: LayoutDashboard    },
+  { label: 'Clientes',     href: '/clientes',     Icone: Users              },
+  { label: 'Dispositivos', href: '/dispositivos', Icone: Cpu                },
+  { label: 'Backups',      href: '/backups',      Icone: HardDriveDownload  },
+  { label: 'Planos',       href: '/planos',       Icone: Layers             },
+  { label: 'Parceiros',    href: '/parceiros',    Icone: Handshake          },
+  { label: 'Financeiro',   href: '/financeiro',   Icone: DollarSign         },
+  { label: 'E-mails',      href: '/email',        Icone: Mail               },
 ]
 
 export function Sidebar({ aberta, onFechar }: { aberta: boolean; onFechar: () => void }) {

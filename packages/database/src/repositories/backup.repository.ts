@@ -146,6 +146,75 @@ export async function deletarBackupsDaLicenca(licencaId: string) {
   return prisma.backup.deleteMany({ where: { licencaId } })
 }
 
+/// Uma linha por licença com o estado do backup, para a tela do admin.
+///
+/// Inclui licenças que NUNCA fizeram backup de propósito: a pergunta que essa
+/// tela responde não é "quem fez backup", é "quem deveria estar fazendo e não
+/// está". Cliente pagante sem nenhuma cópia na nuvem é o caso que importa, e ele
+/// some se a consulta partir da tabela de backups.
+export async function findVisaoGeralDeBackups() {
+  const [licencas, ultimos, falhas] = await Promise.all([
+    prisma.licenca.findMany({
+      select: {
+        id:              true,
+        status:          true,
+        isTrial:         true,
+        nomeDispositivo: true,
+        dataVencimento:  true,
+        clienteId:       true,
+        plano:   { select: { nome: true } },
+        cliente: {
+          select: {
+            id:    true,
+            email: true,
+            pf:    { select: { nomeCompleto: true } },
+            pj:    { select: { razaoSocial:  true } },
+          },
+        },
+      },
+      orderBy: { criadoEm: 'desc' },
+    }),
+
+    // `distinct` com `orderBy` desc devolve a linha mais recente de cada
+    // (licença, tipo) — que é exatamente o arquivo que existe na nuvem hoje.
+    prisma.backup.findMany({
+      where:    { status: 'CONFIRMADO' },
+      distinct: ['licencaId', 'tipo'],
+      orderBy:  { emitidoEm: 'desc' },
+      select: {
+        licencaId:        true,
+        tipo:             true,
+        tamanhoBytes:     true,
+        tamanhoRealBytes: true,
+        confirmadoEm:     true,
+        emitidoEm:        true,
+        hwid:             true,
+        chaveS3:          true,
+      },
+    }),
+
+    prisma.backup.groupBy({
+      by:    ['licencaId'],
+      where: {
+        status:    'FALHOU',
+        emitidoEm: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+      },
+      _count: { _all: true },
+    }),
+  ])
+
+  return { licencas, ultimos, falhas }
+}
+
+/// Diário de eventos de uma licença, para a gaveta de detalhe.
+export async function findEventosDeBackup(licencaId: string, limite = 50) {
+  return prisma.backup.findMany({
+    where:   { licencaId },
+    orderBy: { emitidoEm: 'desc' },
+    take:    limite,
+  })
+}
+
 /// Todos os ids de licença que existem. Usado pela varredura de órfãos para
 /// decidir o que na nuvem não tem mais dono.
 export async function findTodosIdsDeLicenca(): Promise<string[]> {
