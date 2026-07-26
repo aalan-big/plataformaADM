@@ -162,6 +162,36 @@ export class StorageService {
     return (r.Buckets ?? []).map(b => b.Name as string).filter(Boolean)
   }
 
+  /**
+   * "Pastas" imediatamente abaixo de um prefixo, usando o delimitador — não
+   * baixa a lista de objetos, só os prefixos comuns. Para 1000 clientes é uma
+   * chamada por cliente, não uma por arquivo.
+   *
+   * Devolve o nome do nível (sem o prefixo e sem a barra final).
+   */
+  async listarPastas(prefixo: string): Promise<string[]> {
+    const pastas: string[] = []
+    let continuationTok: string | undefined
+
+    do {
+      const lista = await this.cliente.send(new ListObjectsV2Command({
+        Bucket:            this.bucket,
+        Prefix:            prefixo,
+        Delimiter:         '/',
+        ContinuationToken: continuationTok,
+      }))
+
+      for (const p of lista.CommonPrefixes ?? []) {
+        const nome = (p.Prefix ?? '').slice(prefixo.length).replace(/\/$/, '')
+        if (nome) pastas.push(nome)
+      }
+
+      continuationTok = lista.IsTruncated ? lista.NextContinuationToken : undefined
+    } while (continuationTok)
+
+    return pastas
+  }
+
   /** Apaga tudo sob um prefixo. Usado só pela rotina de retenção. */
   async removerPrefixo(prefixo: string): Promise<number> {
     let removidos       = 0

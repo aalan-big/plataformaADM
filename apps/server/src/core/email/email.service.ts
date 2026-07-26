@@ -191,6 +191,71 @@ export class EmailService {
     this.logger.log(`Aviso de vencimento (${dados.diasRestantes} dias) enviado para ${dados.email}`)
   }
 
+  /**
+   * Avisa que o backup em nuvem será apagado se a licença não for reativada.
+   *
+   * Existe porque apagar o único backup de alguém em silêncio é indefensável —
+   * e quem está nessa situação é justamente quem parou de pagar e pode estar
+   * tentando voltar. O e-mail é o que transforma "perdeu tudo" em "foi avisado
+   * duas vezes e teve 90 dias".
+   */
+  async enviarAvisoRetencaoBackup(dados: {
+    email:         string
+    nomeCliente:   string
+    diasRestantes: number
+    ultimoBackup:  Date
+  }) {
+    const ultimo = dados.ultimoBackup.toLocaleDateString('pt-BR', {
+      day: '2-digit', month: 'long', year: 'numeric',
+    })
+
+    await enviar({
+      from:    FROM,
+      to:      dados.email,
+      subject: dados.diasRestantes <= 7
+        ? `Últimos ${dados.diasRestantes} dias do seu backup — StartBig ERP`
+        : `Seu backup em nuvem será removido em ${dados.diasRestantes} dias`,
+      html: `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0f172a;font-family:Arial,sans-serif;">
+  <div style="max-width:540px;margin:40px auto;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;">
+    <div style="background:#78350f;padding:28px 36px;text-align:center;">
+      <p style="margin:0;color:#fff;font-size:20px;font-weight:700;letter-spacing:1px;">StartBig ERP</p>
+      <p style="margin:4px 0 0;color:#fcd34d;font-size:12px;">Backup em nuvem — aviso de remoção</p>
+    </div>
+    <div style="padding:32px 36px;">
+      <p style="color:#e2e8f0;font-size:15px;margin:0 0 18px;">Olá, <strong>${dados.nomeCliente}</strong></p>
+
+      <p style="color:#cbd5e1;font-size:14px;line-height:1.7;margin:0 0 16px;">
+        Sua licença está inativa e, por isso, a cópia de segurança guardada na nossa nuvem será
+        <strong style="color:#fbbf24;">removida em ${dados.diasRestantes} dia(s)</strong>.
+      </p>
+
+      <div style="background:#0f172a;border:1px solid #92400e;border-radius:10px;padding:18px;margin-bottom:20px;">
+        <p style="margin:0 0 4px;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Último backup enviado</p>
+        <p style="margin:0;color:#e2e8f0;font-size:15px;font-weight:600;">${ultimo}</p>
+      </div>
+
+      <p style="color:#cbd5e1;font-size:14px;line-height:1.7;margin:0 0 16px;">
+        <strong>Nada foi perdido até aqui.</strong> Enquanto o prazo não vence, basta reativar sua
+        licença que você volta a ter acesso ao backup e pode restaurá-lo pelo próprio sistema.
+      </p>
+
+      <p style="color:#475569;font-size:12px;line-height:1.6;margin:0;border-top:1px solid #334155;padding-top:20px;">
+        Depois do prazo a remoção é definitiva e não há como recuperar. Em caso de dúvidas, entre em
+        contato com o suporte.
+      </p>
+    </div>
+  </div>
+</body>
+</html>`,
+    })
+
+    this.logger.log(`Aviso de retenção de backup (${dados.diasRestantes} dias) enviado para ${dados.email}`)
+  }
+
   async enviarAlertaTrocaDispositivo(dados: {
     email:       string
     nomeCliente: string

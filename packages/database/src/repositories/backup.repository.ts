@@ -61,15 +61,24 @@ export async function marcarBackupFalhou(id: string, erroMensagem: string) {
   })
 }
 
-/// Quantos uploads já foram EMITIDOS hoje para esta licença/tipo.
-/// Conta emitido, não confirmado: URL assinada entregue já é custo em potencial,
-/// então um loop com bug que pede 500 URLs e nunca sobe também tem que bater no teto.
+/// Quantos uploads contam contra a cota de hoje nesta licença/tipo.
+///
+/// Conta URL EMITIDA, não só confirmada: URL assinada entregue já é custo em
+/// potencial, então um loop com bug que pede 500 URLs e nunca sobe também bate
+/// no teto.
+///
+/// Mas NÃO conta o que falhou. Loja com internet de rádio perde upload no meio
+/// o tempo todo; se cada queda gastasse uma vaga, o cliente ficaria o dia
+/// inteiro sem conseguir backup nenhum — justamente quem mais precisa. Quem
+/// reporta a falha pelo /confirmar recupera a vaga; quem trava sem reportar
+/// continua consumindo até o varredor marcar como FALHOU, que é o certo.
 export async function contarBackupsDoDia(licencaId: string, tipo: TipoBackupDb) {
   return prisma.backup.count({
     where: {
       licencaId,
       tipo,
       emitidoEm: { gte: inicioDoDiaSaoPaulo() },
+      status:    { not: 'FALHOU' },
     },
   })
 }
@@ -135,6 +144,43 @@ export async function findBackupsDeLicencasMortas(dias: number) {
 
 export async function deletarBackupsDaLicenca(licencaId: string) {
   return prisma.backup.deleteMany({ where: { licencaId } })
+}
+
+/// Todos os ids de licença que existem. Usado pela varredura de órfãos para
+/// decidir o que na nuvem não tem mais dono.
+export async function findTodosIdsDeLicenca(): Promise<string[]> {
+  const linhas = await prisma.licenca.findMany({ select: { id: true } })
+  return linhas.map(l => l.id)
+}
+
+/// Licenças sem backup confirmado há mais de `dias`, cuja licença não está
+/// ATIVA — as candidatas a ter o backup apagado pela retenção. Serve para o
+/// aviso prévio, que precisa saber quantos dias faltam antes de apagar.
+export async function findLicencasParaAvisoDeRetencao(dias: number) {
+  const alvo = new Date(Date.now() - dias * 24 * 60 * 60 * 1000)
+  const inicio = new Date(alvo.getTime() - 12 * 60 * 60 * 1000)
+  const fim    = new Date(alvo.getTime() + 12 * 60 * 60 * 1000)
+
+  return prisma.backup.findMany({
+    where: {
+      status:    'CONFIRMADO',
+      emitidoEm: { gte: inicio, lt: fim },
+      licenca:   { status: { not: 'ATIVA' } },
+    },
+    distinct: ['licencaId'],
+    select: {
+      licencaId: true,
+      clienteId: true,
+      emitidoEm: true,
+      cliente: {
+        select: {
+          email: true,
+          pf: { select: { nomeCompleto: true } },
+          pj: { select: { razaoSocial:  true } },
+        },
+      },
+    },
+  })
 }
 
 /// Poda do diário de eventos. O arquivo na nuvem é um só; guardar 5 anos de

@@ -60,6 +60,11 @@ const LIMITE_DIARIO: Record<TipoBackupDb, number> = {
 /// e não existe de onde voltar. Recusa e deixa o de ontem em paz.
 const QUEDA_SUSPEITA = 0.5
 
+/// Teto de dias que o backup de imagens pode ficar sem subir por causa do
+/// checksum. Ver a explicação no ponto onde é usado — é a rede de proteção
+/// contra checksum errado congelar as imagens em silêncio.
+const DIAS_FORCA_IMAGENS = 7
+
 @Injectable()
 export class ErpBackupService {
   private readonly logger = new Logger(ErpBackupService.name)
@@ -173,13 +178,30 @@ export class ErpBackupService {
 
     // Espelho de imagens: nada mudou, nada sobe. Resposta é sucesso, não erro —
     // o ERP deve tratar como "backup em dia".
+    //
+    // Só que o checksum vem do ERP. Se ele calcular sobre a coisa errada e o
+    // valor nunca mudar, o primeiro upload passa e TODOS os seguintes pulam —
+    // para sempre. O cliente veria "backup em dia" por meses com as imagens
+    // congeladas no primeiro dia, e só descobriria na hora de restaurar. Por
+    // isso o pulo tem prazo: passado o limite, sobe inteiro de novo mesmo que o
+    // checksum bata. Custa um upload por semana e elimina a falha silenciosa.
     if (tipo === 'IMAGENS' && ultimo?.checksumSha256 && ultimo.checksumSha256 === dados.checksumSha256) {
-      return {
-        acao:      'PULAR',
-        motivo:    'Nenhuma imagem mudou desde o último backup.',
-        chave:     ultimo.chaveS3,
-        ultimoEm:  ultimo.confirmadoEm ?? ultimo.emitidoEm,
+      const referencia = ultimo.confirmadoEm ?? ultimo.emitidoEm
+      const diasDesde  = (Date.now() - referencia.getTime()) / (24 * 60 * 60 * 1000)
+
+      if (diasDesde < DIAS_FORCA_IMAGENS) {
+        return {
+          acao:      'PULAR',
+          motivo:    'Nenhuma imagem mudou desde o último backup.',
+          chave:     ultimo.chaveS3,
+          ultimoEm:  referencia,
+        }
       }
+
+      this.logger.log(
+        `[backup] imagens sem mudança há ${Math.floor(diasDesde)} dias na licença ${licencaId} — ` +
+        `forçando envio completo para não depender do checksum indefinidamente.`,
+      )
     }
 
     // A trava vale para o backup AUTOMÁTICO, que roda sem ninguém olhando — é ali

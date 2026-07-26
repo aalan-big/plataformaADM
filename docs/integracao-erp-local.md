@@ -589,6 +589,8 @@ Authorization: Bearer <token>
 
 `acao: "PULAR"` é **sucesso**, não erro. Acontece quando o `checksumSha256` de `imagens` é igual ao do último backup confirmado. Mostre "backup em dia" e **não chame `/confirmar`**. É o que evita subir 150 MB de fotos todo dia sem nada ter mudado.
 
+> **Uma vez por semana o `PULAR` não vem, mesmo sem nada ter mudado.** Se o último backup de imagens confirmado tiver mais de 7 dias, a plataforma manda `acao: "ENVIAR"` de qualquer forma e o ERP deve subir o pacote completo. Isso não é bug: é a rede de proteção contra um `checksumSha256` calculado errado, que ficaria igual para sempre e congelaria as imagens no primeiro envio sem ninguém perceber.
+
 ### 12.6 O upload
 
 ```
@@ -652,6 +654,7 @@ URL de download válida por **5 minutos**. Mesmo gate do upload: licença em tes
 |---|---|---|
 | `BACKUP_PLANO_INATIVO` | 403 | Desabilitar a tela e exibir `message`. **Não repetir** |
 | `BACKUP_LIMITE_DIARIO` | 429 | Avisar que a cota acabou. **Não repetir hoje** |
+| — | — | *Upload que falhou **não** consome a cota, desde que o ERP reporte pelo `/confirmar` com `ok: false`. Se o ERP travar sem reportar, a vaga só é liberada quando a URL expira (até 10 min depois). É o principal motivo para sempre chamar `/confirmar`* |
 | `BACKUP_TAMANHO_SUSPEITO` | 409 | Só acontece com `origem: "AUTOMATICO"`. Avisar o usuário que o arquivo encolheu muito e oferecer o botão de backup manual, que reenvia com `origem: "MANUAL"` e passa. **Nunca reenviar sozinho como MANUAL** — isso anularia a proteção |
 | `BACKUP_HWID_DIVERGENTE` | 403 | Bug do ERP: use o `hwid` do token |
 | `BACKUP_CHECKSUM_OBRIGATORIO` | 400 | Bug do ERP: calcule o SHA-256 antes de pedir URL de imagens |

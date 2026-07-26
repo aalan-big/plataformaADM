@@ -22,6 +22,8 @@ import {
   deletarSessoesInativas,
   findBackupsDeLicencasMortas,
   findBackupsPendentesExpirados,
+  findLicencasParaAvisoDeRetencao,
+  findTodosIdsDeLicenca,
   deletarBackupsDaLicenca,
   marcarBackupFalhou,
   podarEventosDeBackup,
@@ -40,6 +42,10 @@ export class CronService {
   private readonly RETENCAO_BACKUP_DIAS = 90
   /// Poda do diário de eventos (as linhas, não os arquivos).
   private readonly RETENCAO_EVENTOS_DIAS = 180
+  /// Dias de backup parado em que se avisa o cliente — 15 e 7 dias antes de
+  /// apagar. Mesmo padrão dos alertas de vencimento: casa por dia exato, então
+  /// não precisa guardar "já avisei" em lugar nenhum.
+  private readonly DIAS_AVISO_RETENCAO = [75, 83]
 
   constructor(
     private readonly emailService:  EmailService,
@@ -57,6 +63,11 @@ export class CronService {
     } catch (err) {
       this.logger.error('Erro no Garbage Collector de Sessões:', err)
     }
+
+    // Junto do GC, e não só de madrugada: enquanto o upload fica pendurado ele
+    // ocupa uma vaga da cota do cliente. Esperar até 01:00 para liberar deixaria
+    // quem teve uma queda de internet travado o dia inteiro.
+    await this.fecharBackupsPendurados()
   }
 
   @Cron('0 1 * * *') // Executa todo dia às 01:00 AM
@@ -112,13 +123,95 @@ export class CronService {
       this.logger.error('Erro ao processar alertas de vencimento:', err)
     }
 
-    // 3. Fechar uploads de backup que ficaram pendurados
-    await this.fecharBackupsPendurados()
+    // 3. Avisar quem está prestes a perder o backup
+    await this.avisarRetencaoDeBackup()
 
     // 4. Retenção dos backups na nuvem
     await this.aplicarRetencaoDeBackups()
 
+    // 5. Varrer arquivos sem dono no bucket
+    await this.removerBackupsOrfaos()
+
     this.logger.log('Rotinas diárias concluídas.')
+  }
+
+  /**
+   * Avisa, 15 e 7 dias antes, quem vai perder o backup por licença inativa.
+   *
+   * Apagar o único backup de alguém em silêncio é indefensável — e quem está
+   * nessa situação é justamente quem parou de pagar e talvez esteja tentando
+   * voltar. Dois e-mails transformam "perdi tudo" em "fui avisado e tive 90 dias".
+   */
+  private async avisarRetencaoDeBackup() {
+    try {
+      for (const dias of this.DIAS_AVISO_RETENCAO) {
+        const alvos = await findLicencasParaAvisoDeRetencao(dias)
+
+        for (const a of alvos) {
+          const nomeCliente = a.cliente.pf?.nomeCompleto
+            ?? a.cliente.pj?.razaoSocial
+            ?? a.cliente.email
+
+          await this.emailService.enviarAvisoRetencaoBackup({
+            email:         a.cliente.email,
+            nomeCliente,
+            diasRestantes: this.RETENCAO_BACKUP_DIAS - dias,
+            ultimoBackup:  a.emitidoEm,
+          }).catch(e => {
+            this.logger.warn(`Falha ao avisar retenção de backup para ${a.cliente.email}: ${e.message}`)
+          })
+        }
+      }
+    } catch (err) {
+      this.logger.error('Erro ao avisar sobre retenção de backup:', err)
+    }
+  }
+
+  /**
+   * Apaga do bucket o que não tem mais dono no banco.
+   *
+   * As linhas de `backups` somem em cascata quando a licença ou o cliente é
+   * excluído — e a rotina de retenção trabalha a partir dessas linhas. Sem esta
+   * varredura, excluir um cliente no painel deixaria o banco de dados da empresa
+   * dele no bucket para sempre: você pagando por isso e guardando dado de quem
+   * já saiu.
+   *
+   * Varre por prefixo com delimitador, então é uma chamada por cliente e não uma
+   * por arquivo.
+   */
+  private async removerBackupsOrfaos() {
+    if (!this.storage.configurado) return
+
+    try {
+      const idsValidos = new Set(await findTodosIdsDeLicenca())
+
+      // Trava de segurança: banco vazio (ou consulta que falhou e devolveu nada)
+      // apagaria o bucket inteiro. Nenhuma limpeza vale esse risco.
+      if (idsValidos.size === 0) {
+        this.logger.warn('[backup] varredura de órfãos abortada: nenhuma licença no banco.')
+        return
+      }
+
+      const clientes = await this.storage.listarPastas('clientes/')
+      let removidos = 0
+
+      for (const clienteId of clientes) {
+        const licencas = await this.storage.listarPastas(`clientes/${clienteId}/`)
+
+        for (const licencaId of licencas) {
+          if (idsValidos.has(licencaId)) continue
+
+          const prefixo = `clientes/${clienteId}/${licencaId}/`
+          const n = await this.storage.removerPrefixo(prefixo)
+          removidos += n
+          this.logger.log(`[backup] órfão removido: ${prefixo} (${n} objeto(s)) — licença não existe mais.`)
+        }
+      }
+
+      if (removidos === 0) this.logger.debug('[backup] varredura de órfãos: nada a remover.')
+    } catch (err) {
+      this.logger.error('Erro na varredura de backups órfãos:', err)
+    }
   }
 
   /**
