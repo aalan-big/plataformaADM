@@ -182,13 +182,22 @@ export class ErpBackupService {
       }
     }
 
-    if (ultimo?.tamanhoRealBytes && dados.tamanhoBytes < ultimo.tamanhoRealBytes * QUEDA_SUSPEITA)
+    // A trava vale para o backup AUTOMÁTICO, que roda sem ninguém olhando — é ali
+    // que um banco truncado sobrescreve a única cópia boa em silêncio. No envio
+    // manual existe uma pessoa que clicou sabendo do que se trata, e a redução
+    // pode ser legítima (limpeza de histórico, exclusão de filial). Recusar os
+    // dois deixaria o cliente sem nenhuma forma de subir um banco menor.
+    if (
+      dados.origem !== 'MANUAL' &&
+      ultimo?.tamanhoRealBytes &&
+      dados.tamanhoBytes < ultimo.tamanhoRealBytes * QUEDA_SUSPEITA
+    )
       throw this.erro(
         HttpStatus.CONFLICT,
         'BACKUP_TAMANHO_SUSPEITO',
-        `Backup de ${this.mb(dados.tamanhoBytes)} é muito menor que o último enviado ` +
-        `(${this.mb(ultimo.tamanhoRealBytes)}). Envio recusado para não sobrescrever a cópia boa. ` +
-        `Se a redução é esperada, use o envio manual.`,
+        `Backup de ${this.tamanho(dados.tamanhoBytes)} é muito menor que o último enviado ` +
+        `(${this.tamanho(ultimo.tamanhoRealBytes)}). Envio automático recusado para não ` +
+        `sobrescrever a cópia boa. Se a redução é esperada, refaça pelo botão de backup manual.`,
       )
 
     const enviadosHoje = await contarBackupsDoDia(licencaId, tipo)
@@ -394,7 +403,12 @@ export class ErpBackupService {
     }
   }
 
-  private mb(bytes: number): string {
+  /// Esta mensagem chega ao usuário final do ERP. Forçar MB transformava
+  /// "1 KB é menor que 64 KB" em "0.0 MB é muito menor que 0.1 MB", que não
+  /// explica nada e ainda parece defeito do sistema.
+  private tamanho(bytes: number): string {
+    if (bytes < 1024)        return `${bytes} bytes`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`
   }
 }

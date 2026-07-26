@@ -476,7 +476,7 @@ Cada licença tem **um** `banco.zip` e **um** `imagens.zip` na nuvem. O backup d
 Três consequências que precisam aparecer na tela do ERP:
 
 1. **Só existe uma cópia para restaurar.** Se a tela mostrar uma lista de backups, o usuário vai achar que pode escolher qual restaurar. Só o último existe.
-2. **Subir um banco corrompido apaga o bom.** Por isso a plataforma recusa arquivo muito menor que o anterior (ver `BACKUP_TAMANHO_SUSPEITO`). O ERP não deve tratar isso como falha de rede e tentar de novo em looping.
+2. **Subir um banco corrompido apaga o bom.** Por isso a plataforma recusa envio **automático** de arquivo com menos da metade do tamanho do anterior (ver `BACKUP_TAMANHO_SUSPEITO`). O envio manual passa, porque nele existe uma pessoa confirmando. O ERP não deve tratar essa recusa como falha de rede e tentar de novo em looping.
 3. **O ERP não escolhe o caminho do arquivo.** A plataforma decide, a partir do token. Não existe parâmetro de nome ou pasta.
 
 ### 12.2 Autenticação
@@ -652,7 +652,7 @@ URL de download válida por **5 minutos**. Mesmo gate do upload: licença em tes
 |---|---|---|
 | `BACKUP_PLANO_INATIVO` | 403 | Desabilitar a tela e exibir `message`. **Não repetir** |
 | `BACKUP_LIMITE_DIARIO` | 429 | Avisar que a cota acabou. **Não repetir hoje** |
-| `BACKUP_TAMANHO_SUSPEITO` | 409 | Avisar o usuário que o arquivo encolheu muito e pedir confirmação manual (`origem: "MANUAL"`). **Nunca repetir automaticamente** |
+| `BACKUP_TAMANHO_SUSPEITO` | 409 | Só acontece com `origem: "AUTOMATICO"`. Avisar o usuário que o arquivo encolheu muito e oferecer o botão de backup manual, que reenvia com `origem: "MANUAL"` e passa. **Nunca reenviar sozinho como MANUAL** — isso anularia a proteção |
 | `BACKUP_HWID_DIVERGENTE` | 403 | Bug do ERP: use o `hwid` do token |
 | `BACKUP_CHECKSUM_OBRIGATORIO` | 400 | Bug do ERP: calcule o SHA-256 antes de pedir URL de imagens |
 | `BACKUP_DADOS_INVALIDOS` | 400 | Tamanho fora da faixa ou campo faltando. Ver `detalhes` |
