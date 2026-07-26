@@ -170,11 +170,21 @@ export class BackupService {
     if (!objeto)
       throw new NotFoundException('O backup registrado não está mais disponível na nuvem.')
 
-    const { url, expiraEm } = await this.storage.gerarUrlDownload(ultimo.chaveS3)
-
     const nomeCliente = licenca.cliente.pf?.nomeCompleto
       ?? licenca.cliente.pj?.razaoSocial
       ?? licenca.cliente.email
+
+    // Data no nome porque backup é fotografia de um momento: numa restauração,
+    // saber de que dia é o arquivo importa tanto quanto saber de quem é.
+    const dia = (ultimo.confirmadoEm ?? ultimo.emitidoEm).toISOString().slice(0, 10)
+    const apelido = nomeCliente
+      // Tira acento: header HTTP é ASCII, e "José" viraria lixo no nome do arquivo.
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase()
+      .slice(0, 40)
+    const nomeArquivo = `${apelido}-${tipo}-${dia}.zip`
+
+    const { url, expiraEm } = await this.storage.gerarUrlDownload(ultimo.chaveS3, nomeArquivo)
 
     await registrarLog({
       usuarioId:    contexto.usuarioId,
@@ -192,7 +202,7 @@ export class BackupService {
       tamanhoBytes: objeto.tamanhoBytes,
       geradoEm:     ultimo.confirmadoEm ?? ultimo.emitidoEm,
       expiraEm:     expiraEm.toISOString(),
-      nomeArquivo:  `${nomeCliente.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase()}-${tipo}.zip`,
+      nomeArquivo,
     }
   }
 

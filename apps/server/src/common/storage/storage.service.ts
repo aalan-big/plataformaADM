@@ -130,8 +130,22 @@ export class StorageService {
     return { url, expiraEm: new Date(Date.now() + TTL_UPLOAD_SEGUNDOS * 1000) }
   }
 
-  async gerarUrlDownload(chave: string): Promise<{ url: string; expiraEm: Date }> {
-    const comando = new GetObjectCommand({ Bucket: this.bucket, Key: chave })
+  /**
+   * URL assinada de download.
+   *
+   * O `nomeArquivo` vira `Content-Disposition` na resposta do bucket. Sem ele
+   * todo download chega como `banco.zip`, e quem baixa de três clientes fica com
+   * `banco.zip`, `banco (1).zip` e `banco (2).zip` sem saber qual é de quem —
+   * ambiguidade justamente na hora de restaurar, que é quando errar custa caro.
+   */
+  async gerarUrlDownload(chave: string, nomeArquivo?: string): Promise<{ url: string; expiraEm: Date }> {
+    const comando = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key:    chave,
+      ...(nomeArquivo
+        ? { ResponseContentDisposition: `attachment; filename="${nomeArquivo.replace(/"/g, '')}"` }
+        : {}),
+    })
     const url = await getSignedUrl(this.cliente, comando, { expiresIn: TTL_DOWNLOAD_SEGUNDOS })
     return { url, expiraEm: new Date(Date.now() + TTL_DOWNLOAD_SEGUNDOS * 1000) }
   }
