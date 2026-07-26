@@ -246,11 +246,25 @@ export default function BackupsPage() {
 
   useEffect(() => { carregar() }, [carregar])
 
+  // A busca aceita nome, e-mail e também os UUIDs — é assim que se descobre de
+  // quem é uma pasta vista no bucket: copia o id de lá e cola aqui. Aceitar o
+  // caminho inteiro colado (`clientes/<uuid>/<uuid>/`) evita ter que separar os
+  // pedaços na mão.
   const q = busca.trim().toLowerCase()
-  const visiveis = itens.filter(i =>
-    (!filtro || i.situacao === filtro) &&
-    (!q || i.nomeCliente.toLowerCase().includes(q) || i.email.toLowerCase().includes(q)),
-  )
+  const visiveis = itens.filter(i => {
+    if (filtro && i.situacao !== filtro) return false
+    if (!q) return true
+
+    return i.nomeCliente.toLowerCase().includes(q)
+        || i.email.toLowerCase().includes(q)
+        || i.clienteId.toLowerCase().includes(q)
+        || i.licencaId.toLowerCase().includes(q)
+        || i.prefixo.toLowerCase().includes(q)
+        // O contrário também: o usuário colou o caminho todo e a gente confere
+        // se este item está dentro dele.
+        || q.includes(i.clienteId.toLowerCase())
+        || q.includes(i.licencaId.toLowerCase())
+  })
 
   const STATS = [
     { label: 'Com direito', valor: resumo?.elegiveis ?? 0, cor: 'text-white',       f: ''            as const },
@@ -314,7 +328,7 @@ export default function BackupsPage() {
           <input
             value={busca}
             onChange={e => setBusca(e.target.value)}
-            placeholder="Buscar por cliente ou e-mail…"
+            placeholder="Nome, e-mail, ou cole o UUID/caminho vindo do bucket…"
             className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-sm text-slate-200 outline-none focus:border-blue-500/50"
           />
         </div>
