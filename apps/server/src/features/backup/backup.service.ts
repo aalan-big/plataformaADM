@@ -12,8 +12,16 @@
  * aparecem primeiro.
  * ============================================================================
  */
-import { Injectable, NotFoundException } from '@nestjs/common'
-import { findVisaoGeralDeBackups, findEventosDeBackup, findLicencaById } from '@startbig/database'
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common'
+import {
+  findVisaoGeralDeBackups,
+  findEventosDeBackup,
+  findLicencaById,
+  findUltimoBackupConfirmado,
+  registrarLog,
+  type TipoBackupDb,
+} from '@startbig/database'
+import { StorageService } from '../../common/storage/storage.service'
 
 /// Depois de quantas horas sem backup uma licença ativa é considerada atrasada.
 /// 36h e não 24h porque o backup diário do ERP pode atrasar algumas horas
@@ -25,6 +33,8 @@ type Situacao = 'EM_DIA' | 'ATRASADO' | 'NUNCA' | 'NAO_ELEGIVEL'
 
 @Injectable()
 export class BackupService {
+  constructor(private readonly storage: StorageService) {}
+
   async visaoGeral() {
     const { licencas, ultimos, falhas } = await findVisaoGeralDeBackups()
 
@@ -121,6 +131,68 @@ export class BackupService {
         confirmadoEm: e.confirmadoEm,
         erro:         e.erroMensagem,
       })),
+    }
+  }
+
+  /**
+   * URL assinada para o ADMIN baixar o backup de um cliente — a porta de
+   * suporte, para quando o cliente perde a máquina e liga pedindo socorro.
+   *
+   * Não é a mesma coisa que o download do ERP: aqui quem se autentica é o
+   * administrador, então não passa pelo gate de plano. Um cliente com licença
+   * vencida não baixa sozinho, mas você pode baixar por ele — que era o caso
+   * que ficava sem saída.
+   *
+   * Justamente por isso fica registrado: baixar o banco de um cliente é acessar
+   * o cadastro, o financeiro e a carteira de clientes da empresa dele. Quem fez,
+   * de quem, e quando precisa estar escrito em algum lugar.
+   */
+  async urlDownloadAdmin(
+    licencaId: string,
+    tipo: string,
+    contexto: { usuarioId?: string | null; ip?: string | null },
+  ) {
+    if (tipo !== 'banco' && tipo !== 'imagens')
+      throw new BadRequestException('tipo deve ser "banco" ou "imagens".')
+
+    const licenca = await findLicencaById(licencaId)
+    if (!licenca) throw new NotFoundException('Licença não encontrada.')
+
+    const tipoDb: TipoBackupDb = tipo === 'banco' ? 'BANCO' : 'IMAGENS'
+    const ultimo = await findUltimoBackupConfirmado(licencaId, tipoDb)
+
+    if (!ultimo)
+      throw new NotFoundException(`Nenhum backup de ${tipo} confirmado para esta licença.`)
+
+    // Confere antes de assinar: a retenção pode ter apagado o objeto, e um link
+    // que estoura em 404 no meio do download não explica nada a quem clicou.
+    const objeto = await this.storage.conferirObjeto(ultimo.chaveS3)
+    if (!objeto)
+      throw new NotFoundException('O backup registrado não está mais disponível na nuvem.')
+
+    const { url, expiraEm } = await this.storage.gerarUrlDownload(ultimo.chaveS3)
+
+    const nomeCliente = licenca.cliente.pf?.nomeCompleto
+      ?? licenca.cliente.pj?.razaoSocial
+      ?? licenca.cliente.email
+
+    await registrarLog({
+      usuarioId:    contexto.usuarioId,
+      acao:         'BACKUP_DOWNLOAD',
+      entidadeNome: 'Licenca',
+      entidadeId:   licencaId,
+      descricao:    `Download do backup de ${tipo} (${objeto.tamanhoBytes} bytes) do cliente ${nomeCliente}.`,
+      ipAddress:    contexto.ip,
+    })
+
+    return {
+      url,
+      chave:        ultimo.chaveS3,
+      tipo,
+      tamanhoBytes: objeto.tamanhoBytes,
+      geradoEm:     ultimo.confirmadoEm ?? ultimo.emitidoEm,
+      expiraEm:     expiraEm.toISOString(),
+      nomeArquivo:  `${nomeCliente.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase()}-${tipo}.zip`,
     }
   }
 

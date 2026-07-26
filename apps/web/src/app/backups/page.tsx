@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import {
-  Search, RefreshCw, Eye, X, Copy, CheckCheck,
+  Search, RefreshCw, Eye, X, Copy, CheckCheck, Download,
   HardDriveDownload, ShieldCheck, Clock, CircleAlert, MinusCircle,
   Database, Image as ImageIcon,
 } from 'lucide-react'
@@ -113,6 +113,66 @@ function BotaoCopiar({ texto, titulo }: { texto: string; titulo: string }) {
 
 // ─── Modal de detalhe ─────────────────────────────────────────────────────────
 
+/**
+ * Baixa o backup de um cliente. Pede confirmação porque o clique produz um link
+ * para o banco de dados de uma empresa — cadastro, financeiro e a carteira de
+ * clientes dela. Não é o tipo de coisa que deve sair de um clique errado.
+ */
+function BotaoBaixar({ licencaId, tipo, existe }: { licencaId: string; tipo: 'banco' | 'imagens'; existe: boolean }) {
+  const [confirmando, setConfirmando] = useState(false)
+  const [baixando, setBaixando]       = useState(false)
+  const [erro, setErro]               = useState('')
+
+  async function baixar() {
+    if (!confirmando) {
+      setConfirmando(true)
+      setTimeout(() => setConfirmando(false), 4000)
+      return
+    }
+
+    setConfirmando(false); setBaixando(true); setErro('')
+    try {
+      const res  = await fetch(`/api/backups/${licencaId}/url-download`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ tipo }),
+      })
+      const json = await res.json()
+
+      if (!res.ok) { setErro(json?.message ?? 'Falha ao gerar o link.'); return }
+
+      // Navegação direta em vez de <a download>: a URL é de outro domínio (o
+      // bucket), e o atributo download é ignorado entre origens. O nome do
+      // arquivo quem define é o cabeçalho que o bucket devolve.
+      window.open(json.url, '_blank', 'noopener')
+    } catch {
+      setErro('Falha de conexão ao gerar o link.')
+    } finally {
+      setBaixando(false)
+    }
+  }
+
+  if (!existe) return null
+
+  return (
+    <div className="mt-3">
+      <button
+        onClick={baixar}
+        disabled={baixando}
+        className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all disabled:opacity-40 ${
+          confirmando
+            ? 'bg-amber-600/25 border-amber-500/50 text-amber-300 animate-pulse'
+            : 'border-slate-700 text-slate-300 hover:border-blue-500/50 hover:text-blue-400'
+        }`}
+      >
+        <Download size={11} />
+        {baixando ? 'Gerando link...' : confirmando ? 'Confirmar download?' : 'Baixar'}
+      </button>
+      {erro && <p className="text-[10px] text-red-400 mt-1">{erro}</p>}
+    </div>
+  )
+}
+
 function ModalDetalhe({ item, onClose }: { item: Item; onClose: () => void }) {
   const [eventos, setEventos]       = useState<Evento[]>([])
   const [carregando, setCarregando] = useState(true)
@@ -172,6 +232,7 @@ function ModalDetalhe({ item, onClose }: { item: Item; onClose: () => void }) {
                     ) : (
                       <p className="text-slate-600 text-sm">Nenhuma</p>
                     )}
+                    <BotaoBaixar licencaId={item.licencaId} tipo={nome} existe={!!copia} />
                   </div>
                 ),
               )}
