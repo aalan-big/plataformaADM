@@ -493,6 +493,16 @@ E o que **não** deve subir, porque se regenera a partir do que já está no bac
 - Recibos, pedidos e orçamentos não fiscais em PDF — montados a partir dos dados do banco
 - DANFE em PDF — se regenera a partir do XML
 
+> **Sobre o tamanho das imagens:** reduza a foto **no cadastro do produto**, não na
+> hora do backup. Zip não comprime JPEG/PNG — uma foto de 4 MB continua ocupando 4 MB
+> dentro do pacote, então compactar depois não resolve nada.
+>
+> Uma foto de produto a ~1200px e qualidade 80 fica em 100–200 KB e é indistinguível
+> na tela. Salva assim, 3.000 produtos dão ~400 MB; salvas como vêm do celular, dão
+> 12 GB — o backup estoura o limite de 500 MB e o disco do cliente também sofre.
+> É a decisão que mais afeta o tamanho do pacote, e precisa ser tomada antes de
+> existirem milhares de fotos em tamanho original.
+
 > **Decisão sobre documento fiscal (26/07/2026):** o XML autorizado da NF-e/NFC-e/NFS-e
 > **deve ser gravado dentro do banco de dados**, numa coluna da tabela de notas — não
 > numa pasta em disco. Assim ele viaja no `banco.zip` automaticamente.
