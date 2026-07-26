@@ -191,7 +191,7 @@ Diferente de `conectar` (que bloqueia com erro 400), o `login` **prova a identid
 Chamado a cada vez que o ERP é aberto / usuário faz login local **usando a chave já salva**.
 
 ```
-POST https://api.startbig.com.br/licenca/conectar
+POST https://api.startbig.com.br/erp/conectar
 Content-Type: application/json
 ```
 
@@ -236,7 +236,7 @@ Se a licença estiver bloqueada/suspensa/vencida ou o limite de dispositivos sim
 O ERP deve chamar isso **a cada poucos minutos** enquanto estiver em uso (recomendado: a cada 5–10 min). Se o servidor não receber heartbeat por **35 minutos**, a sessão é considerada morta e a vaga é liberada.
 
 ```
-POST https://api.startbig.com.br/licenca/heartbeat
+POST https://api.startbig.com.br/erp/heartbeat
 Content-Type: application/json
 ```
 
@@ -270,7 +270,7 @@ Se a licença foi bloqueada/suspensa pelo admin nesse meio tempo, retorna erro �
 O token (JWT) assinado tem validade curta (no máximo 7 dias, e geralmente recalculado para expirar perto do vencimento da licença). A resposta de `conectar`/`validar` traz `proximaValidacaoEm` — **o ERP deve chamar `validar` novamente antes dessa data/hora**, mesmo que o programa fique aberto o tempo todo.
 
 ```
-POST https://api.startbig.com.br/licenca/validar
+POST https://api.startbig.com.br/erp/validar
 Content-Type: application/json
 ```
 
@@ -320,7 +320,7 @@ Possíveis motivos: `Licença bloqueada`, `Licença suspensa`, `Licença revogad
 Chamado quando o usuário fecha o ERP / faz logout.
 
 ```
-POST https://api.startbig.com.br/licenca/desconectar
+POST https://api.startbig.com.br/erp/desconectar
 Content-Type: application/json
 ```
 
@@ -344,7 +344,7 @@ Libera a vaga de dispositivo simultâneo para outro usuário/máquina.
 ## 8. Chave pública (validação offline do token)
 
 ```
-GET https://api.startbig.com.br/licenca/chave-publica
+GET https://api.startbig.com.br/erp/chave-publica
 ```
 
 ```json
@@ -363,10 +363,10 @@ O conteúdo (payload) do token contém: `licencaId`, `hwid`, `plano`, `limite`, 
 - [ ] Na primeira execução sem chave salva → pedir e-mail + senha ao cliente e chamar `POST /erp/auto-cadastro` (a senha é obrigatória e fica gravada para o login futuro)
 - [ ] Se `/erp/auto-cadastro` recusar por e-mail/documento já cadastrado (ex.: reinstalação) → pedir e-mail/senha e chamar `POST /erp/auth/login`
 - [ ] Salvar `chaveAtivacao` localmente (arquivo de config / banco local) — vem no auto-cadastro **e** no login
-- [ ] Ao abrir o programa → chamar `POST /licenca/conectar` com a chave salva
-- [ ] Enquanto o programa estiver aberto → chamar `POST /licenca/heartbeat` a cada 5–10 min
-- [ ] Respeitar o campo `proximaValidacaoEm` → chamar `POST /licenca/validar` antes desse horário
-- [ ] Ao fechar o programa → chamar `POST /licenca/desconectar`
+- [ ] Ao abrir o programa → chamar `POST /erp/conectar` com a chave salva
+- [ ] Enquanto o programa estiver aberto → chamar `POST /erp/heartbeat` a cada 5–10 min
+- [ ] Respeitar o campo `proximaValidacaoEm` → chamar `POST /erp/validar` antes desse horário
+- [ ] Ao fechar o programa → chamar `POST /erp/desconectar`
 - [ ] Baixar e guardar a `chave-publica` para validar o token localmente quando estiver offline
 - [ ] Se qualquer chamada retornar erro de licença bloqueada/suspensa/revogada/vencida → bloquear o uso do ERP imediatamente
 
@@ -378,11 +378,11 @@ O conteúdo (payload) do token contém: `licencaId`, `hwid`, `plano`, `limite`, 
 |---|---|---|---|
 | Cadastrar cliente novo | POST | `/erp/auto-cadastro` | Uma vez, na instalação |
 | Login (cliente já existente, sem chave local) | POST | `/erp/auth/login` | Reinstalação/troca de máquina, sem `chaveAtivacao` salva |
-| Abrir sessão | POST | `/licenca/conectar` | A cada abertura do ERP, com a chave já salva |
-| Sinal de vida | POST | `/licenca/heartbeat` | A cada 5–10 min, enquanto em uso |
-| Revalidar licença | POST | `/licenca/validar` | Antes de `proximaValidacaoEm` |
-| Fechar sessão | POST | `/licenca/desconectar` | Ao fechar o ERP |
-| Obter chave pública | GET | `/licenca/chave-publica` | Uma vez, guardar localmente |
+| Abrir sessão | POST | `/erp/conectar` | A cada abertura do ERP, com a chave já salva |
+| Sinal de vida | POST | `/erp/heartbeat` | A cada 5–10 min, enquanto em uso |
+| Revalidar licença | POST | `/erp/validar` | Antes de `proximaValidacaoEm` |
+| Fechar sessão | POST | `/erp/desconectar` | Ao fechar o ERP |
+| Obter chave pública | GET | `/erp/chave-publica` | Uma vez, guardar localmente |
 | Consultar planos/preços | GET | `/erp/plano/:licencaId` | Antes de exibir opções de pagamento |
 | Gerar cobrança (checkout) | POST | `/erp/cobranca` | Quando o cliente decide assinar/renovar |
 | Situação do backup | GET | `/erp/backup/status` | Ao abrir a tela de backup |
@@ -394,7 +394,7 @@ O conteúdo (payload) do token contém: `licencaId`, `hwid`, `plano`, `limite`, 
 
 ## 11. Cobrança e renovação (pagamento recorrente via Stripe)
 
-Quando a licença está vencida (ou o trial acabou), o ERP pode oferecer a assinatura direto pela plataforma. O pagamento é uma **assinatura recorrente** no Stripe: o cliente paga uma vez e, a cada ciclo (mensal/trimestral/anual), o Stripe cobra o cartão automaticamente e a plataforma **renova a licença sozinha** — o ERP não precisa fazer nada na renovação, só continuar chamando `/licenca/validar` normalmente (a `dataVencimento` já vem atualizada).
+Quando a licença está vencida (ou o trial acabou), o ERP pode oferecer a assinatura direto pela plataforma. O pagamento é uma **assinatura recorrente** no Stripe: o cliente paga uma vez e, a cada ciclo (mensal/trimestral/anual), o Stripe cobra o cartão automaticamente e a plataforma **renova a licença sozinha** — o ERP não precisa fazer nada na renovação, só continuar chamando `/erp/validar` normalmente (a `dataVencimento` já vem atualizada).
 
 ### 11.1 Consultar preços — `GET /erp/plano/:licencaId`
 
@@ -456,7 +456,7 @@ O cliente conclui o pagamento nessa `url`. A partir daí:
 
 ### 11.3 Como o ERP sabe que o cliente pagou
 
-Não há webhook para o ERP. O ERP descobre pelo fluxo normal: depois do pagamento, a próxima chamada a **`/licenca/validar`** (ou `/licenca/conectar`) já retorna `status: "ATIVA"` com a nova `dataVencimento`. Recomendado: após abrir o checkout, o ERP pode fazer *polling* leve em `/licenca/validar` (ex.: a cada 30–60s por alguns minutos) para detectar a ativação e liberar o uso.
+Não há webhook para o ERP. O ERP descobre pelo fluxo normal: depois do pagamento, a próxima chamada a **`/erp/validar`** (ou `/erp/conectar`) já retorna `status: "ATIVA"` com a nova `dataVencimento`. Recomendado: após abrir o checkout, o ERP pode fazer *polling* leve em `/erp/validar` (ex.: a cada 30–60s por alguns minutos) para detectar a ativação e liberar o uso.
 
 ### Erros possíveis
 
@@ -516,7 +516,7 @@ E o que **não** deve subir, porque se regenera a partir do que já está no bac
 
 ### 12.2 Autenticação
 
-Todas as rotas desta seção usam o **token da licença** (JWT RS256) obtido em `/licenca/conectar` ou `/erp/auth/login`:
+Todas as rotas desta seção usam o **token da licença** (JWT RS256) obtido em `/erp/conectar` ou `/erp/auth/login`:
 
 ```
 Authorization: Bearer <token>
