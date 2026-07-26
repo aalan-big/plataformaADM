@@ -385,6 +385,10 @@ O conteúdo (payload) do token contém: `licencaId`, `hwid`, `plano`, `limite`, 
 | Obter chave pública | GET | `/licenca/chave-publica` | Uma vez, guardar localmente |
 | Consultar planos/preços | GET | `/erp/plano/:licencaId` | Antes de exibir opções de pagamento |
 | Gerar cobrança (checkout) | POST | `/erp/cobranca` | Quando o cliente decide assinar/renovar |
+| Situação do backup | GET | `/erp/backup/status` | Ao abrir a tela de backup |
+| Pedir URL de upload | POST | `/erp/backup/url-upload` | Antes de cada envio de backup |
+| Confirmar o envio | POST | `/erp/backup/confirmar` | Logo após o PUT, sempre |
+| Pedir URL de restauração | POST | `/erp/backup/url-download` | Quando o usuário for restaurar |
 
 ---
 
@@ -461,4 +465,216 @@ Não há webhook para o ERP. O ERP descobre pelo fluxo normal: depois do pagamen
 
 ---
 
-*Documento gerado a partir do código-fonte da plataforma (`apps/server/src/features/dispositivos` e `apps/server/src/features/erp`) em 16/06/2026. Seção de login/reinstalação adicionada em 06/07/2026. Seção de cobrança/renovação recorrente adicionada em 11/07/2026.*
+## 12. Backup em nuvem
+
+O ERP empacota o banco local e as imagens, e sobe para a nuvem da plataforma. O ERP **nunca recebe credencial de nuvem** — ele pede uma URL assinada, sobe naquela URL e avisa que terminou.
+
+### 12.1 O modelo: um arquivo, sobrescrito
+
+Cada licença tem **um** `banco.zip` e **um** `imagens.zip` na nuvem. O backup de hoje **substitui** o de ontem. Não há histórico de versões nem cópia de dias anteriores.
+
+Três consequências que precisam aparecer na tela do ERP:
+
+1. **Só existe uma cópia para restaurar.** Se a tela mostrar uma lista de backups, o usuário vai achar que pode escolher qual restaurar. Só o último existe.
+2. **Subir um banco corrompido apaga o bom.** Por isso a plataforma recusa arquivo muito menor que o anterior (ver `BACKUP_TAMANHO_SUSPEITO`). O ERP não deve tratar isso como falha de rede e tentar de novo em looping.
+3. **O ERP não escolhe o caminho do arquivo.** A plataforma decide, a partir do token. Não existe parâmetro de nome ou pasta.
+
+### 12.2 Autenticação
+
+Todas as rotas desta seção usam o **token da licença** (JWT RS256) obtido em `/licenca/conectar` ou `/erp/auth/login`:
+
+```
+Authorization: Bearer <token>
+```
+
+O `hwid` enviado no corpo precisa ser **o mesmo** que está dentro do token, senão a resposta é `403 BACKUP_HWID_DIVERGENTE`.
+
+### 12.3 Formato de erro
+
+Toda recusa vem assim:
+
+```json
+{
+  "statusCode": 403,
+  "path": "/erp/backup/url-upload",
+  "message": "Backup em nuvem não está disponível durante o período de teste.",
+  "codigo": "BACKUP_PLANO_INATIVO"
+}
+```
+
+**Trate pelo `codigo`, nunca pelo texto.** A `message` é escrita para o usuário final e pode mudar; o `codigo` é contrato.
+
+### 12.4 `GET /erp/backup/status`
+
+Leitura pura — pode ser chamada sempre que a tela de backup abrir.
+
+```
+GET https://api.startbig.com.br/erp/backup/status
+Authorization: Bearer <token>
+```
+
+```json
+{
+  "planoPermiteBackup": true,
+  "motivoBloqueio": null,
+  "limiteDiario":  { "banco": 2, "imagens": 1 },
+  "enviadosHoje":  { "banco": 1, "imagens": 0 },
+  "tamanhoMaximoBytes": 524288000,
+  "copiaAtual": {
+    "banco":   { "tamanhoBytes": 65536, "geradoEm": "2026-07-26T16:48:38.859Z", "hwid": "...", "chave": "..." },
+    "imagens": null
+  },
+  "historicoEventos": [
+    { "tipo": "BANCO", "status": "CONFIRMADO", "origem": "AUTOMATICO",
+      "tamanhoBytes": 65536, "hwid": "...", "emitidoEm": "...", "confirmadoEm": "...", "erro": null }
+  ]
+}
+```
+
+| Campo | Para que serve |
+|---|---|
+| `planoPermiteBackup` | Habilita ou desabilita a tela. **Não é a trava** — a trava é no servidor |
+| `motivoBloqueio` | Texto pronto para exibir quando bloqueado |
+| `enviadosHoje` / `limiteDiario` | Mostrar "1 de 2 backups usados hoje" |
+| `copiaAtual` | O que existe **de verdade** na nuvem: no máximo um de cada |
+| `historicoEventos` | Registro do que aconteceu. **Não são arquivos baixáveis** — rotule como "backups realizados", nunca como lista de restauração |
+
+### 12.5 `POST /erp/backup/url-upload`
+
+```json
+{
+  "hwid": "PC-DESKTOP-ABC123",
+  "tipo": "banco",
+  "tamanhoBytes": 65536,
+  "checksumSha256": "ee8f7504f2d54f37...",
+  "origem": "AUTOMATICO"
+}
+```
+
+| Campo | Tipo | Obrigatório | Observação |
+|---|---|---|---|
+| `hwid` | string | ✅ | Igual ao do token |
+| `tipo` | `banco` \| `imagens` | ✅ | |
+| `tamanhoBytes` | int | ✅ | Entre 1.024 e 524.288.000 (500 MB). **Tamanho exato do arquivo** |
+| `checksumSha256` | string hex | ✅ em `imagens` | SHA-256 do zip. Opcional em `banco`, obrigatório em `imagens` |
+| `origem` | `AUTOMATICO` \| `MANUAL` | não | Padrão `AUTOMATICO` |
+
+**Resposta — precisa enviar:**
+
+```json
+{
+  "acao": "ENVIAR",
+  "uploadId": "fa0ae4f2-dafc-40d9-9a66-6f0e45a2dde0",
+  "url": "https://<conta>.r2.cloudflarestorage.com/<bucket>/clientes/.../banco.zip?X-Amz-...",
+  "chave": "clientes/<clienteId>/<licencaId>/banco.zip",
+  "metodo": "PUT",
+  "headers": {
+    "Content-Type": "application/zip",
+    "Content-Length": "65536"
+  },
+  "expiraEm": "2026-07-26T16:58:38.859Z"
+}
+```
+
+**Resposta — não precisa enviar nada:**
+
+```json
+{
+  "acao": "PULAR",
+  "motivo": "Nenhuma imagem mudou desde o último backup.",
+  "chave": "clientes/.../imagens.zip",
+  "ultimoEm": "2026-07-25T03:12:00.000Z"
+}
+```
+
+`acao: "PULAR"` é **sucesso**, não erro. Acontece quando o `checksumSha256` de `imagens` é igual ao do último backup confirmado. Mostre "backup em dia" e **não chame `/confirmar`**. É o que evita subir 150 MB de fotos todo dia sem nada ter mudado.
+
+### 12.6 O upload
+
+```
+PUT <url que veio na resposta>
+Content-Type: application/zip
+Content-Length: <exatamente o tamanhoBytes que você declarou>
+
+<bytes do arquivo>
+```
+
+Três regras que quebram o upload se ignoradas:
+
+1. **O `Content-Length` faz parte da assinatura.** Um byte de diferença entre o que você declarou e o que envia resulta em `403 SignatureDoesNotMatch`. Calcule o tamanho **depois** de fechar o zip, nunca antes.
+2. **Envie os dois headers** exatamente como vieram em `headers`.
+3. **A URL vale 10 minutos.** Expirou, peça outra — e isso consome uma nova vaga da cota diária.
+
+Não mande `Authorization` nesse PUT: a autenticação está na própria URL assinada.
+
+### 12.7 `POST /erp/backup/confirmar`
+
+Chame **sempre** depois do PUT, tanto no sucesso quanto na falha.
+
+```json
+{
+  "uploadId": "fa0ae4f2-dafc-40d9-9a66-6f0e45a2dde0",
+  "hwid": "PC-DESKTOP-ABC123",
+  "ok": true,
+  "tamanhoBytes": 65536
+}
+```
+
+Em caso de falha, `"ok": false` e opcionalmente `"erro": "descrição curta"`.
+
+```json
+{ "confirmado": true, "uploadId": "...", "tamanhoBytes": 65536, "confirmadoEm": "..." }
+```
+
+A plataforma **não acredita** no `ok: true`: ela consulta o arquivo no bucket e compara o tamanho antes de registrar. Se você reportar sucesso de um upload que não chegou, a resposta é `409 BACKUP_ARQUIVO_AUSENTE` — e é isso que impede o painel de mostrar "backup em dia" para arquivo inexistente.
+
+### 12.8 `POST /erp/backup/url-download`
+
+```json
+{ "hwid": "PC-DESKTOP-ABC123", "tipo": "banco" }
+```
+
+```json
+{
+  "url": "https://...",
+  "chave": "clientes/.../banco.zip",
+  "tamanhoBytes": 65536,
+  "geradoEm": "2026-07-26T16:48:38.859Z",
+  "expiraEm": "2026-07-26T16:53:38.859Z"
+}
+```
+
+URL de download válida por **5 minutos**. Mesmo gate do upload: licença em teste ou vencida não baixa.
+
+### 12.9 Códigos de erro
+
+| Código | HTTP | O que o ERP deve fazer |
+|---|---|---|
+| `BACKUP_PLANO_INATIVO` | 403 | Desabilitar a tela e exibir `message`. **Não repetir** |
+| `BACKUP_LIMITE_DIARIO` | 429 | Avisar que a cota acabou. **Não repetir hoje** |
+| `BACKUP_TAMANHO_SUSPEITO` | 409 | Avisar o usuário que o arquivo encolheu muito e pedir confirmação manual (`origem: "MANUAL"`). **Nunca repetir automaticamente** |
+| `BACKUP_HWID_DIVERGENTE` | 403 | Bug do ERP: use o `hwid` do token |
+| `BACKUP_CHECKSUM_OBRIGATORIO` | 400 | Bug do ERP: calcule o SHA-256 antes de pedir URL de imagens |
+| `BACKUP_DADOS_INVALIDOS` | 400 | Tamanho fora da faixa ou campo faltando. Ver `detalhes` |
+| `BACKUP_ARQUIVO_AUSENTE` | 409 | O upload não chegou. Refazer o ciclo do início |
+| `BACKUP_TAMANHO_DIVERGENTE` | 409 | O que chegou tem tamanho diferente. Refazer o ciclo |
+| `BACKUP_INEXISTENTE` | 404 | Não há backup para restaurar |
+| `BACKUP_NAO_CONFIGURADO` | 503 | Problema na plataforma, não no ERP. Tentar mais tarde |
+| `BACKUP_LICENCA_NAO_ENCONTRADA` | 404 | Token de licença que não existe mais |
+
+### 12.10 Checklist de implementação
+
+- [ ] Empacotar o banco com `VACUUM INTO` (nunca copiar o arquivo com o banco aberto) e comprimir
+- [ ] Incluir um `manifest.json` dentro do zip: versão do ERP, versão do schema local, data/hora, e o SHA-256 e tamanho de cada arquivo
+- [ ] Calcular o `sha256` e o tamanho **do zip finalizado**
+- [ ] `GET /status` ao abrir a tela → se `planoPermiteBackup: false`, desabilitar e exibir `motivoBloqueio`
+- [ ] `POST /url-upload` → tratar `acao: "PULAR"` como sucesso
+- [ ] `PUT` com `Content-Length` exato
+- [ ] `POST /confirmar` sempre, inclusive com `ok: false`
+- [ ] Tratar cada erro pelo `codigo`, nunca pelo texto
+- [ ] Não repetir automaticamente em `403`, `429` ou `409`
+- [ ] Na tela: "backups realizados" (histórico) separado de "cópia disponível para restaurar" (uma só)
+
+---
+
+*Documento gerado a partir do código-fonte da plataforma (`apps/server/src/features/dispositivos` e `apps/server/src/features/erp`) em 16/06/2026. Seção de login/reinstalação adicionada em 06/07/2026. Seção de cobrança/renovação recorrente adicionada em 11/07/2026. Seção de backup em nuvem adicionada em 26/07/2026, validada ponta a ponta em produção.*
