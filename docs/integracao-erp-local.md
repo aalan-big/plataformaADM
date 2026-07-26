@@ -479,6 +479,31 @@ Três consequências que precisam aparecer na tela do ERP:
 2. **Subir um banco corrompido apaga o bom.** Por isso a plataforma recusa envio **automático** de arquivo com menos da metade do tamanho do anterior (ver `BACKUP_TAMANHO_SUSPEITO`). O envio manual passa, porque nele existe uma pessoa confirmando. O ERP não deve tratar essa recusa como falha de rede e tentar de novo em looping.
 3. **O ERP não escolhe o caminho do arquivo.** A plataforma decide, a partir do token. Não existe parâmetro de nome ou pasta.
 
+### 12.1.1 O que entra em cada pacote
+
+| Pacote | Conteúdo |
+|---|---|
+| `banco` | Exportação **gerada na hora** do banco local (`VACUUM INTO` + zip). Nunca a pasta de backups anteriores |
+| `imagens` | Fotos e anexos que ficam em disco e não estão no banco |
+
+E o que **não** deve subir, porque se regenera a partir do que já está no backup:
+
+- Backups anteriores que o ERP tenha deixado em disco (fazer backup de backup estoura o limite de tamanho em pouco tempo)
+- Exportações em Excel/CSV de tabelas do banco (produtos, clientes) — restaurando o banco, o ERP as gera de novo
+- Recibos, pedidos e orçamentos não fiscais em PDF — montados a partir dos dados do banco
+- DANFE em PDF — se regenera a partir do XML
+
+> **Decisão sobre documento fiscal (26/07/2026):** o XML autorizado da NF-e/NFC-e/NFS-e
+> **deve ser gravado dentro do banco de dados**, numa coluna da tabela de notas — não
+> numa pasta em disco. Assim ele viaja no `banco.zip` automaticamente.
+>
+> Isso não é preferência de organização. O XML autorizado carrega assinatura digital e
+> protocolo da SEFAZ: ele **não pode ser regenerado** a partir dos campos do banco, e a
+> guarda é obrigação legal por anos. Se o módulo fiscal for construído gravando XML em
+> pasta (padrão de várias bibliotecas fiscais), essa pasta passa a ser obrigatória no
+> pacote `imagens` — caso contrário os documentos fiscais ficam **fora do backup** sem
+> ninguém perceber, e isso só aparece numa fiscalização.
+
 ### 12.2 Autenticação
 
 Todas as rotas desta seção usam o **token da licença** (JWT RS256) obtido em `/licenca/conectar` ou `/erp/auth/login`:
