@@ -39,9 +39,19 @@ import { StorageService } from '../../common/storage/storage.service'
 
 /// Cobre o backup automático + um manual do usuário no mesmo dia. Mais que isso
 /// não é uso legítimo, é loop com bug — e loop com bug na nuvem é fatura.
+///
+/// Sobrescrevível por env porque testar o fluxo ponta a ponta estoura 2 uploads
+/// em minutos. Em produção deixe sem definir: o padrão é o valor que protege a
+/// conta. Valor inválido ou vazio cai no padrão em vez de virar 0, que
+/// bloquearia todo mundo silenciosamente.
+function limiteDeEnv(chave: string, padrao: number): number {
+  const n = Number(process.env[chave])
+  return Number.isInteger(n) && n > 0 ? n : padrao
+}
+
 const LIMITE_DIARIO: Record<TipoBackupDb, number> = {
-  BANCO:   2,
-  IMAGENS: 1,
+  BANCO:   limiteDeEnv('BACKUP_LIMITE_DIARIO_BANCO',   2),
+  IMAGENS: limiteDeEnv('BACKUP_LIMITE_DIARIO_IMAGENS', 1),
 }
 
 /// Se o backup de hoje vier com menos da metade do último confirmado, algo está

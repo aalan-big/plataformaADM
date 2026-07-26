@@ -10,6 +10,7 @@ import { TemaPlano } from './_temas/TemaPlano'
 import { TemaParceiros } from './_temas/TemaParceiros'
 import { TemaErpAuth } from './_temas/TemaErpAuth'
 import { TemaErpUsuario } from './_temas/TemaErpUsuario'
+import { TemaBackup } from './_temas/TemaBackup'
 
 interface UsuarioLogado {
   id:    string
@@ -52,6 +53,7 @@ const ROTAS = [
   { modulo: 'ERP — Auth',      cor: 'text-cyan-400',    rotas: ['POST /erp/auth/login', 'POST /erp/auth/primeiro-acesso'] },
   { modulo: 'ERP — Usuário',   cor: 'text-teal-400',    rotas: ['GET /erp/usuario/dados', 'POST /erp/usuario/alterar-senha', 'POST /erp/usuario/solicitar-novo-email', 'GET /erp/usuario/confirmar-email'] },
   { modulo: 'ERP — Cobrança',  cor: 'text-orange-400',  rotas: ['POST /erp/cobranca', 'GET /erp/plano/:licencaId'] },
+  { modulo: 'ERP — Backup',    cor: 'text-emerald-400', rotas: ['GET /erp/backup/status', 'POST /erp/backup/url-upload', 'POST /erp/backup/confirmar', 'POST /erp/backup/url-download'] },
   { modulo: 'Financeiro',      cor: 'text-yellow-400',  rotas: ['POST /api/financeiro/confirmar', 'GET /api/financeiro/historico/cliente/:id', 'GET /api/financeiro/historico/licenca/:id', 'GET /api/financeiro/receita', 'POST /api/financeiro/webhook/stripe', 'POST /api/financeiro/webhook/asaas'] },
   { modulo: 'Planos',          cor: 'text-purple-400',  rotas: ['GET /api/plano', 'POST /api/plano', 'GET /api/plano/:id', 'PUT /api/plano/:id', 'PATCH /api/plano/:id/desativar', 'PATCH /api/plano/:id/reativar', 'POST /api/plano/:id/sincronizar-stripe'] },
   { modulo: 'Parceiros',       cor: 'text-orange-400',  rotas: ['GET /api/parceiro', 'POST /api/parceiro', 'GET /api/parceiro/:id', 'PUT /api/parceiro/:id', 'PATCH /api/parceiro/:id/desativar', 'PATCH /api/parceiro/:id/reativar', 'PATCH /api/parceiro/vincular-cliente', 'GET /api/parceiro/comissoes', 'GET /api/parceiro/repasse', 'POST /api/parceiro/comissoes/pagar'] },
@@ -177,6 +179,8 @@ export default function DebugPage() {
           <Passo n={6} label="ERP Auth"    ativo={true} />
           <span className="text-slate-700 text-xs">→</span>
           <Passo n={7} label="ERP Usuário" ativo={!!erpToken} />
+          <span className="text-slate-700 text-xs">→</span>
+          <Passo n={8} label="Backup"      ativo={!!erpToken} />
         </div>
       </header>
 
@@ -230,6 +234,12 @@ export default function DebugPage() {
           {usuario
             ? <TemaErpUsuario token={erpToken} />
             : <Bloqueado modulo="ERP Usuário" />}
+        </Tema>
+
+        <Tema titulo={`08 — ERP Backup · Nuvem${usuario ? (erpToken ? '' : ' · faça login ERP primeiro') : ' · faça login primeiro'}`}>
+          {usuario
+            ? <TemaBackup token={erpToken} />
+            : <Bloqueado modulo="ERP Backup" />}
         </Tema>
 
       </div>
