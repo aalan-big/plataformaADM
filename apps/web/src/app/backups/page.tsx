@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import {
-  Search, RefreshCw, HardDriveDownload, Copy, CheckCheck,
-  ShieldCheck, Clock, CircleAlert, MinusCircle, X, Image as ImageIcon, Database,
+  Search, RefreshCw, Eye, X, Copy, CheckCheck,
+  HardDriveDownload, ShieldCheck, Clock, CircleAlert, MinusCircle,
+  Database, Image as ImageIcon,
 } from 'lucide-react'
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -36,11 +37,11 @@ type Item = {
 }
 
 type Resumo = {
-  elegiveis: number
-  emDia:     number
-  atrasados: number
-  nunca:     number
-  bytesTotal: number
+  elegiveis:        number
+  emDia:            number
+  atrasados:        number
+  nunca:            number
+  bytesTotal:       number
   horasAteAtrasado: number
 }
 
@@ -79,10 +80,10 @@ function haQuanto(horas: number | null) {
 }
 
 const SITUACAO_CFG: Record<Situacao, { label: string; cor: string; Icone: React.ElementType }> = {
-  EM_DIA:       { label: 'Em dia',       cor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20', Icone: ShieldCheck  },
-  ATRASADO:     { label: 'Atrasado',     cor: 'text-orange-400 bg-orange-500/10 border-orange-500/20',    Icone: Clock        },
-  NUNCA:        { label: 'Nunca fez',    cor: 'text-red-400 bg-red-500/10 border-red-500/20',             Icone: CircleAlert  },
-  NAO_ELEGIVEL: { label: 'Sem direito',  cor: 'text-slate-500 bg-slate-700/30 border-slate-600/30',       Icone: MinusCircle  },
+  EM_DIA:       { label: 'Em dia',      cor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20', Icone: ShieldCheck },
+  ATRASADO:     { label: 'Atrasado',    cor: 'text-orange-400 bg-orange-500/10 border-orange-500/20',    Icone: Clock       },
+  NUNCA:        { label: 'Nunca fez',   cor: 'text-red-400 bg-red-500/10 border-red-500/20',             Icone: CircleAlert },
+  NAO_ELEGIVEL: { label: 'Sem direito', cor: 'text-slate-400 bg-slate-700/30 border-slate-600/30',       Icone: MinusCircle },
 }
 
 function BadgeSituacao({ situacao }: { situacao: Situacao }) {
@@ -110,10 +111,10 @@ function BotaoCopiar({ texto, titulo }: { texto: string; titulo: string }) {
   )
 }
 
-// ─── Gaveta de detalhe ────────────────────────────────────────────────────────
+// ─── Modal de detalhe ─────────────────────────────────────────────────────────
 
-function GavetaEventos({ item, onFechar }: { item: Item; onFechar: () => void }) {
-  const [eventos, setEventos] = useState<Evento[]>([])
+function ModalDetalhe({ item, onClose }: { item: Item; onClose: () => void }) {
+  const [eventos, setEventos]       = useState<Evento[]>([])
   const [carregando, setCarregando] = useState(true)
 
   useEffect(() => {
@@ -127,92 +128,111 @@ function GavetaEventos({ item, onFechar }: { item: Item; onFechar: () => void })
   }, [item.licencaId])
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-black/60" onClick={onFechar} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="relative w-full max-w-lg bg-slate-900 border-l border-slate-800 overflow-y-auto">
-        <div className="sticky top-0 bg-slate-900 border-b border-slate-800 px-6 py-4 flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-white font-bold truncate">{item.nomeCliente}</p>
-            <p className="text-slate-500 text-xs truncate">{item.email}</p>
+      <div className="relative z-10 w-full max-w-2xl bg-[#0f1117] border border-slate-800 rounded-2xl shadow-2xl flex flex-col max-h-[92vh]">
+
+        {/* Cabeçalho */}
+        <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-slate-800">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-lg bg-blue-600/15 border border-blue-600/20 flex items-center justify-center shrink-0">
+              <HardDriveDownload size={15} className="text-blue-400" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-slate-200 font-semibold text-sm truncate">{item.nomeCliente}</p>
+              <p className="text-[11px] text-slate-500 truncate">{item.email}</p>
+            </div>
           </div>
-          <button onClick={onFechar} className="text-slate-500 hover:text-white shrink-0">
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 transition-colors shrink-0">
             <X size={18} />
           </button>
         </div>
 
-        <div className="p-6 space-y-5">
-          {/* Cópias atuais */}
+        <div className="overflow-y-auto px-6 py-5 space-y-6">
+
+          {/* Cópias na nuvem */}
           <div>
-            <p className="text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-2">
+            <p className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold mb-2">
               Cópias na nuvem — no máximo 1 de cada
             </p>
-            <div className="space-y-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {([['banco', item.banco, Database], ['imagens', item.imagens, ImageIcon]] as const).map(
                 ([nome, copia, Icone]) => (
-                  <div key={nome} className="flex items-center gap-3 p-3 rounded-lg bg-slate-800/50 border border-slate-700/50">
-                    <Icone size={15} className="text-slate-500 shrink-0" />
-                    <span className="text-xs font-mono text-slate-400 w-20 shrink-0">{nome}.zip</span>
-                    {copia
-                      ? <span className="text-xs text-emerald-400 font-mono">
-                          {tamanho(copia.tamanhoBytes)} · {quando(copia.geradoEm)}
-                        </span>
-                      : <span className="text-xs text-slate-600">nenhuma</span>}
+                  <div key={nome} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Icone size={13} className="text-slate-500" />
+                      <span className="text-[11px] font-mono text-slate-400">{nome}.zip</span>
+                    </div>
+                    {copia ? (
+                      <>
+                        <p className="text-slate-200 text-lg font-bold leading-none">{tamanho(copia.tamanhoBytes)}</p>
+                        <p className="text-[11px] text-slate-500 mt-1.5">{quando(copia.geradoEm)}</p>
+                      </>
+                    ) : (
+                      <p className="text-slate-600 text-sm">Nenhuma</p>
+                    )}
                   </div>
                 ),
               )}
             </div>
           </div>
 
-          {/* Prefixo */}
+          {/* Pasta no bucket */}
           <div>
-            <p className="text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-2">
+            <p className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold mb-2">
               Pasta no bucket
             </p>
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-slate-800/50 border border-slate-700/50">
+            <div className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 flex items-center gap-2">
               <code className="text-[11px] text-slate-300 break-all flex-1">{item.prefixo}</code>
               <BotaoCopiar texto={item.prefixo} titulo="Copiar para buscar no R2" />
             </div>
-            <p className="text-[10px] text-slate-600 mt-1.5">
+            <p className="text-[11px] text-slate-500 mt-1.5">
               Cole na busca do painel da Cloudflare para achar os arquivos deste cliente.
             </p>
           </div>
 
           {/* Histórico */}
           <div>
-            <p className="text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-1">
+            <p className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold mb-1">
               Histórico de envios
             </p>
-            <p className="text-[10px] text-slate-600 mb-2">
-              Registro do que aconteceu — não são arquivos que dá para restaurar. Só existe a cópia atual.
+            <p className="text-[11px] text-slate-500 mb-3">
+              Registro do que aconteceu — não são arquivos restauráveis. Só existe a cópia atual.
             </p>
 
-            {carregando
-              ? <p className="text-xs text-slate-600 py-4 text-center">Carregando…</p>
-              : eventos.length === 0
-                ? <p className="text-xs text-slate-600 py-4 text-center">Nenhum envio registrado.</p>
-                : (
-                  <div className="space-y-1">
-                    {eventos.map(e => (
-                      <div key={e.id} className="p-2.5 rounded-lg bg-slate-800/40 border border-slate-800">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[11px] font-mono text-slate-400">
-                            {quando(e.emitidoEm)} · {e.tipo.toLowerCase()} · {e.origem.toLowerCase()}
-                          </span>
-                          <span className={`text-[10px] font-bold ${
-                            e.status === 'CONFIRMADO' ? 'text-emerald-400'
-                            : e.status === 'FALHOU'   ? 'text-red-400'
-                            : 'text-yellow-400'
-                          }`}>
-                            {e.status} · {tamanho(e.tamanhoBytes)}
-                          </span>
-                        </div>
-                        {e.erro && <p className="text-[10px] text-red-400/80 mt-1">{e.erro}</p>}
-                        {e.hwid && <p className="text-[10px] text-slate-600 mt-0.5 font-mono truncate">{e.hwid}</p>}
-                      </div>
-                    ))}
+            {carregando ? (
+              <div className="flex flex-col items-center gap-3 py-10">
+                <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                <span className="text-slate-500 text-xs">Carregando histórico...</span>
+              </div>
+            ) : eventos.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-10">
+                <HardDriveDownload size={26} className="text-slate-700" />
+                <p className="text-slate-500 text-sm">Nenhum envio registrado.</p>
+              </div>
+            ) : (
+              <div className="bg-slate-900 border border-slate-800 rounded-xl divide-y divide-slate-800/70 overflow-hidden">
+                {eventos.map(e => (
+                  <div key={e.id} className="px-4 py-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[11px] text-slate-400 font-mono">
+                        {quando(e.emitidoEm)} · {e.tipo.toLowerCase()} · {e.origem.toLowerCase()}
+                      </span>
+                      <span className={`text-[10px] font-bold shrink-0 ${
+                        e.status === 'CONFIRMADO' ? 'text-emerald-400'
+                        : e.status === 'FALHOU'   ? 'text-red-400'
+                        : 'text-yellow-400'
+                      }`}>
+                        {e.status} · {tamanho(e.tamanhoBytes)}
+                      </span>
+                    </div>
+                    {e.erro  && <p className="text-[10px] text-red-400/80 mt-1">{e.erro}</p>}
+                    {e.hwid  && <p className="text-[10px] text-slate-600 mt-0.5 font-mono truncate">{e.hwid}</p>}
                   </div>
-                )}
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -227,7 +247,7 @@ export default function BackupsPage() {
   const [resumo, setResumo]         = useState<Resumo | null>(null)
   const [carregando, setCarregando] = useState(true)
   const [busca, setBusca]           = useState('')
-  const [filtro, setFiltro]         = useState<'' | Situacao>('')
+  const [filtro, setFiltro]         = useState<string>('')
   const [detalhe, setDetalhe]       = useState<Item | null>(null)
 
   const carregar = useCallback(async () => {
@@ -247,9 +267,8 @@ export default function BackupsPage() {
   useEffect(() => { carregar() }, [carregar])
 
   // A busca aceita nome, e-mail e também os UUIDs — é assim que se descobre de
-  // quem é uma pasta vista no bucket: copia o id de lá e cola aqui. Aceitar o
-  // caminho inteiro colado (`clientes/<uuid>/<uuid>/`) evita ter que separar os
-  // pedaços na mão.
+  // quem é uma pasta vista no bucket: copia o id de lá e cola aqui. Aceita o
+  // caminho inteiro colado, para não ter que separar os pedaços na mão.
   const q = busca.trim().toLowerCase()
   const visiveis = itens.filter(i => {
     if (filtro && i.situacao !== filtro) return false
@@ -259,144 +278,221 @@ export default function BackupsPage() {
         || i.email.toLowerCase().includes(q)
         || i.clienteId.toLowerCase().includes(q)
         || i.licencaId.toLowerCase().includes(q)
-        || i.prefixo.toLowerCase().includes(q)
-        // O contrário também: o usuário colou o caminho todo e a gente confere
-        // se este item está dentro dele.
         || q.includes(i.clienteId.toLowerCase())
         || q.includes(i.licencaId.toLowerCase())
   })
 
   const STATS = [
-    { label: 'Com direito', valor: resumo?.elegiveis ?? 0, cor: 'text-white',       f: ''            as const },
-    { label: 'Em dia',      valor: resumo?.emDia     ?? 0, cor: 'text-emerald-400', f: 'EM_DIA'      as const },
-    { label: 'Atrasados',   valor: resumo?.atrasados ?? 0, cor: 'text-orange-400',  f: 'ATRASADO'    as const },
-    { label: 'Nunca fez',   valor: resumo?.nunca     ?? 0, cor: 'text-red-400',     f: 'NUNCA'       as const },
+    { label: 'Com direito', valor: resumo?.elegiveis ?? 0, cor: 'text-white'       },
+    { label: 'Em dia',      valor: resumo?.emDia     ?? 0, cor: 'text-emerald-400' },
+    { label: 'Atrasados',   valor: resumo?.atrasados ?? 0, cor: 'text-orange-400'  },
+    { label: 'Nunca fez',   valor: resumo?.nunca     ?? 0, cor: 'text-red-400'     },
   ]
 
   return (
     <div className="space-y-5">
 
-      {/* HERO */}
+      {/* ── HERO ─────────────────────────────────────────────────────────────── */}
       <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-slate-900 via-slate-900 to-blue-950 border border-slate-800 p-8">
         <div
           className="absolute inset-0 opacity-[0.03]"
           style={{ backgroundImage: 'radial-gradient(circle, #fff 1px, transparent 1px)', backgroundSize: '22px 22px' }}
         />
-        <div className="relative flex items-start justify-between gap-6 flex-wrap">
+        <div className="absolute right-0 top-0 bottom-0 w-1/2 bg-linear-to-l from-blue-950/60 to-transparent pointer-events-none" />
+
+        <div className="relative flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
           <div>
-            <div className="flex items-center gap-3 mb-1">
-              <HardDriveDownload size={22} className="text-blue-400" />
-              <h1 className="text-2xl font-black text-white tracking-tight">Backups</h1>
-            </div>
-            <p className="text-slate-400 text-sm max-w-xl">
+            <p className="text-[11px] font-bold text-blue-400 uppercase tracking-[0.25em] mb-1.5">
+              Cópias de Segurança
+            </p>
+            <h1 className="text-3xl font-extrabold text-white uppercase tracking-wide">
+              Backups
+            </h1>
+            <p className="text-slate-400 text-[13px] mt-2 max-w-lg">
               Quem tem direito a backup e está enviando — e, principalmente, quem não está.
-              {resumo && (
-                <> Considera atrasado depois de <strong className="text-slate-300">{resumo.horasAteAtrasado}h</strong> sem envio.</>
-              )}
+              {resumo && <> Atrasado após <strong className="text-slate-300">{resumo.horasAteAtrasado}h</strong> sem envio.</>}
             </p>
           </div>
 
-          <div className="text-right">
-            <p className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Guardado na nuvem</p>
-            <p className="text-2xl font-black text-white">{tamanho(resumo?.bytesTotal)}</p>
-          </div>
-        </div>
-      </div>
-
-      {/* STATS — clicáveis como filtro */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {STATS.map(s => (
-          <button
-            key={s.label}
-            onClick={() => setFiltro(f => (f === s.f ? '' : s.f))}
-            className={`text-left rounded-xl border p-4 transition-all ${
-              filtro === s.f && s.f
-                ? 'bg-slate-800 border-blue-500/40'
-                : 'bg-slate-900 border-slate-800 hover:border-slate-700'
-            }`}
-          >
-            <p className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">{s.label}</p>
-            <p className={`text-2xl font-black ${s.cor}`}>{s.valor}</p>
-          </button>
-        ))}
-      </div>
-
-      {/* BUSCA */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-56">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-          <input
-            value={busca}
-            onChange={e => setBusca(e.target.value)}
-            placeholder="Nome, e-mail, ou cole o UUID/caminho vindo do bucket…"
-            className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-9 pr-3 py-2.5 text-sm text-slate-200 outline-none focus:border-blue-500/50"
-          />
-        </div>
-        {filtro && (
-          <button
-            onClick={() => setFiltro('')}
-            className="text-xs text-slate-400 hover:text-white border border-slate-700 rounded-xl px-3 py-2.5"
-          >
-            Limpar filtro
-          </button>
-        )}
-        <button
-          onClick={carregar}
-          disabled={carregando}
-          className="flex items-center gap-2 text-sm text-slate-300 bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl px-4 py-2.5 disabled:opacity-50"
-        >
-          <RefreshCw size={14} className={carregando ? 'animate-spin' : ''} />
-          Atualizar
-        </button>
-      </div>
-
-      {/* LISTA */}
-      <div className="rounded-2xl border border-slate-800 overflow-hidden">
-        {carregando ? (
-          <p className="text-center text-slate-500 text-sm py-16">Carregando…</p>
-        ) : visiveis.length === 0 ? (
-          <p className="text-center text-slate-500 text-sm py-16">Nenhuma licença encontrada.</p>
-        ) : (
-          <div className="divide-y divide-slate-800">
-            {visiveis.map(i => (
-              <button
-                key={i.licencaId}
-                onClick={() => setDetalhe(i)}
-                className="w-full text-left px-5 py-4 bg-slate-900 hover:bg-slate-800/60 transition-colors flex items-center gap-4 flex-wrap"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-semibold text-white truncate">{i.nomeCliente}</span>
-                    <BadgeSituacao situacao={i.situacao} />
-                    {i.falhas7Dias > 0 && (
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border text-red-400 bg-red-500/10 border-red-500/20">
-                        {i.falhas7Dias} falha(s) em 7 dias
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-slate-500 truncate mt-0.5">
-                    {i.email}
-                    {i.plano && <> · {i.plano}</>}
-                    {i.nomeDispositivo && <> · {i.nomeDispositivo}</>}
-                  </p>
+          <div className="flex items-stretch gap-3 shrink-0 flex-wrap">
+            {STATS.map(s => (
+              <div key={s.label} className="bg-slate-800/70 backdrop-blur border border-slate-700/50 rounded-xl px-5 py-3 text-center min-w-18">
+                <div className="flex items-center justify-center gap-1 mb-1">
+                  <HardDriveDownload size={10} className="text-slate-400" />
+                  <p className="text-[10px] text-slate-400 uppercase tracking-wide">{s.label}</p>
                 </div>
-
-                <div className="text-right shrink-0">
-                  <p className="text-xs text-slate-300 font-mono">
-                    {i.banco ? tamanho(i.banco.tamanhoBytes) : '—'}
-                    {i.imagens && <span className="text-slate-500"> + {tamanho(i.imagens.tamanhoBytes)}</span>}
-                  </p>
-                  <p className="text-[11px] text-slate-500">
-                    {i.situacao === 'NUNCA' ? 'nunca enviou' : haQuanto(i.horasDesdeUltimo)}
-                  </p>
-                </div>
-              </button>
+                <p className={`text-2xl font-extrabold ${s.cor}`}>
+                  {carregando ? '—' : s.valor}
+                </p>
+              </div>
             ))}
           </div>
-        )}
+        </div>
       </div>
 
-      {detalhe && <GavetaEventos item={detalhe} onFechar={() => setDetalhe(null)} />}
+      {/* ── FILTROS ──────────────────────────────────────────────────────────── */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-wrap gap-3 items-center">
+        <div className="flex-1 min-w-56 relative">
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <input
+            type="text"
+            placeholder="Nome, e-mail, ou cole o UUID vindo do bucket..."
+            value={busca}
+            onChange={e => setBusca(e.target.value)}
+            className="w-full bg-slate-800 border border-slate-700 text-slate-300 placeholder-slate-500 text-sm rounded-lg pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500/40 transition-all"
+          />
+        </div>
+
+        <select
+          value={filtro}
+          onChange={e => setFiltro(e.target.value)}
+          className="bg-slate-800 border border-slate-700 text-slate-300 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+        >
+          <option value="">Todas as situações</option>
+          <option value="NUNCA">Nunca fez</option>
+          <option value="ATRASADO">Atrasados</option>
+          <option value="EM_DIA">Em dia</option>
+          <option value="NAO_ELEGIVEL">Sem direito</option>
+        </select>
+
+        <div className="ml-auto flex items-center gap-3">
+          <div className="text-right hidden sm:block">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wide">Guardado na nuvem</p>
+            <p className="text-sm font-bold text-slate-200 leading-none">{tamanho(resumo?.bytesTotal)}</p>
+          </div>
+          <button
+            onClick={carregar}
+            disabled={carregando}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors shadow-lg shadow-blue-900/30"
+          >
+            <RefreshCw size={14} className={carregando ? 'animate-spin' : ''} />
+            Atualizar
+          </button>
+        </div>
+      </div>
+
+      {/* ── TABELA ───────────────────────────────────────────────────────────── */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-800 text-[11px] text-slate-400 uppercase tracking-wider">
+                <th className="text-left px-5 py-3 font-semibold">Cliente / Dispositivo</th>
+                <th className="text-left px-5 py-3 font-semibold">Plano</th>
+                <th className="text-left px-5 py-3 font-semibold">Situação</th>
+                <th className="text-left px-5 py-3 font-semibold">Último envio</th>
+                <th className="text-left px-5 py-3 font-semibold">Tamanho</th>
+                <th className="text-left px-5 py-3 font-semibold">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/70">
+
+              {carregando && (
+                <tr>
+                  <td colSpan={6} className="text-center py-16">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-slate-500 text-xs">Carregando backups...</span>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {!carregando && visiveis.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="text-center py-16">
+                    <div className="flex flex-col items-center gap-2">
+                      <HardDriveDownload size={28} className="text-slate-700" />
+                      <p className="text-slate-500 text-sm">
+                        {busca || filtro
+                          ? 'Nenhuma licença encontrada com esses filtros.'
+                          : 'Nenhuma licença cadastrada ainda.'}
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {!carregando && visiveis.map(i => (
+                <tr
+                  key={i.licencaId}
+                  onClick={() => setDetalhe(i)}
+                  className="hover:bg-slate-800/40 transition-colors group cursor-pointer"
+                >
+                  {/* Cliente / Dispositivo */}
+                  <td className="px-5 py-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-blue-600/15 border border-blue-600/20 flex items-center justify-center shrink-0 mt-0.5">
+                        <HardDriveDownload size={13} className="text-blue-400" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-medium text-slate-200 leading-tight text-[13px] truncate">{i.nomeCliente}</p>
+                        <p className="text-[11px] text-slate-500 mt-0.5 truncate">{i.email}</p>
+                        {i.nomeDispositivo && (
+                          <p className="text-[11px] text-slate-600 mt-0.5 truncate">{i.nomeDispositivo}</p>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+
+                  {/* Plano */}
+                  <td className="px-5 py-4">
+                    <p className="text-slate-300 text-[13px]">{i.plano ?? '—'}</p>
+                    {i.isTrial && <p className="text-[11px] text-yellow-400 font-bold">TRIAL</p>}
+                  </td>
+
+                  {/* Situação */}
+                  <td className="px-5 py-4">
+                    <div className="flex flex-col gap-1 items-start">
+                      <BadgeSituacao situacao={i.situacao} />
+                      {i.falhas7Dias > 0 && (
+                        <span className="text-[10px] font-bold text-red-400">
+                          {i.falhas7Dias} falha(s) em 7d
+                        </span>
+                      )}
+                    </div>
+                  </td>
+
+                  {/* Último envio */}
+                  <td className="px-5 py-4">
+                    <p className={`text-[13px] font-medium ${
+                      i.situacao === 'NUNCA'    ? 'text-red-400'
+                      : i.situacao === 'ATRASADO' ? 'text-orange-400'
+                      : 'text-slate-300'
+                    }`}>
+                      {i.situacao === 'NUNCA' ? 'Nunca enviou' : haQuanto(i.horasDesdeUltimo)}
+                    </p>
+                    {i.banco && <p className="text-[11px] text-slate-500">{quando(i.banco.geradoEm)}</p>}
+                  </td>
+
+                  {/* Tamanho */}
+                  <td className="px-5 py-4">
+                    <p className="text-slate-300 text-[13px]">
+                      {i.banco ? tamanho(i.banco.tamanhoBytes) : '—'}
+                    </p>
+                    {i.imagens && (
+                      <p className="text-[11px] text-slate-500">+ {tamanho(i.imagens.tamanhoBytes)} img</p>
+                    )}
+                  </td>
+
+                  {/* Ações */}
+                  <td className="px-5 py-4">
+                    <button
+                      onClick={e => { e.stopPropagation(); setDetalhe(i) }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-700 text-slate-300 hover:border-blue-500/50 hover:text-blue-400 transition-all"
+                    >
+                      <Eye size={11} />
+                      Detalhes
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {detalhe && <ModalDetalhe item={detalhe} onClose={() => setDetalhe(null)} />}
     </div>
   )
 }
