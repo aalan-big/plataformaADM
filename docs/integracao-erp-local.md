@@ -552,11 +552,12 @@ Authorization: Bearer <token>
 {
   "planoPermiteBackup": true,
   "motivoBloqueio": null,
-  "limiteDiario":  { "banco": 2, "imagens": 1 },
+  "codigoBloqueio": null,
+  "limiteDiario":  { "banco": 2, "imagens": 2 },
   "enviadosHoje":  { "banco": 1, "imagens": 0 },
   "tamanhoMaximoBytes": 524288000,
   "copiaAtual": {
-    "banco":   { "tamanhoBytes": 65536, "geradoEm": "2026-07-26T16:48:38.859Z", "hwid": "...", "chave": "..." },
+    "banco":   { "tamanhoBytes": 65536, "geradoEm": "2026-07-26T16:48:38.859Z", "hwid": "...", "chave": "...", "checksumSha256": "ee8f7504f2d54f37..." },
     "imagens": null
   },
   "historicoEventos": [
@@ -569,9 +570,11 @@ Authorization: Bearer <token>
 | Campo | Para que serve |
 |---|---|
 | `planoPermiteBackup` | Habilita ou desabilita a tela. **Não é a trava** — a trava é no servidor |
-| `motivoBloqueio` | Texto pronto para exibir quando bloqueado |
+| `motivoBloqueio` | Texto pronto para **exibir**. Pode mudar de redação — não ramifique lógica nele |
+| `codigoBloqueio` | O **contrato** para ramificar: `TRIAL`, `LICENCA_VENCIDA`, `LICENCA_SUSPENSA`, `LICENCA_REVOGADA`, `LICENCA_BLOQUEADA`, `LICENCA_AGUARDANDO`. `null` quando liberado |
 | `enviadosHoje` / `limiteDiario` | Mostrar "1 de 2 backups usados hoje" |
 | `copiaAtual` | O que existe **de verdade** na nuvem: no máximo um de cada |
+| `copiaAtual.*.checksumSha256` | O checksum do que já está na nuvem. Compare com o seu **antes de zipar** e pule o trabalho todo quando nada mudou |
 | `historicoEventos` | Registro do que aconteceu. **Não são arquivos baixáveis** — rotule como "backups realizados", nunca como lista de restauração |
 
 ### 12.5 `POST /erp/backup/url-upload`
@@ -640,7 +643,7 @@ Três regras que quebram o upload se ignoradas:
 
 1. **O `Content-Length` faz parte da assinatura.** Um byte de diferença entre o que você declarou e o que envia resulta em `403 SignatureDoesNotMatch`. Calcule o tamanho **depois** de fechar o zip, nunca antes.
 2. **Envie os dois headers** exatamente como vieram em `headers`.
-3. **A URL vale 10 minutos.** Expirou, peça outra — e isso consome uma nova vaga da cota diária.
+3. **A URL vale 30 minutos.** O relógio começa na resposta do `url-upload`, não no início do `PUT` — peça a URL imediatamente antes de enviar. Expirou, peça outra: aí sim consome uma nova vaga da cota diária. Dentro da validade, repetir o `PUT` na **mesma** URL não custa vaga nenhuma.
 
 Não mande `Authorization` nesse PUT: a autenticação está na própria URL assinada.
 
@@ -689,7 +692,7 @@ URL de download válida por **5 minutos**. Mesmo gate do upload: licença em tes
 |---|---|---|
 | `BACKUP_PLANO_INATIVO` | 403 | Desabilitar a tela e exibir `message`. **Não repetir** |
 | `BACKUP_LIMITE_DIARIO` | 429 | Avisar que a cota acabou. **Não repetir hoje** |
-| — | — | *Upload que falhou **não** consome a cota, desde que o ERP reporte pelo `/confirmar` com `ok: false`. Se o ERP travar sem reportar, a vaga só é liberada quando a URL expira (até 10 min depois). É o principal motivo para sempre chamar `/confirmar`* |
+| — | — | *Upload que falhou **não** consome a cota, desde que o ERP reporte pelo `/confirmar` com `ok: false`. Se o ERP travar sem reportar, a vaga só volta quando o cron marca a linha como falha — **até ~70 min** (60 de carência + o intervalo de 10 min do cron), não quando a URL expira. É o principal motivo para sempre chamar `/confirmar`* |
 | `BACKUP_TAMANHO_SUSPEITO` | 409 | Só acontece com `origem: "AUTOMATICO"`. Avisar o usuário que o arquivo encolheu muito e oferecer o botão de backup manual, que reenvia com `origem: "MANUAL"` e passa. **Nunca reenviar sozinho como MANUAL** — isso anularia a proteção |
 | `BACKUP_HWID_DIVERGENTE` | 403 | Bug do ERP: use o `hwid` do token |
 | `BACKUP_CHECKSUM_OBRIGATORIO` | 400 | Bug do ERP: calcule o SHA-256 antes de pedir URL de imagens |

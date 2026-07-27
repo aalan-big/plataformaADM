@@ -165,11 +165,36 @@ zipar(['tmp/banco.db', 'manifest.json'], 'tmp/banco.zip')
 zipar_pasta('dados/imagens/', 'tmp/imagens.zip')
 
 # Medir DEPOIS de fechar o zip — este número vai na assinatura
-tamanho  = os.path.getsize('tmp/banco.zip')
-checksum = sha256_do_arquivo('tmp/banco.zip')
+tamanho = os.path.getsize('tmp/banco.zip')
 ```
 
 O `manifest.json` dentro do zip deve conter: versão do ERP, versão do schema do banco, data/hora, e o tamanho e sha256 de cada arquivo. É o que permite saber, na hora de restaurar, se aquele backup é compatível com a versão instalada.
+
+#### O `checksumSha256` — calcule sobre o conteúdo, NUNCA sobre o zip
+
+O servidor não recalcula nem confere esse valor. Ele guarda a string e, no envio seguinte, compara por igualdade literal com a do último backup confirmado. O contrato do campo é só este: **muda quando o conteúdo muda, não muda quando o conteúdo não muda.**
+
+Por isso **não** use o sha256 do arquivo `.zip`. Zip não é determinístico — timestamps, ordem das entradas e versão da biblioteca de compressão fazem o hash mudar mesmo com as fotos idênticas. O resultado é uma falha silenciosa e cara: o checksum muda todo dia, a deduplicação nunca dispara, e a loja sobe o pacote inteiro de imagens diariamente sem que ninguém perceba.
+
+```python
+import hashlib, os
+
+def checksum_das_imagens(pasta):
+    h = hashlib.sha256()
+    for caminho in sorted(todos_os_arquivos(pasta)):      # ordem estável é essencial
+        rel = os.path.relpath(caminho, pasta).replace('\\', '/')
+        st  = os.stat(caminho)
+        h.update(f"{rel}|{st.st_size}|{int(st.st_mtime)}\n".encode('utf-8'))
+    return h.hexdigest()
+```
+
+Estável por construção, e barato — não relê os bytes das fotos. Se quiser rigor maior (imune a mexida no relógio do sistema), troque `st_mtime` pelo sha256 de cada arquivo, ao custo de ler tudo.
+
+Em `banco` o campo é opcional e o dedupe não se aplica na prática — o banco muda todo dia. Envie se quiser, ou omita.
+
+> **Rede de proteção:** se o checksum de `imagens` ficar congelado por 7 dias, o servidor ignora a deduplicação e força o envio completo. Ou seja, o pior caso de um checksum errado-mas-estável é backup semanal, não imagens paradas para sempre. É rede, não plano — não construa contando com ela.
+>
+> **Aproveite o `/status`:** `copiaAtual.imagens.checksumSha256` traz o que já está na nuvem. Compare com o seu antes de zipar e economize o trabalho todo quando nada mudou.
 
 ### O ciclo
 
@@ -233,7 +258,9 @@ requests.post(
 
 ### Agendamento
 
-Um backup por dia de cada tipo, em horário de baixo movimento. A cota padrão é **2 de banco e 1 de imagens por dia** — o suficiente para o automático mais um manual do usuário. Se o envio falhar, chame `/confirmar` com `ok: false` e **tente de novo só no próximo ciclo**: a vaga é devolvida, mas insistir em looping bate no limite e trava o dia.
+Um backup por dia de cada tipo, em horário de baixo movimento. A cota padrão é **2 por dia de cada tipo** — o automático mais um manual do usuário. Se o envio falhar, chame `/confirmar` com `ok: false` e **tente de novo só no próximo ciclo**: a vaga é devolvida, mas insistir em looping bate no limite e trava o dia.
+
+A URL assinada de upload vale **30 minutos**. Peça-a imediatamente antes do `PUT` — zipe, meça e calcule o checksum **antes** de chamar `url-upload`, porque o relógio começa a correr na resposta dela, não no início do envio.
 
 ---
 
