@@ -45,14 +45,24 @@ export class BackupService {
       porLicenca.set(u.licencaId, atual)
     }
 
-    // OS é agregado por licença: quantos meses existem, quanto ocupam e qual o
-    // mais recente. O detalhe pedaço a pedaço fica na gaveta de eventos — nesta
-    // tela o que importa é "o acervo está protegido e até quando".
-    const osPorLicenca = new Map<string, { meses: number; bytes: number; ultimoPeriodo: string | null }>()
+    // OS agregado por licença — mas com a LISTA de meses junto, não só a contagem.
+    //
+    // O agregado sozinho responde "o acervo está protegido?"; a lista é o que
+    // permite baixar. Como cada mês é um objeto próprio, não existe link único do
+    // acervo: sem os períodos aqui, a tela não teria o que colocar no botão e o
+    // suporte ficaria sem forma de recuperar OS de um cliente.
+    type AcervoOs = { meses: number; bytes: number; ultimoPeriodo: string | null; periodos: PedacoOs[] }
+    type PedacoOs = { periodo: string | null; bytes: number; geradoEm: Date }
+
+    const osPorLicenca = new Map<string, AcervoOs>()
     for (const p of pedacosOs) {
-      const atual = osPorLicenca.get(p.licencaId) ?? { meses: 0, bytes: 0, ultimoPeriodo: null }
+      const atual = osPorLicenca.get(p.licencaId)
+        ?? { meses: 0, bytes: 0, ultimoPeriodo: null, periodos: [] as PedacoOs[] }
+      const bytes = p.tamanhoRealBytes ?? p.tamanhoBytes
+
       atual.meses += 1
-      atual.bytes += p.tamanhoRealBytes ?? p.tamanhoBytes
+      atual.bytes += bytes
+      atual.periodos.push({ periodo: p.periodo, bytes, geradoEm: p.confirmadoEm ?? p.emitidoEm })
       // A consulta vem ordenada por período desc, então o primeiro é o mais novo.
       if (atual.ultimoPeriodo === null) atual.ultimoPeriodo = p.periodo
       osPorLicenca.set(p.licencaId, atual)
@@ -99,7 +109,7 @@ export class BackupService {
         prefixo:         `clientes/${l.clienteId}/${l.id}/`,
         banco:   banco   ? this.resumo(banco)   : null,
         imagens: imagens ? this.resumo(imagens) : null,
-        os:      osPorLicenca.get(l.id) ?? { meses: 0, bytes: 0, ultimoPeriodo: null },
+        os:      osPorLicenca.get(l.id) ?? { meses: 0, bytes: 0, ultimoPeriodo: null, periodos: [] },
       }
     })
 

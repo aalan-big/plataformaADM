@@ -19,12 +19,19 @@ type Copia = {
 }
 
 /// OS não é uma cópia, é um acervo: um arquivo por mês, e nenhum deles sozinho
-/// representa o conjunto. Por isso vem agregado — quantos meses estão protegidos,
-/// quanto ocupam e até quando vai a cobertura.
+/// representa o conjunto. Vem agregado — quantos meses estão protegidos e quanto
+/// ocupam — mas com a lista junto, porque cada mês é um download separado.
+type PedacoOs = {
+  periodo:  string | null
+  bytes:    number
+  geradoEm: string
+}
+
 type AcervoOs = {
   meses:         number
   bytes:         number
   ultimoPeriodo: string | null
+  periodos:      PedacoOs[]
 }
 
 type Item = {
@@ -129,7 +136,13 @@ function BotaoCopiar({ texto, titulo }: { texto: string; titulo: string }) {
  * para o banco de dados de uma empresa — cadastro, financeiro e a carteira de
  * clientes dela. Não é o tipo de coisa que deve sair de um clique errado.
  */
-function BotaoBaixar({ licencaId, tipo, existe }: { licencaId: string; tipo: 'banco' | 'imagens'; existe: boolean }) {
+function BotaoBaixar({ licencaId, tipo, periodo, existe, compacto }: {
+  licencaId: string
+  tipo:      'banco' | 'imagens' | 'os'
+  periodo?:  string | null
+  existe:    boolean
+  compacto?: boolean
+}) {
   const [confirmando, setConfirmando] = useState(false)
   const [baixando, setBaixando]       = useState(false)
   const [erro, setErro]               = useState('')
@@ -146,7 +159,9 @@ function BotaoBaixar({ licencaId, tipo, existe }: { licencaId: string; tipo: 'ba
       const res  = await fetch(`/api/backups/${licencaId}/url-download`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ tipo }),
+        // Em `os` o período é obrigatório: cada mês é um objeto próprio, e sem
+        // ele a API não saberia qual entregar.
+        body:    JSON.stringify(tipo === 'os' ? { tipo, periodo } : { tipo }),
       })
       const json = await res.json()
 
@@ -166,18 +181,20 @@ function BotaoBaixar({ licencaId, tipo, existe }: { licencaId: string; tipo: 'ba
   if (!existe) return null
 
   return (
-    <div className="mt-3">
+    <div className={compacto ? '' : 'mt-3'}>
       <button
         onClick={baixar}
         disabled={baixando}
-        className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all disabled:opacity-40 ${
+        className={`flex items-center justify-center gap-1.5 rounded-lg font-semibold border transition-all disabled:opacity-40 ${
+          compacto ? 'px-2.5 py-1 text-[11px]' : 'w-full px-3 py-1.5 text-xs'
+        } ${
           confirmando
             ? 'bg-amber-600/25 border-amber-500/50 text-amber-300 animate-pulse'
             : 'border-slate-700 text-slate-300 hover:border-blue-500/50 hover:text-blue-400'
         }`}
       >
         <Download size={11} />
-        {baixando ? 'Gerando link...' : confirmando ? 'Confirmar download?' : 'Baixar'}
+        {baixando ? 'Gerando...' : confirmando ? 'Confirmar?' : 'Baixar'}
       </button>
       {erro && <p className="text-[10px] text-red-400 mt-1">{erro}</p>}
     </div>
@@ -257,19 +274,44 @@ function ModalDetalhe({ item, onClose }: { item: Item; onClose: () => void }) {
             </p>
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
               {item.os.meses > 0 ? (
-                <div className="flex items-end justify-between gap-4">
-                  <div>
-                    <p className="text-slate-200 text-lg font-bold leading-none">
-                      {item.os.meses} {item.os.meses === 1 ? 'mês' : 'meses'}
-                    </p>
-                    <p className="text-[11px] text-slate-500 mt-1.5">
-                      {tamanho(item.os.bytes)} no total · mais recente: {item.os.ultimoPeriodo}
+                <>
+                  <div className="flex items-end justify-between gap-4 mb-3">
+                    <div>
+                      <p className="text-slate-200 text-lg font-bold leading-none">
+                        {item.os.meses} {item.os.meses === 1 ? 'mês' : 'meses'}
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-1.5">
+                        {tamanho(item.os.bytes)} no total · mais recente: {item.os.ultimoPeriodo}
+                      </p>
+                    </div>
+                    <p className="text-[11px] text-slate-600 text-right max-w-[50%]">
+                      Um arquivo por mês. Não existe link do acervo inteiro — baixe os que precisar.
                     </p>
                   </div>
-                  <p className="text-[11px] text-slate-600 text-right max-w-[55%]">
-                    Baixe mês a mês pelo histórico abaixo — o acervo inteiro não cabe num link só.
-                  </p>
-                </div>
+
+                  <div className="border-t border-slate-800 pt-2 space-y-1 max-h-56 overflow-y-auto">
+                    {item.os.periodos.map(p => (
+                      <div key={p.periodo ?? '—'}
+                        className="flex items-center justify-between gap-3 py-1">
+                        <div className="min-w-0">
+                          <p className="text-[12px] font-mono text-slate-300 truncate">
+                            os-{p.periodo}.zip
+                          </p>
+                          <p className="text-[10px] text-slate-600">
+                            {tamanho(p.bytes)} · {quando(p.geradoEm)}
+                          </p>
+                        </div>
+                        <BotaoBaixar
+                          licencaId={item.licencaId}
+                          tipo="os"
+                          periodo={p.periodo}
+                          existe
+                          compacto
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </>
               ) : (
                 <p className="text-slate-600 text-sm">Nenhum mês enviado</p>
               )}
