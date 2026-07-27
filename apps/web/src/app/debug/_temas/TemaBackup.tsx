@@ -105,15 +105,25 @@ function LinhaPasso({ passo, n }: { passo: Passo; n: number }) {
 
 // ── Ciclo completo ─────────────────────────────────────────────────────────
 
+/// Mês corrente no formato 'AAAA-MM', só como valor inicial do campo. O que vale
+/// é o `periodoCorrente` do /status — este aqui é palpite de tela, e o servidor
+/// recusa mês futuro de qualquer forma.
+function mesCorrenteLocal(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
 function SecaoCiclo({ token, onFim }: { token: string; onFim: () => void }) {
   const [hwid,     setHwid]     = useState('')
-  const [tipo,     setTipo]     = useState<'banco' | 'imagens'>('banco')
+  const [tipo,     setTipo]     = useState<'banco' | 'imagens' | 'os'>('banco')
+  const [periodo,  setPeriodo]  = useState(mesCorrenteLocal())
   const [tamanho,  setTamanho]  = useState(65536)
   const [load,     setLoad]     = useState(false)
   const [passos,   setPassos]   = useState<Passo[]>([])
   const [res,      setRes]      = useState<ApiResponse | null>(null)
 
-  const hwidEfetivo = hwid.trim() || hwidDoToken(token)
+  const hwidEfetivo  = hwid.trim() || hwidDoToken(token)
+  const periodoValido = /^\d{4}-(0[1-9]|1[0-2])$/.test(periodo)
 
   const atualizar = (i: number, dados: Partial<Passo>) =>
     setPassos(ps => ps.map((p, idx) => idx === i ? { ...p, ...dados } : p))
@@ -138,6 +148,9 @@ function SecaoCiclo({ token, onFim }: { token: string; onFim: () => void }) {
       method: 'POST',
       body: JSON.stringify({
         hwid: hwidEfetivo, tipo, tamanhoBytes: tamanho,
+        // `periodo` só pode ir em `os` — o schema recusa nos espelhos, e é essa
+        // recusa que uma das travas exercita de propósito.
+        ...(tipo === 'os' ? { periodo } : {}),
         checksumSha256: checksum, origem: 'MANUAL',
       }),
     })
@@ -220,15 +233,26 @@ function SecaoCiclo({ token, onFim }: { token: string; onFim: () => void }) {
         <RotaBadge metodo="POST" rota="/erp/backup/url-upload" />
       </div>
       <p className="text-slate-500 text-xs mb-4">
-        Faz o que o ERP vai fazer: gera o arquivo, pede a URL, sobe e confirma.
+        Faz o que o ERP vai fazer: gera o arquivo, pede a URL, sobe e confirma. Em{' '}
+        <code>os</code> o pacote é de um mês só — é o pedaço, não o acervo.
       </p>
 
       <div className="p-3 rounded border border-red-700/60 bg-red-950/30 mb-4">
         <p className="text-red-300 text-xs font-bold mb-1">⚠ Este teste ESCREVE no backup real da licença</p>
         <p className="text-red-400/80 text-[11px] leading-relaxed">
-          Cada licença tem um único <code>banco.zip</code> e um único <code>imagens.zip</code>, e o
-          upload sobrescreve o que estava lá. Rodar isto numa licença de cliente real substitui o
-          backup dele por este arquivo de brinquedo. Use uma licença de teste.
+          {tipo === 'os' ? (
+            <>
+              Grava em <code>os-{periodo}.zip</code>. Se a licença já tiver esse mês na nuvem, ele é
+              substituído por este arquivo de brinquedo; se não tiver, um mês falso passa a existir no
+              acervo dela. Use uma licença de teste.
+            </>
+          ) : (
+            <>
+              Cada licença tem um único <code>banco.zip</code> e um único <code>imagens.zip</code>, e o
+              upload sobrescreve o que estava lá. Rodar isto numa licença de cliente real substitui o
+              backup dele por este arquivo de brinquedo. Use uma licença de teste.
+            </>
+          )}
         </p>
       </div>
 
@@ -236,9 +260,10 @@ function SecaoCiclo({ token, onFim }: { token: string; onFim: () => void }) {
         <div className="grid grid-cols-2 gap-3">
           <Field label="Tipo">
             <select className={`${ic} focus:border-emerald-500`} value={tipo}
-              onChange={e => setTipo(e.target.value as 'banco' | 'imagens')}>
+              onChange={e => setTipo(e.target.value as 'banco' | 'imagens' | 'os')}>
               <option value="banco">banco</option>
               <option value="imagens">imagens</option>
+              <option value="os">os (por mês)</option>
             </select>
           </Field>
           <Field label="Tamanho em bytes (mín. 1024)">
@@ -247,16 +272,34 @@ function SecaoCiclo({ token, onFim }: { token: string; onFim: () => void }) {
           </Field>
         </div>
 
+        {tipo === 'os' && (
+          <Field label="Período (AAAA-MM) — mês futuro é recusado pela API">
+            <input className={`${ic} ${periodoValido ? 'focus:border-emerald-500' : 'border-red-600'}`}
+              placeholder="2026-07" value={periodo}
+              onChange={e => setPeriodo(e.target.value.trim())} />
+          </Field>
+        )}
+
         <Field label="HWID (vazio = usa o do token)">
           <input className={`${ic} focus:border-emerald-500`}
             placeholder={hwidDoToken(token) || 'sem hwid no token'}
             value={hwid} onChange={e => setHwid(e.target.value)} />
         </Field>
 
-        <button onClick={rodar} disabled={load || !token || tamanho < 1024}
+        <button
+          onClick={rodar}
+          disabled={load || !token || tamanho < 1024 || (tipo === 'os' && !periodoValido)}
           className="w-full bg-emerald-700 hover:bg-emerald-600 disabled:bg-slate-600 text-white font-bold py-2 rounded transition">
           {load ? 'Rodando ciclo...' : 'Rodar ciclo completo'}
         </button>
+
+        {tipo === 'os' && (
+          <p className="text-slate-500 text-[11px] leading-relaxed">
+            Rode duas vezes seguidas no mesmo mês, sem mudar o tamanho: o segundo tem que voltar{' '}
+            <code className="text-emerald-400">acao: PULAR</code>. É a deduplicação por pedaço
+            funcionando — o que faz um mês fechado subir uma vez só.
+          </p>
+        )}
 
         {passos.length > 0 && (
           <div className="space-y-1.5">
