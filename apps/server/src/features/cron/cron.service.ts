@@ -30,7 +30,7 @@ import {
   contarEventosAntigosDeBackup,
 } from '@startbig/database'
 import { EmailService } from '../../core/email/email.service'
-import { StorageService } from '../../common/storage/storage.service'
+import { StorageService, TTL_UPLOAD_SEGUNDOS } from '../../common/storage/storage.service'
 
 @Injectable()
 export class CronService {
@@ -47,6 +47,18 @@ export class CronService {
   /// apagar. Mesmo padrão dos alertas de vencimento: casa por dia exato, então
   /// não precisa guardar "já avisei" em lugar nenhum.
   private readonly DIAS_AVISO_RETENCAO = [75, 83]
+
+  /// Minutos até uma linha EMITIDO sem confirmação ser dada como falha.
+  ///
+  /// DERIVADO do TTL da URL de upload, não escrito à mão, porque a relação entre
+  /// os dois é load-bearing: precisa ser sempre MAIOR que o TTL. Se alguém subir
+  /// o TTL para atender uma loja com internet pior e este número ficar parado,
+  /// upload lento e legítimo passa a ser marcado FALHOU enquanto ainda sobe —
+  /// e o cliente perde a vaga da cota por um envio que ia dar certo.
+  ///
+  /// Os 30 min de folga cobrem o intervalo do próprio cron (10 min) e o atraso
+  /// entre o fim do PUT e a chegada do /confirmar.
+  private readonly MINUTOS_ORFA = Math.round(TTL_UPLOAD_SEGUNDOS / 60) + 30
 
   constructor(
     private readonly emailService:  EmailService,
@@ -228,13 +240,13 @@ export class CronService {
   }
 
   /**
-   * URL emitida que nunca confirmou. Depois do TTL da URL (10 min) não há mais
-   * como o upload acontecer, então a linha vira FALHOU — senão ela conta para
-   * sempre no limite diário e trava o cliente no dia seguinte.
+   * URL emitida que nunca confirmou. Passado o TTL da URL não há mais como o
+   * upload acontecer, então a linha vira FALHOU — senão ela conta para sempre no
+   * limite diário e trava o cliente no dia seguinte.
    */
   private async fecharBackupsPendurados() {
     try {
-      const pendurados = await findBackupsPendentesExpirados(60)
+      const pendurados = await findBackupsPendentesExpirados(this.MINUTOS_ORFA)
       for (const b of pendurados) {
         await marcarBackupFalhou(b.id, 'URL expirou sem confirmação do ERP.')
       }

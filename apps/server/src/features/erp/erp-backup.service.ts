@@ -49,9 +49,16 @@ function limiteDeEnv(chave: string, padrao: number): number {
   return Number.isInteger(n) && n > 0 ? n : padrao
 }
 
+/// Os dois tipos têm a MESMA cota, e por um motivo específico: com 1/dia em
+/// imagens, o automático zerava a cota e o botão de backup manual nascia
+/// quebrado — no único dia em que ele importa, que é aquele em que o usuário
+/// mexeu nas fotos e quis forçar o envio. Um botão que responde 429 é pior que
+/// não ter botão. O custo extra é limitado: o segundo envio de imagens só
+/// acontece se o conteúdo mudou de verdade, senão o dedupe responde PULAR sem
+/// gastar vaga nem banda.
 const LIMITE_DIARIO: Record<TipoBackupDb, number> = {
   BANCO:   limiteDeEnv('BACKUP_LIMITE_DIARIO_BANCO',   2),
-  IMAGENS: limiteDeEnv('BACKUP_LIMITE_DIARIO_IMAGENS', 1),
+  IMAGENS: limiteDeEnv('BACKUP_LIMITE_DIARIO_IMAGENS', 2),
 }
 
 /// Se o backup de hoje vier com menos da metade do último confirmado, algo está
@@ -103,7 +110,7 @@ export class ErpBackupService {
 
     const motivo = this.motivoDeBloqueio(licenca)
     if (motivo)
-      throw this.erro(HttpStatus.FORBIDDEN, 'BACKUP_PLANO_INATIVO', motivo)
+      throw this.erro(HttpStatus.FORBIDDEN, 'BACKUP_PLANO_INATIVO', motivo.mensagem)
 
     return licenca
   }
@@ -115,20 +122,40 @@ export class ErpBackupService {
    * Vale para upload E download: a decisão foi tratar backup como recurso do
    * plano ativo. Quem vence não perde o arquivo na hora — ele fica na nuvem pelo
    * período de retenção, e voltando a pagar dentro da janela recupera o acesso.
+   *
+   * Devolve código E mensagem. A mensagem é escrita para o usuário final e pode
+   * mudar a qualquer momento; o código é contrato, e é nele que o ERP ramifica.
+   * Sem o código o /status era a única resposta da API que obrigava o cliente a
+   * comparar string — exatamente o que o resto do contrato proíbe.
    */
   private motivoDeBloqueio(licenca: {
     status: string
     isTrial: boolean
     dataVencimento: Date | null
-  }): string | null {
+  }): { codigo: string; mensagem: string } | null {
     if (licenca.isTrial)
-      return 'Backup em nuvem não está disponível durante o período de teste.'
+      return {
+        codigo:   'TRIAL',
+        mensagem: 'Backup em nuvem não está disponível durante o período de teste.',
+      }
 
+    // O código carrega o nome do enum (LICENCA_SUSPENSA, LICENCA_REVOGADA, ...)
+    // porque "por que estou bloqueado" e "qual o estado da licença" são a mesma
+    // pergunta aqui, e achatar tudo em um código só faria o ERP voltar a ler a
+    // mensagem para saber o que dizer ao cliente.
     if (licenca.status !== 'ATIVA')
-      return `Licença ${licenca.status.toLowerCase()} — backup em nuvem indisponível.`
+      return {
+        codigo:   `LICENCA_${licenca.status}`,
+        mensagem: `Licença ${licenca.status.toLowerCase()} — backup em nuvem indisponível.`,
+      }
 
+    // Mesmo código do status VENCIDA acima, de propósito: para quem consome, é a
+    // mesma situação. A diferença é só se o cron já passou marcando ou não.
     if (licenca.dataVencimento && licenca.dataVencimento < new Date())
-      return 'Licença vencida — backup em nuvem indisponível até a renovação.'
+      return {
+        codigo:   'LICENCA_VENCIDA',
+        mensagem: 'Licença vencida — backup em nuvem indisponível até a renovação.',
+      }
 
     return null
   }
@@ -337,7 +364,10 @@ export class ErpBackupService {
 
     return {
       planoPermiteBackup: motivo === null,
-      motivoBloqueio:     motivo,
+      /// Texto pronto para exibir. Para RAMIFICAR use o codigoBloqueio — este
+      /// campo muda quando a redação melhorar.
+      motivoBloqueio:     motivo?.mensagem ?? null,
+      codigoBloqueio:     motivo?.codigo   ?? null,
       limiteDiario:       { banco: LIMITE_DIARIO.BANCO, imagens: LIMITE_DIARIO.IMAGENS },
       enviadosHoje,
       tamanhoMaximoBytes: BACKUP_TAMANHO_MAX_BYTES,
@@ -409,6 +439,10 @@ export class ErpBackupService {
 
   // ── Formatação ────────────────────────────────────────────────────────────
 
+  /// O checksum vai junto para o ERP poder decidir ANTES de trabalhar: se o que
+  /// ele tem em disco bate com o que já está na nuvem, não precisa zipar 300 MB
+  /// de fotos só para ouvir PULAR no fim. Zipar é a parte cara do ciclo, e é a
+  /// única que o servidor não tinha como ajudar a evitar.
   private resumo(r: {
     tamanhoRealBytes: number | null
     tamanhoBytes:     number
@@ -416,12 +450,14 @@ export class ErpBackupService {
     emitidoEm:        Date
     hwid:             string | null
     chaveS3:          string
+    checksumSha256:   string | null
   }) {
     return {
-      tamanhoBytes: r.tamanhoRealBytes ?? r.tamanhoBytes,
-      geradoEm:     r.confirmadoEm ?? r.emitidoEm,
-      hwid:         r.hwid,
-      chave:        r.chaveS3,
+      tamanhoBytes:   r.tamanhoRealBytes ?? r.tamanhoBytes,
+      geradoEm:       r.confirmadoEm ?? r.emitidoEm,
+      hwid:           r.hwid,
+      chave:          r.chaveS3,
+      checksumSha256: r.checksumSha256,
     }
   }
 

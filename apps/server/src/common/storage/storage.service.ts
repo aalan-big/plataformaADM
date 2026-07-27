@@ -28,10 +28,32 @@ import {
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
-/// 10 min: tempo de sobra para subir 500 MB em link ruim, e curto o suficiente
-/// para que uma URL vazada em log não seja utilizável no dia seguinte.
-const TTL_UPLOAD_SEGUNDOS   = 10 * 60
+/// 30 min. Já foram 10, e 10 não fecha a conta: 500 MB (o teto) em 600 s exigem
+/// ~6,7 Mbps de upload SUSTENTADO, que loja com rádio, ADSL ou 4G compartilhado
+/// não tem. O upload morria de forma reproduzível e o bucket respondia 403 —
+/// indistinguível de erro de assinatura, o que mandava quem estava depurando
+/// para o lado errado por horas.
+///
+/// O que se perde: uma URL vazada em log fica utilizável por mais tempo. É um
+/// risco pequeno e limitado — ela escreve em UM caminho fixo, do próprio
+/// cliente, com o tamanho travado na assinatura. Backup que não sobe é o dano
+/// maior. Ainda expira no mesmo turno de trabalho, que era o ponto.
+///
+/// ⚠ INVARIANTE: este TTL tem que ser MENOR que a janela em que o cron marca
+/// upload pendurado como FALHOU. Se os dois se igualarem, um upload lento e
+/// LEGÍTIMO é marcado como falha enquanto ainda está subindo — e o cliente
+/// perde a vaga da cota por um envio que ia dar certo.
+///
+/// Não é um comentário pedindo cuidado: o cron IMPORTA esta constante e deriva
+/// a janela dele a partir dela (ver MINUTOS_ORFA em cron.service.ts). Mexer
+/// aqui move a janela de lá junto. Exportado por causa disso — não é para uso
+/// geral.
+export const TTL_UPLOAD_SEGUNDOS = 30 * 60
 /// Download é interativo (alguém clicou e vai baixar agora) — 5 min bastam.
+///
+/// NÃO acompanha o TTL de upload, e a assimetria é deliberada: URL de escrita
+/// vazada deixa alguém gravar lixo num caminho só; URL de leitura vazada
+/// entrega o banco inteiro do cliente. O prazo curto é a mitigação.
 const TTL_DOWNLOAD_SEGUNDOS = 5 * 60
 
 @Injectable()
