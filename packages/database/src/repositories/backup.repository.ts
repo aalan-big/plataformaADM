@@ -1,6 +1,22 @@
 import { prisma } from '../client'
 
-export type TipoBackupDb = 'BANCO' | 'IMAGENS'
+export type TipoBackupDb = 'BANCO' | 'IMAGENS' | 'OS'
+
+/// Mês corrente em 'YYYY-MM', no fuso de São Paulo.
+///
+/// O fuso importa: em 31/07 às 22h em SP já é 01/08 em UTC. Usar UTC faria o
+/// ERP fechar o pedaço de julho um dia antes do mês acabar de verdade para quem
+/// está no Brasil, e as fotos das últimas horas do dia 31 cairiam em agosto.
+export function periodoAtual(agora: Date = new Date()): string {
+  const partes = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year:     'numeric',
+    month:    '2-digit',
+  }).formatToParts(agora)
+
+  const valor = (tipo: string) => partes.find(p => p.type === tipo)?.value ?? ''
+  return `${valor('year')}-${valor('month')}`
+}
 
 /// 00:00 de hoje no fuso de São Paulo, expresso como instante UTC.
 ///
@@ -35,6 +51,7 @@ export async function criarBackup(dados: {
   licencaId:      string
   hwid:           string | null
   tipo:           TipoBackupDb
+  periodo:        string | null
   chaveS3:        string
   origem:         string
   tamanhoBytes:   number
@@ -72,21 +89,72 @@ export async function marcarBackupFalhou(id: string, erroMensagem: string) {
 /// inteiro sem conseguir backup nenhum — justamente quem mais precisa. Quem
 /// reporta a falha pelo /confirmar recupera a vaga; quem trava sem reportar
 /// continua consumindo até o varredor marcar como FALHOU, que é o certo.
-export async function contarBackupsDoDia(licencaId: string, tipo: TipoBackupDb) {
+export async function contarBackupsDoDia(
+  licencaId: string,
+  tipo:      TipoBackupDb,
+  periodo?:  string | null,
+) {
   return prisma.backup.count({
     where: {
       licencaId,
       tipo,
+      ...(periodo !== undefined ? { periodo } : {}),
       emitidoEm: { gte: inicioDoDiaSaoPaulo() },
       status:    { not: 'FALHOU' },
     },
   })
 }
 
-export async function findUltimoBackupConfirmado(licencaId: string, tipo: TipoBackupDb) {
+/// Quantos pedaços de mês JÁ FECHADO foram emitidos hoje.
+///
+/// Tem cota própria, separada da diária, porque é uma operação de natureza
+/// diferente: o backfill. Um cliente que instala hoje com dois anos de OS tem 24
+/// pedaços para subir, cada um exatamente uma vez na vida. Contra a cota normal
+/// de 2/dia isso levaria 12 dias com o acervo desprotegido.
+///
+/// E é seguro dar mais folga aqui justamente porque é limitado por construção: o
+/// que a cota diária protege é upload REPETIDO — o loop com bug que sobe o mesmo
+/// arquivo 500 vezes. Pedaço fechado que já subiu bate o checksum e volta PULAR,
+/// sem consumir nada. O número de pedaços novos possíveis é o número de meses de
+/// histórico, que é finito e só diminui.
+export async function contarBackfillDoDia(licencaId: string, mesAtual: string) {
+  return prisma.backup.count({
+    where: {
+      licencaId,
+      tipo:      'OS',
+      periodo:   { lt: mesAtual },
+      emitidoEm: { gte: inicioDoDiaSaoPaulo() },
+      status:    { not: 'FALHOU' },
+    },
+  })
+}
+
+export async function findUltimoBackupConfirmado(
+  licencaId: string,
+  tipo:      TipoBackupDb,
+  periodo?:  string | null,
+) {
   return prisma.backup.findFirst({
-    where:   { licencaId, tipo, status: 'CONFIRMADO' },
+    where:   {
+      licencaId,
+      tipo,
+      ...(periodo !== undefined ? { periodo } : {}),
+      status: 'CONFIRMADO',
+    },
     orderBy: { emitidoEm: 'desc' },
+  })
+}
+
+/// Todos os pedaços de OS que existem na nuvem para esta licença — um por mês,
+/// o mais recente de cada. É o que a restauração precisa baixar inteiro.
+///
+/// `distinct` com `orderBy` desc devolve a linha mais nova de cada período, que é
+/// exatamente o objeto que está lá hoje (reenvio do mesmo mês sobrescreve).
+export async function findPedacosDeOsConfirmados(licencaId: string) {
+  return prisma.backup.findMany({
+    where:    { licencaId, tipo: 'OS', status: 'CONFIRMADO' },
+    distinct: ['periodo'],
+    orderBy:  [{ periodo: 'asc' }, { emitidoEm: 'desc' }],
   })
 }
 
@@ -153,7 +221,7 @@ export async function deletarBackupsDaLicenca(licencaId: string) {
 /// está". Cliente pagante sem nenhuma cópia na nuvem é o caso que importa, e ele
 /// some se a consulta partir da tabela de backups.
 export async function findVisaoGeralDeBackups() {
-  const [licencas, ultimos, falhas] = await Promise.all([
+  const [licencas, ultimos, pedacosOs, falhas] = await Promise.all([
     prisma.licenca.findMany({
       select: {
         id:              true,
@@ -177,8 +245,12 @@ export async function findVisaoGeralDeBackups() {
 
     // `distinct` com `orderBy` desc devolve a linha mais recente de cada
     // (licença, tipo) — que é exatamente o arquivo que existe na nuvem hoje.
+    //
+    // Só os tipos ESPELHO entram aqui. OS tem um objeto por mês, então "a linha
+    // mais recente" seria só o último pedaço, e a tela mostraria o tamanho de um
+    // mês como se fosse o acervo inteiro — número errado por ordem de grandeza.
     prisma.backup.findMany({
-      where:    { status: 'CONFIRMADO' },
+      where:    { status: 'CONFIRMADO', tipo: { in: ['BANCO', 'IMAGENS'] } },
       distinct: ['licencaId', 'tipo'],
       orderBy:  { emitidoEm: 'desc' },
       select: {
@@ -193,6 +265,27 @@ export async function findVisaoGeralDeBackups() {
       },
     }),
 
+    // OS entra pedaço a pedaço, para o service agregar por licença.
+    //
+    // Não dá para usar groupBy aqui: reenvio do mesmo mês (correção, backfill
+    // repetido) gera várias linhas CONFIRMADO para o mesmo período, e o groupBy
+    // contaria cada uma como um mês diferente e somaria o tamanho duas vezes. O
+    // `distinct` por (licença, período) é o que devolve os objetos que existem
+    // de verdade na nuvem — um por mês.
+    prisma.backup.findMany({
+      where:    { status: 'CONFIRMADO', tipo: 'OS' },
+      distinct: ['licencaId', 'periodo'],
+      orderBy:  [{ periodo: 'desc' }, { emitidoEm: 'desc' }],
+      select: {
+        licencaId:        true,
+        periodo:          true,
+        tamanhoBytes:     true,
+        tamanhoRealBytes: true,
+        confirmadoEm:     true,
+        emitidoEm:        true,
+      },
+    }),
+
     prisma.backup.groupBy({
       by:    ['licencaId'],
       where: {
@@ -203,7 +296,7 @@ export async function findVisaoGeralDeBackups() {
     }),
   ])
 
-  return { licencas, ultimos, falhas }
+  return { licencas, ultimos, pedacosOs, falhas }
 }
 
 /// Diário de eventos de uma licença, para a gaveta de detalhe.

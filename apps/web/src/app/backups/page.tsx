@@ -18,6 +18,15 @@ type Copia = {
   chave:        string
 }
 
+/// OS não é uma cópia, é um acervo: um arquivo por mês, e nenhum deles sozinho
+/// representa o conjunto. Por isso vem agregado — quantos meses estão protegidos,
+/// quanto ocupam e até quando vai a cobertura.
+type AcervoOs = {
+  meses:         number
+  bytes:         number
+  ultimoPeriodo: string | null
+}
+
 type Item = {
   licencaId:        string
   clienteId:        string
@@ -34,6 +43,7 @@ type Item = {
   prefixo:          string
   banco:            Copia | null
   imagens:          Copia | null
+  os:               AcervoOs
 }
 
 type Resumo = {
@@ -48,6 +58,7 @@ type Resumo = {
 type Evento = {
   id:           string
   tipo:         string
+  periodo:      string | null
   status:       string
   origem:       string
   tamanhoBytes: number
@@ -211,10 +222,10 @@ function ModalDetalhe({ item, onClose }: { item: Item; onClose: () => void }) {
 
         <div className="overflow-y-auto px-6 py-5 space-y-6">
 
-          {/* Cópias na nuvem */}
+          {/* Espelhos */}
           <div>
             <p className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold mb-2">
-              Cópias na nuvem — no máximo 1 de cada
+              Espelhos — 1 cópia de cada, sobrescrita todo dia
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {([['banco', item.banco, Database], ['imagens', item.imagens, ImageIcon]] as const).map(
@@ -235,6 +246,32 @@ function ModalDetalhe({ item, onClose }: { item: Item; onClose: () => void }) {
                     <BotaoBaixar licencaId={item.licencaId} tipo={nome} existe={!!copia} />
                   </div>
                 ),
+              )}
+            </div>
+          </div>
+
+          {/* Acervo de OS */}
+          <div>
+            <p className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold mb-2">
+              Ordens de serviço — 1 arquivo por mês, imutável depois de fechado
+            </p>
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+              {item.os.meses > 0 ? (
+                <div className="flex items-end justify-between gap-4">
+                  <div>
+                    <p className="text-slate-200 text-lg font-bold leading-none">
+                      {item.os.meses} {item.os.meses === 1 ? 'mês' : 'meses'}
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-1.5">
+                      {tamanho(item.os.bytes)} no total · mais recente: {item.os.ultimoPeriodo}
+                    </p>
+                  </div>
+                  <p className="text-[11px] text-slate-600 text-right max-w-[55%]">
+                    Baixe mês a mês pelo histórico abaixo — o acervo inteiro não cabe num link só.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-slate-600 text-sm">Nenhum mês enviado</p>
               )}
             </div>
           </div>
@@ -278,7 +315,8 @@ function ModalDetalhe({ item, onClose }: { item: Item; onClose: () => void }) {
                   <div key={e.id} className="px-4 py-2.5">
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-[11px] text-slate-400 font-mono">
-                        {quando(e.emitidoEm)} · {e.tipo.toLowerCase()} · {e.origem.toLowerCase()}
+                        {quando(e.emitidoEm)} · {e.tipo.toLowerCase()}
+                        {e.periodo && ` ${e.periodo}`} · {e.origem.toLowerCase()}
                       </span>
                       <span className={`text-[10px] font-bold shrink-0 ${
                         e.status === 'CONFIRMADO' ? 'text-emerald-400'
@@ -533,6 +571,11 @@ export default function BackupsPage() {
                     </p>
                     {i.imagens && (
                       <p className="text-[11px] text-slate-500">+ {tamanho(i.imagens.tamanhoBytes)} img</p>
+                    )}
+                    {i.os.meses > 0 && (
+                      <p className="text-[11px] text-slate-500">
+                        + {tamanho(i.os.bytes)} OS ({i.os.meses}m)
+                      </p>
                     )}
                   </td>
 

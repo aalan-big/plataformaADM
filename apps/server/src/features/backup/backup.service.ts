@@ -36,13 +36,26 @@ export class BackupService {
   constructor(private readonly storage: StorageService) {}
 
   async visaoGeral() {
-    const { licencas, ultimos, falhas } = await findVisaoGeralDeBackups()
+    const { licencas, ultimos, pedacosOs, falhas } = await findVisaoGeralDeBackups()
 
     const porLicenca = new Map<string, Record<string, (typeof ultimos)[number]>>()
     for (const u of ultimos) {
       const atual = porLicenca.get(u.licencaId) ?? {}
       atual[u.tipo] = u
       porLicenca.set(u.licencaId, atual)
+    }
+
+    // OS é agregado por licença: quantos meses existem, quanto ocupam e qual o
+    // mais recente. O detalhe pedaço a pedaço fica na gaveta de eventos — nesta
+    // tela o que importa é "o acervo está protegido e até quando".
+    const osPorLicenca = new Map<string, { meses: number; bytes: number; ultimoPeriodo: string | null }>()
+    for (const p of pedacosOs) {
+      const atual = osPorLicenca.get(p.licencaId) ?? { meses: 0, bytes: 0, ultimoPeriodo: null }
+      atual.meses += 1
+      atual.bytes += p.tamanhoRealBytes ?? p.tamanhoBytes
+      // A consulta vem ordenada por período desc, então o primeiro é o mais novo.
+      if (atual.ultimoPeriodo === null) atual.ultimoPeriodo = p.periodo
+      osPorLicenca.set(p.licencaId, atual)
     }
 
     const falhasPorLicenca = new Map(falhas.map(f => [f.licencaId, f._count._all]))
@@ -86,6 +99,7 @@ export class BackupService {
         prefixo:         `clientes/${l.clienteId}/${l.id}/`,
         banco:   banco   ? this.resumo(banco)   : null,
         imagens: imagens ? this.resumo(imagens) : null,
+        os:      osPorLicenca.get(l.id) ?? { meses: 0, bytes: 0, ultimoPeriodo: null },
       }
     })
 
@@ -103,7 +117,7 @@ export class BackupService {
         atrasados: itens.filter(i => i.situacao === 'ATRASADO').length,
         nunca:     itens.filter(i => i.situacao === 'NUNCA').length,
         bytesTotal: itens.reduce(
-          (s, i) => s + (i.banco?.tamanhoBytes ?? 0) + (i.imagens?.tamanhoBytes ?? 0), 0,
+          (s, i) => s + (i.banco?.tamanhoBytes ?? 0) + (i.imagens?.tamanhoBytes ?? 0) + i.os.bytes, 0,
         ),
         horasAteAtrasado: HORAS_ATE_ATRASADO,
       },
@@ -123,6 +137,7 @@ export class BackupService {
       eventos: eventos.map(e => ({
         id:           e.id,
         tipo:         e.tipo,
+        periodo:      e.periodo,
         status:       e.status,
         origem:       e.origem,
         tamanhoBytes: e.tamanhoRealBytes ?? e.tamanhoBytes,
@@ -150,19 +165,31 @@ export class BackupService {
   async urlDownloadAdmin(
     licencaId: string,
     tipo: string,
-    contexto: { usuarioId?: string | null; ip?: string | null },
+    contexto: { usuarioId?: string | null; ip?: string | null; periodo?: string | null },
   ) {
-    if (tipo !== 'banco' && tipo !== 'imagens')
-      throw new BadRequestException('tipo deve ser "banco" ou "imagens".')
+    if (tipo !== 'banco' && tipo !== 'imagens' && tipo !== 'os')
+      throw new BadRequestException('tipo deve ser "banco", "imagens" ou "os".')
+
+    // OS tem um arquivo por mês, então o suporte precisa dizer QUAL mês quer.
+    // Sem isso a rota devolveria um pedaço arbitrário — o mais recente — e quem
+    // está atendendo o cliente acharia que baixou o acervo inteiro.
+    if (tipo === 'os' && !contexto.periodo)
+      throw new BadRequestException('Para tipo "os" informe o periodo no formato AAAA-MM.')
 
     const licenca = await findLicencaById(licencaId)
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
 
-    const tipoDb: TipoBackupDb = tipo === 'banco' ? 'BANCO' : 'IMAGENS'
-    const ultimo = await findUltimoBackupConfirmado(licencaId, tipoDb)
+    const tipoDb: TipoBackupDb = tipo === 'banco' ? 'BANCO' : tipo === 'imagens' ? 'IMAGENS' : 'OS'
+    const ultimo = await findUltimoBackupConfirmado(
+      licencaId,
+      tipoDb,
+      tipo === 'os' ? contexto.periodo : undefined,
+    )
 
     if (!ultimo)
-      throw new NotFoundException(`Nenhum backup de ${tipo} confirmado para esta licença.`)
+      throw new NotFoundException(
+        `Nenhum backup de ${tipo}${tipo === 'os' ? ` (${contexto.periodo})` : ''} confirmado para esta licença.`,
+      )
 
     // Confere antes de assinar: a retenção pode ter apagado o objeto, e um link
     // que estoura em 404 no meio do download não explica nada a quem clicou.
@@ -182,7 +209,9 @@ export class BackupService {
       .normalize('NFD').replace(/[̀-ͯ]/g, '')
       .replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase()
       .slice(0, 40)
-    const nomeArquivo = `${apelido}-${tipo}-${dia}.zip`
+    const nomeArquivo = tipo === 'os'
+      ? `${apelido}-os-${ultimo.periodo}.zip`
+      : `${apelido}-${tipo}-${dia}.zip`
 
     const { url, expiraEm } = await this.storage.gerarUrlDownload(ultimo.chaveS3, nomeArquivo)
 
@@ -191,7 +220,8 @@ export class BackupService {
       acao:         'BACKUP_DOWNLOAD',
       entidadeNome: 'Licenca',
       entidadeId:   licencaId,
-      descricao:    `Download do backup de ${tipo} (${objeto.tamanhoBytes} bytes) do cliente ${nomeCliente}.`,
+      descricao:    `Download do backup de ${tipo}${ultimo.periodo ? ` ${ultimo.periodo}` : ''} ` +
+                    `(${objeto.tamanhoBytes} bytes) do cliente ${nomeCliente}.`,
       ipAddress:    contexto.ip,
     })
 

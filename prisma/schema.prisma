@@ -24,9 +24,22 @@ enum TipoTransacao {
   PAGAMENTO_RECEBIDO
 }
 
+/// Os três tipos existem porque são três ciclos de vida diferentes, e misturá-los
+/// num pacote só foi o que quebrou o desenho anterior.
+///
+/// BANCO e IMAGENS são ESPELHOS: o pacote de hoje substitui o de ontem, a chave é
+/// fixa, e o conteúdo muda o tempo todo (venda nova, produto editado, foto
+/// trocada). Só faz sentido guardar o estado atual.
+///
+/// OS é ARQUIVO MORTO: foto de ordem de serviço é escrita uma vez e nunca mais
+/// tocada. Guardar isso como espelho significa reenviar todo dia anos de fotos
+/// que não mudaram — o envio diário cresceria para sempre até bater no teto e o
+/// backup parar de funcionar. Particionado por mês, o pedaço fechado sobe uma
+/// única vez e o envio diário fica constante, independente da idade da instalação.
 enum TipoBackup {
   BANCO
   IMAGENS
+  OS
 }
 
 enum StatusBackup {
@@ -380,13 +393,15 @@ model LicencaSessao {
 // ── Backup ────────────────────────────────────────────────────────────────────
 /// Diário de EVENTOS de backup — não é um catálogo de arquivos restauráveis.
 ///
-/// Na nuvem cada licença tem UM objeto por tipo, sobrescrito todo dia:
+/// Na nuvem cada licença tem um objeto por tipo ESPELHO, sobrescrito todo dia,
+/// mais um objeto por mês de OS, que sobe uma vez e nunca mais:
 ///   clientes/{clienteId}/{licencaId}/banco.zip
 ///   clientes/{clienteId}/{licencaId}/imagens.zip
-/// Ou seja: 300 linhas aqui continuam apontando para 1 arquivo só — o de hoje.
-/// Quem exibir isso na tela precisa rotular como "backups realizados" e deixar
-/// separado o "cópia disponível para restaurar: 1". Listar as linhas como se
-/// fossem versões baixáveis é prometer restauração que não existe.
+///   clientes/{clienteId}/{licencaId}/os-2026-07.zip
+/// Ou seja: 300 linhas aqui NÃO são 300 arquivos. Para banco e imagens existe uma
+/// cópia só — a de hoje. Quem exibir isso na tela precisa rotular como "backups
+/// realizados" e deixar separado o que está disponível para restaurar. Listar as
+/// linhas como se fossem versões baixáveis é prometer restauração que não existe.
 ///
 /// O licencaId entra na chave de propósito: um cliente pode ter várias licenças
 /// (duas lojas, dois PCs, cada uma com banco local próprio). Sem ele as duas
@@ -399,6 +414,12 @@ model Backup {
   /// registrada, é sinal de instalação paralela subindo banco velho por cima.
   hwid             String?
   tipo             TipoBackup
+  /// Mês do pedaço, em 'YYYY-MM'. Só existe em OS; é null nos tipos espelho.
+  ///
+  /// Texto e não data porque a única operação que se faz com ele é comparar e
+  /// ordenar — e 'YYYY-MM' ordena igual em texto e em data, sem fuso no meio.
+  /// É o que permite `periodo: { lt: mesAtual }` significar "pedaço fechado".
+  periodo          String?
   chaveS3          String
   status           StatusBackup @default(EMITIDO)
   origem           String       @default("AUTOMATICO")  // AUTOMATICO | MANUAL
@@ -407,8 +428,10 @@ model Backup {
   tamanhoBytes     Int
   /// Tamanho que o HeadObject encontrou de verdade depois do upload.
   tamanhoRealBytes Int?
-  /// SHA-256 do zip. Em `imagens` é o que permite pular upload quando nada mudou
-  /// — o maior corte de custo do backup, já que imagem é o que pesa.
+  /// SHA-256 do zip. É o que permite pular upload quando nada mudou — o maior
+  /// corte de custo do backup, já que imagem é o que pesa. Em OS ele carrega o
+  /// trabalho todo: pedaço de mês fechado bate o checksum para sempre, então
+  /// depois do primeiro envio a resposta é sempre PULAR, sem lógica adicional.
   checksumSha256   String?
   erroMensagem     String?
   emitidoEm        DateTime     @default(now())
@@ -418,6 +441,9 @@ model Backup {
   licenca          Licenca      @relation(fields: [licencaId], references: [id], onDelete: Cascade)
 
   @@index([licencaId, tipo, emitidoEm])
+  /// Sustenta a pergunta mais frequente do fluxo de OS: "qual o último confirmado
+  /// DESTE mês?", feita uma vez por pedaço a cada ciclo de backup.
+  @@index([licencaId, tipo, periodo, status])
   @@index([clienteId])
   @@index([status, emitidoEm])
   @@map("backups")

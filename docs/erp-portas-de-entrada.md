@@ -136,7 +136,11 @@ O `hwid` deve ser derivado de algo fixo da máquina (serial da placa-mãe, do di
 
 **Chame `/erp/backup/confirmar` mesmo quando o upload falhar** (`ok: false`). É isso que devolve a vaga da cota diária — sem essa chamada, uma queda de internet consome o backup do dia.
 
-**Só existe uma cópia de cada backup na nuvem.** O envio de hoje sobrescreve o de ontem. Se a tela mostrar uma lista de envios, deixe claro que é histórico de eventos, não escolha de restauração.
+**`banco` e `imagens` são espelhos: só existe uma cópia de cada na nuvem.** O envio de hoje sobrescreve o de ontem. Se a tela mostrar uma lista de envios, deixe claro que é histórico de eventos, não escolha de restauração.
+
+**`os` é diferente: um arquivo por mês, e cada mês fechado sobe uma vez só.** Restaurar OS significa baixar **todos** os pedaços. O contrato completo está em [`erp-backup-contrato.md`](./erp-backup-contrato.md), seção D.
+
+**Nunca calcule o mês corrente localmente.** Ele vem em `periodoCorrente` no `/status`, cortado no fuso de São Paulo pelo relógio do servidor. Máquina com data errada fecharia o mês na hora errada, e pedaço fechado cedo demais perde as fotos que ainda entrariam.
 
 ---
 
@@ -152,7 +156,15 @@ Três coisas do lado do ERP que definem se o backup funciona bem ou mal, detalha
 
 ## 7. Backup — o que construir no ERP
 
-São quatro chamadas por pacote, e o ERP faz o ciclo duas vezes por dia: uma para `banco`, outra para `imagens`.
+São quatro chamadas por pacote, e existem **três tipos de pacote**:
+
+| Tipo | O que é | Comportamento |
+|---|---|---|
+| `banco` | export do banco | espelho — sobrescreve, todo dia |
+| `imagens` | fotos de **produto** (catálogo) | espelho — sobrescreve, todo dia |
+| `os` | fotos de **ordem de serviço**, por mês | pedaço — cada mês sobe uma vez |
+
+A separação existe porque catálogo muda e OS não. Foto de OS é escrita uma vez e nunca mais tocada, mas a pasta cresce para sempre — tratada como espelho, o envio diário cresceria junto até bater no teto de 500 MB e o backup parar de funcionar. Particionada por mês, o envio diário é só o mês corrente e não cresce com a idade da instalação. O contrato completo está em [`erp-backup-contrato.md`](./erp-backup-contrato.md), seção D.
 
 ### O motor de empacotamento
 
@@ -161,8 +173,12 @@ São quatro chamadas por pacote, e o ERP faz o ciclo duas vezes por dia: uma par
 conn.execute("VACUUM INTO 'tmp/banco.db'")     # export consistente
 zipar(['tmp/banco.db', 'manifest.json'], 'tmp/banco.zip')
 
-# IMAGENS — a pasta de fotos do ERP
-zipar_pasta('dados/imagens/', 'tmp/imagens.zip')
+# IMAGENS — só o catálogo de produtos
+zipar_pasta('dados/imagens/produtos/', 'tmp/imagens.zip')
+
+# OS — um zip por mês. O mês vem da data da ordem de serviço.
+for mes, fotos in agrupar_por_mes('dados/imagens/ordens-servico/'):
+    zipar(fotos, f'tmp/os-{mes}.zip')          # mes no formato 'AAAA-MM'
 
 # Medir DEPOIS de fechar o zip — este número vai na assinatura
 tamanho = os.path.getsize('tmp/banco.zip')
@@ -205,9 +221,10 @@ r = requests.post(
     headers={"Authorization": f"Bearer {token_licenca}"},
     json={
         "hwid":           hwid,
-        "tipo":           "banco",          # ou "imagens"
+        "tipo":           "banco",          # "imagens" ou "os"
+        "periodo":        None,             # obrigatório em "os": 'AAAA-MM'
         "tamanhoBytes":   tamanho,
-        "checksumSha256": checksum,         # obrigatório em "imagens"
+        "checksumSha256": checksum,         # obrigatório em "imagens" e "os"
         "origem":         "AUTOMATICO",     # "MANUAL" se o usuário clicou
     },
 )
@@ -258,7 +275,9 @@ requests.post(
 
 ### Agendamento
 
-Um backup por dia de cada tipo, em horário de baixo movimento. A cota padrão é **2 por dia de cada tipo** — o automático mais um manual do usuário. Se o envio falhar, chame `/confirmar` com `ok: false` e **tente de novo só no próximo ciclo**: a vaga é devolvida, mas insistir em looping bate no limite e trava o dia.
+Um backup por dia de cada tipo, em horário de baixo movimento. A cota padrão é **2 por dia** para `banco`, `imagens` e o **mês corrente** de `os` — o automático mais um manual do usuário. Meses fechados de `os` têm balde próprio, de **12 por dia**, que é o que permite subir o histórico inteiro na primeira semana sem competir com o backup do dia. Se o envio falhar, chame `/confirmar` com `ok: false` e **tente de novo só no próximo ciclo**: a vaga é devolvida, mas insistir em looping bate no limite e trava o dia.
+
+No backfill, um `429 BACKUP_LIMITE_BACKFILL` não é erro: significa que a cota de hoje acabou e o restante continua amanhã de onde parou. Pare o laço e siga.
 
 A URL assinada de upload vale **30 minutos**. Peça-a imediatamente antes do `PUT` — zipe, meça e calcule o checksum **antes** de chamar `url-upload`, porque o relógio começa a correr na resposta dela, não no início do envio.
 

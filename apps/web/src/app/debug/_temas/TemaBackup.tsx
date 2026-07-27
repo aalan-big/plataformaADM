@@ -282,13 +282,21 @@ function SecaoStatus({ token, versao }: { token: string; versao: number }) {
     setLoad(false)
   }
 
+  type Copia = { tamanhoBytes: number; geradoEm: string }
+
   const d = res?.ok ? (res.payload as {
     planoPermiteBackup: boolean
     motivoBloqueio:     string | null
-    limiteDiario:       { banco: number; imagens: number }
-    enviadosHoje:       { banco: number; imagens: number }
-    copiaAtual:         Record<string, { tamanhoBytes: number; geradoEm: string } | null>
-    historicoEventos:   Array<{ tipo: string; status: string; tamanhoBytes: number; emitidoEm: string; erro: string | null }>
+    codigoBloqueio:     string | null
+    periodoCorrente:    string
+    limiteDiario:       { banco: number; imagens: number; os: number; backfill: number }
+    enviadosHoje:       { banco: number; imagens: number; os: number; backfill: number }
+    copiaAtual:         {
+      banco:   Copia | null
+      imagens: Copia | null
+      os:      Array<Copia & { periodo: string | null }>
+    }
+    historicoEventos:   Array<{ tipo: string; periodo: string | null; status: string; tamanhoBytes: number; emitidoEm: string; erro: string | null }>
   }) : null
 
   return (
@@ -315,22 +323,30 @@ function SecaoStatus({ token, versao }: { token: string; versao: number }) {
               {d.planoPermiteBackup ? 'Plano libera backup' : 'Backup bloqueado'}
             </p>
             {d.motivoBloqueio && <p className="text-[11px] mt-1 opacity-90">{d.motivoBloqueio}</p>}
+            {d.codigoBloqueio && (
+              <p className="text-[10px] mt-1 font-mono opacity-70">codigo: {d.codigoBloqueio}</p>
+            )}
           </div>
 
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="p-2 rounded border border-slate-700/50 bg-[#0f172a]">
-              <p className="text-slate-500 text-[10px] uppercase font-bold">Cota banco hoje</p>
-              <p className="text-slate-200 font-mono">{d.enviadosHoje.banco} / {d.limiteDiario.banco}</p>
-            </div>
-            <div className="p-2 rounded border border-slate-700/50 bg-[#0f172a]">
-              <p className="text-slate-500 text-[10px] uppercase font-bold">Cota imagens hoje</p>
-              <p className="text-slate-200 font-mono">{d.enviadosHoje.imagens} / {d.limiteDiario.imagens}</p>
-            </div>
+          <div className="grid grid-cols-4 gap-2 text-xs">
+            {([
+              ['banco',    d.enviadosHoje.banco,    d.limiteDiario.banco],
+              ['imagens',  d.enviadosHoje.imagens,  d.limiteDiario.imagens],
+              ['os (mês)', d.enviadosHoje.os,       d.limiteDiario.os],
+              ['backfill', d.enviadosHoje.backfill, d.limiteDiario.backfill],
+            ] as const).map(([rotulo, usado, limite]) => (
+              <div key={rotulo} className="p-2 rounded border border-slate-700/50 bg-[#0f172a]">
+                <p className="text-slate-500 text-[10px] uppercase font-bold">{rotulo}</p>
+                <p className={`font-mono ${usado >= limite ? 'text-orange-400' : 'text-slate-200'}`}>
+                  {usado} / {limite}
+                </p>
+              </div>
+            ))}
           </div>
 
           <div>
             <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">
-              Cópias na nuvem — no máximo 1 de cada
+              Espelhos — 1 cópia de cada, sobrescrita todo dia
             </p>
             <div className="space-y-1">
               {(['banco', 'imagens'] as const).map(t => {
@@ -349,6 +365,43 @@ function SecaoStatus({ token, versao }: { token: string; versao: number }) {
             </div>
           </div>
 
+          <div>
+            <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">
+              Pedaços de OS — 1 por mês, imutável depois de fechado
+              <span className="ml-1 normal-case font-normal text-slate-600">
+                (mês corrente: {d.periodoCorrente})
+              </span>
+            </p>
+            {d.copiaAtual?.os?.length > 0 ? (
+              <>
+                <div className="max-h-40 overflow-auto space-y-1">
+                  {d.copiaAtual.os.map(p => (
+                    <div key={p.periodo ?? '—'}
+                      className="flex items-center justify-between text-xs p-2 rounded border border-slate-700/50 bg-[#0f172a]">
+                      <span className="font-mono text-slate-400">
+                        os-{p.periodo}.zip
+                        {p.periodo === d.periodoCorrente && (
+                          <span className="ml-1 text-[10px] text-sky-500">aberto</span>
+                        )}
+                      </span>
+                      <span className="text-emerald-400 font-mono">
+                        {mb(p.tamanhoBytes)} · {new Date(p.geradoEm).toLocaleString('pt-BR')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-slate-600 text-[10px] mt-1">
+                  Total: {mb(d.copiaAtual.os.reduce((s, p) => s + p.tamanhoBytes, 0))} em{' '}
+                  {d.copiaAtual.os.length} mês(es)
+                </p>
+              </>
+            ) : (
+              <p className="text-slate-600 text-xs p-2 rounded border border-slate-700/50 bg-[#0f172a]">
+                nenhum pedaço enviado
+              </p>
+            )}
+          </div>
+
           {d.historicoEventos?.length > 0 && (
             <div>
               <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">
@@ -359,6 +412,7 @@ function SecaoStatus({ token, versao }: { token: string; versao: number }) {
                   <div key={i} className="flex items-center justify-between text-[11px] p-1.5 rounded bg-[#0f172a] border border-slate-800">
                     <span className="font-mono text-slate-500">
                       {new Date(h.emitidoEm).toLocaleString('pt-BR')} · {h.tipo}
+                      {h.periodo && ` ${h.periodo}`}
                     </span>
                     <span className={
                       h.status === 'CONFIRMADO' ? 'text-emerald-400'
@@ -424,6 +478,27 @@ const TRAVAS: Trava[] = [
     esperado:            '409 · BACKUP_TAMANHO_SUSPEITO',
     corpo:               h => ({ hwid: h, tipo: 'banco', tamanhoBytes: 1024 }),
     exigeBackupAnterior: true,
+  },
+  {
+    nome:      'OS sem período',
+    descricao: 'Pedaço de OS precisa dizer de que mês é — sem isso não há chave onde gravar.',
+    esperado:  '400 · BACKUP_DADOS_INVALIDOS',
+    corpo:     h => ({ hwid: h, tipo: 'os', tamanhoBytes: 65536, checksumSha256: 'a'.repeat(64) }),
+  },
+  {
+    nome:      'OS de mês futuro',
+    descricao: 'Mês que ainda não aconteceu não tem conteúdo, e ocuparia a chave definitiva dele.',
+    esperado:  '400 · BACKUP_PERIODO_FUTURO',
+    corpo:     h => ({
+      hwid: h, tipo: 'os', periodo: '2099-12',
+      tamanhoBytes: 65536, checksumSha256: 'a'.repeat(64),
+    }),
+  },
+  {
+    nome:      'Período em backup de banco',
+    descricao: 'Só OS é particionado. Período em espelho sugeriria um histórico que não existe.',
+    esperado:  '400 · BACKUP_DADOS_INVALIDOS',
+    corpo:     h => ({ hwid: h, tipo: 'banco', periodo: '2026-07', tamanhoBytes: 65536 }),
   },
 ]
 
@@ -532,7 +607,7 @@ function SecaoTravas({ token }: { token: string }) {
 // ── Download ───────────────────────────────────────────────────────────────
 
 function SecaoDownload({ token }: { token: string }) {
-  const [tipo, setTipo] = useState<'banco' | 'imagens'>('banco')
+  const [tipo, setTipo] = useState<'banco' | 'imagens' | 'os'>('banco')
   const [load, setLoad] = useState(false)
   const [res,  setRes]  = useState<ApiResponse | null>(null)
 
@@ -545,7 +620,12 @@ function SecaoDownload({ token }: { token: string }) {
     setLoad(false)
   }
 
-  const d = res?.ok ? (res.payload as { url: string; tamanhoBytes: number; geradoEm: string }) : null
+  const d = res?.ok ? (res.payload as {
+    arquivos:      Array<{ periodo: string | null; url: string; tamanhoBytes: number; geradoEm: string }>
+    indisponiveis: string[]
+    totalBytes:    number
+    expiraEm:      string
+  }) : null
 
   return (
     <section className="bg-[#1e293b] p-5 rounded-xl border border-violet-800/50 shadow-xl">
@@ -554,15 +634,18 @@ function SecaoDownload({ token }: { token: string }) {
         <RotaBadge metodo="POST" rota="/erp/backup/url-download" />
       </div>
       <p className="text-slate-500 text-xs mb-4">
-        Mesmo gate do upload: licença vencida ou em teste não baixa. URL válida por 5 minutos.
+        Mesmo gate do upload: licença vencida ou em teste não baixa. URLs válidas por 5 minutos —
+        em <code>os</code> vêm todos os meses de uma vez, e se o prazo acabar no meio basta pedir
+        de novo (leitura pura, sem cota).
       </p>
 
       <div className="space-y-3">
         <Field label="Tipo">
           <select className={`${ic} focus:border-violet-500`} value={tipo}
-            onChange={e => setTipo(e.target.value as 'banco' | 'imagens')}>
+            onChange={e => setTipo(e.target.value as 'banco' | 'imagens' | 'os')}>
             <option value="banco">banco</option>
             <option value="imagens">imagens</option>
+            <option value="os">os (todos os meses)</option>
           </select>
         </Field>
 
@@ -574,12 +657,28 @@ function SecaoDownload({ token }: { token: string }) {
         {d && (
           <div className="p-3 rounded border border-violet-700/40 bg-violet-950/20 text-xs space-y-2">
             <p className="text-slate-300">
-              {mb(d.tamanhoBytes)} · gerado em {new Date(d.geradoEm).toLocaleString('pt-BR')}
+              {d.arquivos.length} arquivo(s) · {mb(d.totalBytes)} no total ·
+              expira {new Date(d.expiraEm).toLocaleTimeString('pt-BR')}
             </p>
-            <a href={d.url} target="_blank" rel="noreferrer"
-              className="block text-center bg-violet-800/60 hover:bg-violet-700 border border-violet-600/50 py-1.5 rounded font-bold text-violet-200 transition">
-              Baixar o arquivo
-            </a>
+
+            {d.indisponiveis?.length > 0 && (
+              <p className="p-2 rounded border border-red-700/50 bg-red-950/30 text-red-300">
+                <strong>Restauração incompleta.</strong> Pedaços registrados que não estão mais
+                na nuvem: {d.indisponiveis.join(', ')}
+              </p>
+            )}
+
+            <div className="space-y-1 max-h-52 overflow-auto">
+              {d.arquivos.map(a => (
+                <a key={a.url} href={a.url} target="_blank" rel="noreferrer"
+                  className="flex items-center justify-between gap-2 bg-violet-800/60 hover:bg-violet-700 border border-violet-600/50 px-2 py-1.5 rounded font-bold text-violet-200 transition">
+                  <span className="font-mono">
+                    {a.periodo ? `os-${a.periodo}.zip` : `${tipo}.zip`}
+                  </span>
+                  <span className="font-normal opacity-80">{mb(a.tamanhoBytes)}</span>
+                </a>
+              ))}
+            </div>
           </div>
         )}
 

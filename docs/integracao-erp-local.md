@@ -471,7 +471,9 @@ O ERP empacota o banco local e as imagens, e sobe para a nuvem da plataforma. O 
 
 ### 12.1 O modelo: um arquivo, sobrescrito
 
-Cada licença tem **um** `banco.zip` e **um** `imagens.zip` na nuvem. O backup de hoje **substitui** o de ontem. Não há histórico de versões nem cópia de dias anteriores.
+Cada licença tem **um** `banco.zip` e **um** `imagens.zip` na nuvem — são espelhos, e o backup de hoje **substitui** o de ontem. Não há histórico de versões nem cópia de dias anteriores.
+
+Além deles, **um `os-AAAA-MM.zip` por mês** de ordens de serviço. Esses acumulam: mês fechado sobe uma única vez e nunca mais é reenviado. Não é versionamento — é o acervo particionado, e restaurar OS é baixar todos os pedaços. Ver [`erp-backup-contrato.md`](./erp-backup-contrato.md), seção D.
 
 Três consequências que precisam aparecer na tela do ERP:
 
@@ -592,9 +594,10 @@ Authorization: Bearer <token>
 | Campo | Tipo | Obrigatório | Observação |
 |---|---|---|---|
 | `hwid` | string | ✅ | Igual ao do token |
-| `tipo` | `banco` \| `imagens` | ✅ | |
+| `tipo` | `banco` \| `imagens` \| `os` | ✅ | |
+| `periodo` | string `AAAA-MM` | ✅ em `os` | Mês do pedaço. **Proibido** nos outros dois. Não pode ser mês futuro |
 | `tamanhoBytes` | int | ✅ | Entre 1.024 e 524.288.000 (500 MB). **Tamanho exato do arquivo** |
-| `checksumSha256` | string hex | ✅ em `imagens` | SHA-256 do zip. Opcional em `banco`, obrigatório em `imagens` |
+| `checksumSha256` | string hex | ✅ em `imagens` e `os` | Calcule sobre um **manifesto ordenado**, nunca sobre o zip. Opcional em `banco` |
 | `origem` | `AUTOMATICO` \| `MANUAL` | não | Padrão `AUTOMATICO` |
 
 **Resposta — precisa enviar:**
@@ -605,6 +608,7 @@ Authorization: Bearer <token>
   "uploadId": "fa0ae4f2-dafc-40d9-9a66-6f0e45a2dde0",
   "url": "https://<conta>.r2.cloudflarestorage.com/<bucket>/clientes/.../banco.zip?X-Amz-...",
   "chave": "clientes/<clienteId>/<licencaId>/banco.zip",
+  "periodo": null,
   "metodo": "PUT",
   "headers": {
     "Content-Type": "application/zip",
@@ -625,9 +629,13 @@ Authorization: Bearer <token>
 }
 ```
 
-`acao: "PULAR"` é **sucesso**, não erro. Acontece quando o `checksumSha256` de `imagens` é igual ao do último backup confirmado. Mostre "backup em dia" e **não chame `/confirmar`**. É o que evita subir 150 MB de fotos todo dia sem nada ter mudado.
+`acao: "PULAR"` é **sucesso**, não erro. Acontece quando o `checksumSha256` é igual ao do último backup confirmado **do mesmo escopo** — em `os`, o mesmo mês. Mostre "backup em dia" e **não chame `/confirmar`**. É o que evita subir fotos todo dia sem nada ter mudado.
 
-> **Uma vez por semana o `PULAR` não vem, mesmo sem nada ter mudado.** Se o último backup de imagens confirmado tiver mais de 7 dias, a plataforma manda `acao: "ENVIAR"` de qualquer forma e o ERP deve subir o pacote completo. Isso não é bug: é a rede de proteção contra um `checksumSha256` calculado errado, que ficaria igual para sempre e congelaria as imagens no primeiro envio sem ninguém perceber.
+**Em `os` o `PULAR` é a regra, não a exceção.** Depois do primeiro envio, todo mês fechado responde `PULAR` para sempre — é exatamente assim que a partição economiza. Trate como sucesso silencioso, sem alarme na tela.
+
+> **Nos espelhos, uma vez por semana o `PULAR` não vem mesmo sem nada ter mudado.** Se o último `imagens` confirmado tiver mais de 7 dias, a plataforma manda `acao: "ENVIAR"` de qualquer forma. Não é bug: é a rede de proteção contra um `checksumSha256` calculado errado, que ficaria igual para sempre e congelaria as imagens no primeiro envio sem ninguém perceber.
+>
+> **Pedaço de OS de mês fechado não tem essa rede**, e é de propósito: ali o conteúdo é imutável de verdade, então checksum igual significa mesmo "nada mudou". Forçar reenvio semanal devolveria o custo que a partição existe para eliminar.
 
 ### 12.6 O upload
 
@@ -674,17 +682,28 @@ A plataforma **não acredita** no `ok: true`: ela consulta o arquivo no bucket e
 { "hwid": "PC-DESKTOP-ABC123", "tipo": "banco" }
 ```
 
+A resposta é sempre uma **lista**, mesmo quando há um arquivo só. Em `banco` e `imagens` vem um item com `periodo: null`; em `os` vêm **todos** os meses de uma vez.
+
 ```json
 {
-  "url": "https://...",
-  "chave": "clientes/.../banco.zip",
-  "tamanhoBytes": 65536,
-  "geradoEm": "2026-07-26T16:48:38.859Z",
+  "tipo": "os",
+  "arquivos": [
+    { "periodo": "2026-05", "url": "https://...", "chave": "clientes/.../os-2026-05.zip",
+      "tamanhoBytes": 48234496, "geradoEm": "2026-06-01T03:10:00.000Z" },
+    { "periodo": "2026-06", "url": "https://...", "chave": "clientes/.../os-2026-06.zip",
+      "tamanhoBytes": 51201024, "geradoEm": "2026-07-01T03:10:00.000Z" }
+  ],
+  "indisponiveis": [],
+  "totalBytes": 99435520,
   "expiraEm": "2026-07-26T16:53:38.859Z"
 }
 ```
 
-URL de download válida por **5 minutos**. Mesmo gate do upload: licença em teste ou vencida não baixa.
+URLs válidas por **5 minutos**, e `expiraEm` é a primeira que vence. Mesmo gate do upload: licença em teste ou vencida não baixa.
+
+**Acervo grande não cabe em 5 minutos, e isso é intencional.** Em vez de esticar a validade de um link que entrega o banco inteiro do cliente, baixe o que der e **chame de novo** para o que faltar — `url-download` é leitura pura e não tem cota diária.
+
+**`indisponiveis` não pode ser ignorado.** Lista vazia é o caso normal; qualquer item ali é um pedaço que consta no registro mas sumiu do bucket, e a restauração vai sair com buraco. Avise o usuário **antes** de restaurar.
 
 ### 12.9 Códigos de erro
 
@@ -694,8 +713,10 @@ URL de download válida por **5 minutos**. Mesmo gate do upload: licença em tes
 | `BACKUP_LIMITE_DIARIO` | 429 | Avisar que a cota acabou. **Não repetir hoje** |
 | — | — | *Upload que falhou **não** consome a cota, desde que o ERP reporte pelo `/confirmar` com `ok: false`. Se o ERP travar sem reportar, a vaga só volta quando o cron marca a linha como falha — **até ~70 min** (60 de carência + o intervalo de 10 min do cron), não quando a URL expira. É o principal motivo para sempre chamar `/confirmar`* |
 | `BACKUP_TAMANHO_SUSPEITO` | 409 | Só acontece com `origem: "AUTOMATICO"`. Avisar o usuário que o arquivo encolheu muito e oferecer o botão de backup manual, que reenvia com `origem: "MANUAL"` e passa. **Nunca reenviar sozinho como MANUAL** — isso anularia a proteção |
+| `BACKUP_LIMITE_BACKFILL` | 429 | A cota de meses antigos acabou hoje. **Pare o laço do backfill** — continua amanhã de onde parou, nenhum mês é perdido |
+| `BACKUP_PERIODO_FUTURO` | 400 | Bug do ERP: só envie até o `periodoCorrente` que veio no `/status` |
 | `BACKUP_HWID_DIVERGENTE` | 403 | Bug do ERP: use o `hwid` do token |
-| `BACKUP_CHECKSUM_OBRIGATORIO` | 400 | Bug do ERP: calcule o SHA-256 antes de pedir URL de imagens |
+| `BACKUP_CHECKSUM_OBRIGATORIO` | 400 | Bug do ERP: calcule o checksum antes de pedir URL de `imagens` ou `os` |
 | `BACKUP_DADOS_INVALIDOS` | 400 | Tamanho fora da faixa ou campo faltando. Ver `detalhes` |
 | `BACKUP_ARQUIVO_AUSENTE` | 409 | O upload não chegou. Refazer o ciclo do início |
 | `BACKUP_TAMANHO_DIVERGENTE` | 409 | O que chegou tem tamanho diferente. Refazer o ciclo |
@@ -707,15 +728,22 @@ URL de download válida por **5 minutos**. Mesmo gate do upload: licença em tes
 
 - [ ] Empacotar o banco com `VACUUM INTO` (nunca copiar o arquivo com o banco aberto) e comprimir
 - [ ] Incluir um `manifest.json` dentro do zip: versão do ERP, versão do schema local, data/hora, e o SHA-256 e tamanho de cada arquivo
-- [ ] Calcular o `sha256` e o tamanho **do zip finalizado**
-- [ ] `GET /status` ao abrir a tela → se `planoPermiteBackup: false`, desabilitar e exibir `motivoBloqueio`
-- [ ] `POST /url-upload` → tratar `acao: "PULAR"` como sucesso
+- [ ] Medir o tamanho **do zip finalizado** (é ele que vai no `Content-Length` assinado)
+- [ ] Calcular o `checksumSha256` sobre um **manifesto ordenado do conteúdo**, nunca sobre o zip — zip não é determinístico e o dedupe nunca dispararia
+- [ ] Separar as fotos: catálogo de produtos em `imagens`, ordens de serviço em `os` agrupadas por mês
+- [ ] Ler `periodoCorrente` do `/status` — **nunca** calcular o mês localmente
+- [ ] `GET /status` ao abrir a tela → se `planoPermiteBackup: false`, desabilitar e exibir `motivoBloqueio` (ramificar pelo `codigoBloqueio`)
+- [ ] Comparar `copiaAtual.os[].checksumSha256` com o local **antes de zipar** — economiza o trabalho todo
+- [ ] Backfill: subir os meses fechados que faltam, parando no `429 BACKUP_LIMITE_BACKFILL`
+- [ ] `POST /url-upload` → tratar `acao: "PULAR"` como sucesso (em `os` é o caso comum)
 - [ ] `PUT` com `Content-Length` exato
 - [ ] `POST /confirmar` sempre, inclusive com `ok: false`
+- [ ] Reconciliação na inicialização: pendência com mais de 1 h é limpeza local, sem chamar a API
+- [ ] Restauração de `os`: baixar **todos** os pedaços, e avisar o usuário se `indisponiveis` não vier vazio
 - [ ] Tratar cada erro pelo `codigo`, nunca pelo texto
 - [ ] Não repetir automaticamente em `403`, `429` ou `409`
-- [ ] Na tela: "backups realizados" (histórico) separado de "cópia disponível para restaurar" (uma só)
+- [ ] Na tela: "backups realizados" (histórico) separado do que existe para restaurar
 
 ---
 
-*Documento gerado a partir do código-fonte da plataforma (`apps/server/src/features/dispositivos` e `apps/server/src/features/erp`) em 16/06/2026. Seção de login/reinstalação adicionada em 06/07/2026. Seção de cobrança/renovação recorrente adicionada em 11/07/2026. Seção de backup em nuvem adicionada em 26/07/2026, validada ponta a ponta em produção.*
+*Documento gerado a partir do código-fonte da plataforma (`apps/server/src/features/dispositivos` e `apps/server/src/features/erp`) em 16/06/2026. Seção de login/reinstalação adicionada em 06/07/2026. Seção de cobrança/renovação recorrente adicionada em 11/07/2026. Seção de backup em nuvem adicionada em 26/07/2026, validada ponta a ponta em produção. Partição mensal do backup de ordens de serviço (tipo `os`) adicionada em 27/07/2026 — ainda **não** validada em produção.*

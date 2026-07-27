@@ -21,7 +21,7 @@ export class BackupController {
   @Post(':licencaId/url-download')
   urlDownload(
     @Param('licencaId') licencaId: string,
-    @Body() body: { tipo?: string },
+    @Body() body: { tipo?: string; periodo?: string },
     @Req() req: Request & { user?: { userId?: string } },
   ) {
     // O IP vem do proxy à frente da API (Nginx), então o cabeçalho encaminhado
@@ -32,6 +32,7 @@ export class BackupController {
     return this.backupService.urlDownloadAdmin(licencaId, body?.tipo ?? 'banco', {
       usuarioId: req.user?.userId ?? null,
       ip,
+      periodo:   body?.periodo ?? null,
     })
   }
 }

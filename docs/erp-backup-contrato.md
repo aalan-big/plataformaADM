@@ -18,29 +18,44 @@ Fontes no servidor: `apps/server/src/features/erp/erp-backup.service.ts`,
 
 ## A. O que trava o desenho
 
-### A.1 — O bucket sobrescreve. Não acumula versões.
+### A.1 — Dois espelhos que sobrescrevem, e um acervo que acumula por mês.
 
-Cada licença tem **exatamente dois objetos** na nuvem, em chave fixa:
+São **três tipos**, porque são três ciclos de vida diferentes:
 
 ```
-clientes/<clienteId>/<licencaId>/banco.zip
-clientes/<clienteId>/<licencaId>/imagens.zip
+clientes/<clienteId>/<licencaId>/banco.zip        ESPELHO — sobrescrito todo dia
+clientes/<clienteId>/<licencaId>/imagens.zip      ESPELHO — sobrescrito todo dia
+clientes/<clienteId>/<licencaId>/os-2026-05.zip   PEDAÇO  — sobe uma vez, nunca mais
+clientes/<clienteId>/<licencaId>/os-2026-06.zip   PEDAÇO  — sobe uma vez, nunca mais
+clientes/<clienteId>/<licencaId>/os-2026-07.zip   PEDAÇO  — mês corrente, sobe todo dia
 ```
 
-O envio de hoje sobrescreve o de ontem. Não há ring de dias, não há versionamento,
-não existe "restaurar o de terça".
+**Espelho** (`banco`, `imagens`): o envio de hoje sobrescreve o de ontem. Não há ring
+de dias, não há versionamento, não existe "restaurar o de terça". Só faz sentido
+guardar o estado atual, porque o conteúdo muda o tempo todo — venda nova, produto
+editado, foto de catálogo trocada.
 
-**Consequência para o ERP:** o ZIP tem que ser sempre **completo e autossuficiente**.
-Backup incremental/diferencial não tem para onde ir — não há base anterior no bucket
-para aplicar um delta em cima.
+**Pedaço** (`os`): foto de ordem de serviço é escrita uma vez e nunca mais tocada.
+Cada mês vira um arquivo próprio; mês fechado sobe uma única vez na vida da
+instalação. Não é versionamento — é o acervo particionado. Restaurar OS significa
+baixar **todos** os pedaços.
 
-**O problema das fotos continua de pé, mas não é o que se imagina.** Não é acúmulo
-no bucket (só existe uma cópia; o custo de armazenamento é fixo). São dois outros:
+> **Por que não um espelho só.** Pasta de OS cresce para sempre e nunca encolhe. Como
+> espelho, o envio diário cresceria junto: aos 400 MB o ERP subiria 400 MB toda noite,
+> dos quais ~99 % seriam fotos de meses atrás que não mudaram e nunca vão mudar — até
+> bater no teto de 500 MB, quando o backup de imagens simplesmente pararia de
+> funcionar. Particionado, o envio diário é só o mês corrente e **não cresce com a
+> idade da instalação**.
 
-1. **Banda.** Qualquer foto nova invalida o dedupe e o ZIP inteiro sobe de novo.
-2. **O teto de 500 MB.** Este é o muro real. Quando a pasta de imagens zipada passar
-   de 500 MB, o backup de imagens simplesmente para de funcionar — `url-upload`
-   recusa no schema, antes de qualquer coisa.
+**Consequência para o ERP:** cada ZIP tem que ser **completo e autossuficiente dentro
+do seu escopo**. Delta não tem para onde ir — não existe base anterior no bucket para
+aplicar diferença em cima. Em `os`, o escopo é o mês: `os-2026-05.zip` contém todas as
+fotos de OS de maio, e só elas.
+
+**O teto de 500 MB agora se aplica a cada pedaço, não ao acervo.** Era o muro real
+enquanto o pacote de imagens crescia sem limite; com a partição, um mês de fotos de OS
+não chega perto dele. Se um único mês passar de 500 MB, aí sim há um problema de
+volume que merece conversa — mas é um sinal, não o funcionamento normal.
 
 É por isso que a seção 6 da doc de portas de entrada insiste em **reduzir a foto no
 cadastro** (~1200px). ZIP não comprime JPEG nem WebP: o tamanho fica decidido no
@@ -88,43 +103,74 @@ Isso é estável por construção, é barato (não relê os bytes das fotos) e r
 exatamente à pergunta que o dedupe faz. Se quiser rigor maior, troque `st_mtime` pelo
 sha256 de cada arquivo — mais lento, imune a mexida de relógio.
 
-> ⚠ **Corrige a doc:** a seção 7 de `erp-portas-de-entrada.md` mostra
-> `checksum = sha256_do_arquivo('tmp/banco.zip')`. Para `imagens`, isso é a receita
-> do bug descrito acima. Para `banco` é inofensivo — o campo é opcional ali e o
-> dedupe nem se aplica, já que o banco muda todo dia de qualquer forma.
+> ⚠ **Corrigido na doc do ERP:** a seção 7 de `erp-portas-de-entrada.md` mandava fazer
+> `checksum = sha256_do_arquivo('tmp/banco.zip')`. Para `imagens` e `os` isso é a
+> receita do bug descrito acima. Para `banco` é inofensivo — o campo é opcional ali e
+> o dedupe nem se aplica, já que o banco muda todo dia de qualquer forma.
 
-**Rede de proteção que já existe:** se o checksum de `imagens` ficar congelado por
-**7 dias**, o servidor ignora o dedupe e força o envio completo. Ou seja, o pior caso
-de um checksum errado-mas-estável é backup semanal em vez de diário, não imagens
-paradas para sempre. Não conte com isso como estratégia — é rede, não plano.
+**Em `os` o checksum carrega o mecanismo inteiro.** É ele que faz um mês fechado
+responder `PULAR` para sempre depois do primeiro envio — sem lógica adicional no
+servidor. Se o checksum de um pedaço fechado oscilar, aquele mês volta a subir todo
+dia e a partição perde o sentido. Como o conteúdo de mês fechado não muda, o manifesto
+ordenado dá um valor estável por construção.
 
-### A.3 — `PULAR` compara contra a última cópia **confirmada**.
+**Rede de proteção nos espelhos:** se o checksum de `imagens` ficar congelado por
+**7 dias**, o servidor ignora o dedupe e força o envio completo. O pior caso de um
+checksum errado-mas-estável é backup semanal em vez de diário, não imagens paradas para
+sempre. Não conte com isso como estratégia — é rede, não plano. **Pedaço de OS fechado
+não tem essa rede**, pela razão explicada em A.3.
 
-`findUltimoBackupConfirmado` filtra `status: 'CONFIRMADO'` e ordena por `emitidoEm`
-desc. Tentativa que falhou, ou que ficou pendurada sem confirmar, **não** entra na
-comparação.
+### A.3 — `PULAR` compara contra a última cópia **confirmada do mesmo escopo**.
 
-Isso é o comportamento seguro: um upload que morreu no meio não faz o próximo dia
-responder "nada mudou" apontando para um arquivo que não subiu.
+Filtra `status: 'CONFIRMADO'` e ordena por `emitidoEm` desc. Tentativa que falhou, ou
+que ficou pendurada sem confirmar, **não** entra na comparação. Um upload que morreu no
+meio não faz o próximo dia responder "nada mudou" apontando para arquivo que não subiu.
 
-### A.4 — O limite é **por tipo**, e hoje as duas cotas são iguais.
+**Em `os` o escopo é o mês.** `os-2026-06` compara só com envios anteriores de
+`os-2026-06`, nunca com maio. Comparar meses diferentes não faria sentido nenhum — são
+acervos distintos, e a checagem de queda suspeita acusaria todo mês mais fraco que o
+anterior como suspeito.
 
-| Tipo | Cota/dia | Env para sobrescrever |
+**A rede de proteção dos 7 dias NÃO se aplica a pedaço de mês fechado.** Nos espelhos,
+checksum congelado por 7 dias força reenvio completo (é a proteção contra checksum
+errado-mas-estável). Em pedaço fechado o conteúdo é imutável de verdade, então checksum
+igual significa mesmo "nada mudou" — forçar reenvio semanal reintroduziria exatamente o
+custo que a partição existe para eliminar.
+
+### A.4 — Quatro cotas independentes, e em `os` a cota é **por mês**.
+
+| Balde | Cota/dia | Env |
 |---|---|---|
 | `banco` | **2** | `BACKUP_LIMITE_DIARIO_BANCO` |
 | `imagens` | **2** | `BACKUP_LIMITE_DIARIO_IMAGENS` |
+| `os` do **mês corrente** | **2** | `BACKUP_LIMITE_DIARIO_OS` |
+| `os` de meses **fechados** (backfill) | **12** | `BACKUP_LIMITE_BACKFILL_DIARIO` |
 
-Contadores independentes. O automático diário consome 1 de banco **e** 1 de imagens,
-sobrando uma vaga de cada para o botão manual do usuário.
+Contadores independentes. O ciclo automático consome 1 de banco, 1 de imagens e 1 do
+mês corrente de OS — sobrando uma vaga de cada para o botão manual do usuário.
 
-> **Mudou.** `imagens` era 1/dia. Com essa cota, o automático zerava a vaga e o botão
-> manual de imagens respondia `429` — justamente no único dia em que ele importa, que
-> é aquele em que o usuário mexeu nas fotos e quis forçar. Corrigido para 2.
+> **Mudou.** `imagens` era 1/dia: o automático zerava a vaga e o botão manual respondia
+> `429` justamente no único dia em que ele importa, aquele em que o usuário mexeu nas
+> fotos e quis forçar. Corrigido para 2.
+
+**A cota de OS é por mês, não pelo tipo inteiro.** Sem isso o backfill dos meses
+antigos competiria por vaga com o backup do mês corrente, e o cliente ficaria com o
+dado de hoje desprotegido enquanto recupera o de dois anos atrás.
+
+**Por que o backfill tem 12 e não 2.** Um cliente que instala hoje com dois anos de OS
+tem 24 pedaços para subir, cada um exatamente uma vez na vida. A 2/dia isso levaria 12
+dias com o acervo desprotegido — justamente na janela em que ele ainda não tem backup
+nenhum. A folga é segura porque o caso é limitado por construção: o que a cota diária
+protege é upload **repetido**, e pedaço fechado que já subiu responde `PULAR` sem
+consumir vaga. O número de pedaços novos possíveis é o número de meses de histórico —
+finito, e só diminui. Estourou a cota de backfill? O envio continua amanhã de onde
+parou; nenhum mês é perdido.
 
 Duas coisas que **não** gastam vaga, e valem para o cálculo do ERP:
 
-- `acao: "PULAR"` (nada mudou) — o dedupe roda antes da contagem e antes de gravar a
-  linha. Na maioria dos dias o backup de imagens não custa vaga nenhuma.
+- `acao: "PULAR"` — o dedupe roda antes da contagem e antes de gravar a linha. **Em
+  `os` isso é a regra, não a exceção:** depois do primeiro envio, todo mês fechado
+  responde `PULAR` para sempre.
 - `/confirmar` com `ok: false` — devolve a vaga na hora.
 
 Mesmo assim, a tela deve ler `enviadosHoje` e `limiteDiario` do `/status` e desabilitar
@@ -162,13 +208,15 @@ de `/confirmar`.
 Sequência real dentro de `url-upload`:
 
 ```
-1. gate de plano        → 403 se trial/vencida/inativa
-2. HWID confere         → 403 se divergir do token
-3. dedupe (imagens)     → PULAR aqui, e acaba. Nada gravado.
-4. queda suspeita       → 409 se automático e < 50% do último
-5. cota do dia          → 429 se estourou
-6. assina a URL         → falha aqui não gasta cota (assina antes de gravar)
-7. grava a linha        → é ESTA linha que ocupa a vaga
+1. gate de plano          → 403 se trial/vencida/inativa
+2. HWID confere           → 403 se divergir do token
+3. período futuro         → 400 se o mês ainda não chegou
+4. checksum obrigatório   → 400 em imagens e os sem checksum
+5. dedupe                 → PULAR aqui, e acaba. Nada gravado.
+6. queda suspeita         → 409 se automático e < 50% do último
+7. cota (diária OU backfill) → 429 se estourou
+8. assina a URL           → falha aqui não gasta cota (assina antes de gravar)
+9. grava a linha          → é ESTA linha que ocupa a vaga
 ```
 
 O passo 6 vir antes do 7 é deliberado: se o bucket estiver mal configurado, o cliente
@@ -413,8 +461,9 @@ quando voltar.
   "planoPermiteBackup": true,
   "motivoBloqueio": null,
   "codigoBloqueio": null,
-  "limiteDiario":  { "banco": 2, "imagens": 2 },
-  "enviadosHoje":  { "banco": 1, "imagens": 0 },
+  "periodoCorrente": "2026-07",        // qual mês o ERP deve tratar como aberto
+  "limiteDiario":  { "banco": 2, "imagens": 2, "os": 2, "backfill": 12 },
+  "enviadosHoje":  { "banco": 1, "imagens": 0, "os": 1, "backfill": 0 },
   "tamanhoMaximoBytes": 524288000,
 
   "copiaAtual": {
@@ -425,22 +474,35 @@ quando voltar.
       "chave":        "clientes/<clienteId>/<licencaId>/banco.zip",
       "checksumSha256": "ee8f7504f2d54f37..."   // o que está na nuvem AGORA
     },
-    "imagens": null                    // null = nunca houve backup deste tipo
+    "imagens": null,                   // null = nunca houve backup deste tipo
+
+    // Um item por mês que existe na nuvem, do mais antigo para o mais novo.
+    // Lista vazia = nenhum pedaço enviado ainda.
+    "os": [
+      { "periodo": "2026-05", "tamanhoBytes": 48234496, "geradoEm": "...", "checksumSha256": "..." },
+      { "periodo": "2026-06", "tamanhoBytes": 51201024, "geradoEm": "...", "checksumSha256": "..." },
+      { "periodo": "2026-07", "tamanhoBytes": 22118400, "geradoEm": "...", "checksumSha256": "..." }
+    ]
   },
 
   "historicoEventos": [
     {
-      "tipo": "BANCO", "status": "CONFIRMADO", "origem": "AUTOMATICO",
+      "tipo": "BANCO", "periodo": null, "status": "CONFIRMADO", "origem": "AUTOMATICO",
       "tamanhoBytes": 31457280, "hwid": "a1b2c3...",
       "emitidoEm": "...", "confirmadoEm": "...", "erro": null
     }
-    // até 30 eventos, mais recente primeiro
+    // até 30 eventos, mais recente primeiro. `periodo` só vem preenchido em OS.
   ]
 }
 ```
 
-Para a tela de Backup use `copiaAtual`. Ela responde "o que existe na nuvem **agora**"
-— no máximo um de cada tipo.
+Para a tela de Backup use `copiaAtual`. Ela responde "o que existe na nuvem **agora**":
+um espelho de cada, e um pedaço por mês de OS.
+
+**`periodoCorrente` vem do servidor de propósito.** É ele que diz qual mês ainda está
+aberto, e o corte é no fuso de São Paulo pelo relógio **do servidor**. Se o ERP
+calcular sozinho, uma máquina com a data errada fecharia o mês na hora errada — e
+pedaço fechado cedo demais perde as fotos que ainda entrariam.
 
 `historicoEventos` é **diário de eventos, não lista de restauração.** Se a tela
 mostrar essa lista, deixe explícito que é histórico: prometer escolha de versão que
@@ -518,6 +580,96 @@ persistir o `uploadId` pendente em disco e reconciliar na próxima abertura.
 
 ---
 
+## D. O ciclo com `os` — o que o ERP passa a fazer
+
+### D.1 — Empacotamento
+
+Três pacotes, não dois:
+
+| Pacote | Conteúdo | Frequência |
+|---|---|---|
+| `banco.zip` | `VACUUM INTO` + manifesto | todo dia |
+| `imagens.zip` | fotos de **produto** (catálogo) | todo dia |
+| `os-AAAA-MM.zip` | fotos de OS **daquele mês** | ver abaixo |
+
+O mês de cada foto sai da **data de criação do arquivo** (ou da data da OS, se o ERP
+guardar essa relação — é mais confiável). Uma foto só pode estar em um pedaço.
+
+### D.2 — O ciclo diário
+
+```python
+st = get("/erp/backup/status")
+mes_atual = st["periodoCorrente"]          # NUNCA calcule isso localmente
+
+# 1) Espelhos, como sempre
+enviar("banco",   checksum=None)
+enviar("imagens", checksum=checksum_do_manifesto(pasta_produtos))
+
+# 2) Mês corrente de OS — muda todo dia, então sobe todo dia
+enviar("os", periodo=mes_atual, checksum=checksum_do_manifesto(fotos_de(mes_atual)))
+
+# 3) Meses fechados que ainda não estão na nuvem — o backfill
+ja_na_nuvem = { p["periodo"] for p in st["copiaAtual"]["os"] }
+for mes in sorted(meses_com_fotos()):
+    if mes >= mes_atual or mes in ja_na_nuvem:
+        continue
+    r = enviar("os", periodo=mes, checksum=checksum_do_manifesto(fotos_de(mes)))
+    if r.status_code == 429:               # BACKUP_LIMITE_BACKFILL
+        break                              # continua amanhã, nada é perdido
+```
+
+**Três coisas que economizam trabalho de verdade:**
+
+1. **Compare o checksum antes de zipar.** `copiaAtual.os[].checksumSha256` diz o que já
+   está na nuvem. Bateu, não zipe — o servidor responderia `PULAR` de qualquer forma, e
+   zipar é a parte cara.
+2. **`PULAR` é o caminho normal em `os`.** Depois do primeiro envio, todo mês fechado
+   responde `PULAR` para sempre. Trate como sucesso silencioso, sem alarme na tela.
+3. **Ordene o backfill do mais novo para o mais antigo** se quiser proteger primeiro o
+   que é mais provável de ser necessário numa restauração.
+
+### D.3 — A virada do mês
+
+No dia 1º, `periodoCorrente` muda e o mês anterior vira pedaço fechado. O ERP não
+precisa fazer nada de especial: no ciclo seguinte ele envia o novo mês corrente
+(pequeno) e o mês que fechou entra no laço do backfill, sobe uma última vez com o
+conteúdo definitivo e nunca mais é tocado.
+
+**Um detalhe que evita perda:** feche o mês anterior **antes** de enviar o novo. Uma
+foto lançada às 23h50 do dia 31 tem que entrar no pedaço de julho, não no de agosto —
+e é por isso que o corte vem do servidor, no fuso de São Paulo.
+
+### D.4 — Restauração
+
+`url-download` com `tipo: "os"` devolve **todos** os pedaços de uma vez:
+
+```jsonc
+{
+  "tipo": "os",
+  "arquivos": [
+    { "periodo": "2026-05", "url": "https://...", "chave": "...", "tamanhoBytes": 48234496, "geradoEm": "..." },
+    { "periodo": "2026-06", "url": "https://...", "chave": "...", "tamanhoBytes": 51201024, "geradoEm": "..." }
+  ],
+  "indisponiveis": [],        // pedaços registrados que sumiram do bucket
+  "totalBytes": 99435520,
+  "expiraEm": "2026-07-27T14:05:00.000Z"
+}
+```
+
+Para `banco` e `imagens` o formato é o mesmo, com **um** item e `periodo: null`.
+
+**As URLs valem 5 minutos e isso não vai dar para um acervo grande — de propósito.**
+Em vez de esticar a validade de um link que entrega o banco inteiro do cliente, o ERP
+baixa o que conseguir e **chama de novo** para o que faltar. `url-download` é leitura
+pura e não tem cota diária; repetir é barato.
+
+**`indisponiveis` não pode ser ignorado.** Lista vazia é o caso normal. Qualquer item
+ali significa que um pedaço registrado não está mais na nuvem, e a restauração vai sair
+com buraco. Avise o usuário **antes** de restaurar: acervo parcial que se apresenta
+como completo é o pior resultado possível nesta tela.
+
+---
+
 ## Resumo das constantes
 
 | Constante | Valor | Onde muda |
@@ -526,12 +678,15 @@ persistir o `uploadId` pendente em disco e reconciliar na próxima abertura.
 | Tamanho máximo | 500 MB | `backup.schema.ts` |
 | Cota diária `banco` | 2 | env `BACKUP_LIMITE_DIARIO_BANCO` |
 | Cota diária `imagens` | 2 | env `BACKUP_LIMITE_DIARIO_IMAGENS` |
+| Cota diária `os` (mês corrente) | 2 | env `BACKUP_LIMITE_DIARIO_OS` |
+| Cota diária de backfill (meses fechados) | 12 | env `BACKUP_LIMITE_BACKFILL_DIARIO` |
+| Corte do mês (`periodoCorrente`) | `America/Sao_Paulo`, relógio do servidor | `backup.repository.ts` |
 | Corte do dia | 00:00 `America/Sao_Paulo`, relógio do servidor | `backup.repository.ts` |
 | TTL da URL de upload | 30 min | `storage.service.ts` |
 | TTL da URL de download | **5 min** — não acompanha o de upload, ver nota | `storage.service.ts` |
 | Vaga órfã expira | 60 min (= TTL + 30, **derivado**), varrido a cada 10 min | `cron.service.ts` |
-| Queda suspeita (só automático) | < 50 % do último confirmado → 409 | `erp-backup.service.ts` |
-| Força envio de imagens | 7 dias com checksum igual | `erp-backup.service.ts` |
+| Queda suspeita (só automático) | < 50 % do último confirmado do mesmo escopo → 409 | `erp-backup.service.ts` |
+| Força envio de espelho | 7 dias com checksum igual (**não** vale para pedaço fechado) | `erp-backup.service.ts` |
 | Retenção dos arquivos | 90 dias após licença não-ATIVA | `cron.service.ts` |
 | Avisos de retenção | dias 75 e 83 | `cron.service.ts` |
 | Retenção do histórico | 180 dias | `cron.service.ts` |
@@ -554,7 +709,8 @@ e podem mudar.
 | HTTP | `codigo` | Repetir? |
 |---|---|---|
 | 400 | `BACKUP_DADOS_INVALIDOS` | não — bug no ERP |
-| 400 | `BACKUP_CHECKSUM_OBRIGATORIO` | não — falta o checksum em `imagens` |
+| 400 | `BACKUP_CHECKSUM_OBRIGATORIO` | não — falta o checksum em `imagens` ou `os` |
+| 400 | `BACKUP_PERIODO_FUTURO` | não — mês que ainda não terminou de existir |
 | 403 | `BACKUP_PLANO_INATIVO` | não — mostrar a mensagem |
 | 403 | `BACKUP_HWID_DIVERGENTE` | não — reconectar antes |
 | 404 | `BACKUP_LICENCA_NAO_ENCONTRADA` | não |
@@ -564,6 +720,7 @@ e podem mudar.
 | 409 | `BACKUP_ARQUIVO_AUSENTE` | sim, no próximo ciclo |
 | 409 | `BACKUP_TAMANHO_DIVERGENTE` | sim, no próximo ciclo |
 | 429 | `BACKUP_LIMITE_DIARIO` | **não** — só amanhã |
+| 429 | `BACKUP_LIMITE_BACKFILL` | **não** — o backfill continua amanhã de onde parou |
 | 503 | `BACKUP_NAO_CONFIGURADO` | sim, no próximo ciclo — é o servidor |
 
 ---
@@ -587,7 +744,12 @@ O TTL de **download** não foi tocado: continua em 300 s. Só o de upload foi pa
 Nenhuma é breaking: 1 e 2 afrouxam limites, 3 e 4 acrescentam campos, 5 é documentação.
 Um ERP escrito contra a versão anterior continua funcionando.
 
-## Aberto — o teto de 500 MB e a pasta que cresce para sempre
+## O dimensionamento que motivou a partição
+
+> **Implementado.** A partição descrita abaixo saiu do papel — ver a seção **D** para o
+> contrato do lado do ERP. Esta seção fica como registro do raciocínio, e o número do
+> cliente ainda importa: ele diz o tamanho do backfill inicial e se algum mês isolado
+> se aproxima do teto.
 
 ### O que dimensiona não é o catálogo
 
@@ -608,7 +770,7 @@ tempo estoura", e a resposta é sempre *estoura*.
 | 5 OS/dia × 3 fotos | 4,5 MB | ~3,5 meses |
 | 10 OS/dia × 4 fotos | 12 MB | ~6 semanas |
 
-### O problema real é a repetição, não o teto
+### O problema real era a repetição, não o teto
 
 Com pasta append-only, o modelo atual — **um zip completo, sobrescrito todo dia** —
 tem dois defeitos que pioram com o tempo:
@@ -637,17 +799,15 @@ Mês fechado nunca mais sobe. O envio diário passa a ser só o mês corrente �
 MB, constante, **não cresce com a idade da instalação**. Restauração baixa todos os
 pedaços. O teto de 500 MB deixa de ser relevante, porque nenhum pedaço chega perto.
 
-**Custo:** exige mudança no servidor — a chave deixa de ser fixa, o bucket passa a
-acumular objetos por período, e retenção/download/`copiaAtual` precisam lidar com N
-arquivos em vez de um. Não é trivial, mas é a forma certa para o dado.
-
-**Isto ainda não está implementado nem decidido.** Está registrado aqui para não virar
-descoberta tardia.
+**Custo, que foi pago:** a chave deixou de ser fixa, o bucket passou a acumular objetos
+por período, e retenção/download/`copiaAtual` passaram a lidar com N arquivos. A
+retenção foi a única parte que não mudou nada — ela já apagava por prefixo.
 
 ### O número que ainda falta
 
-Mesmo com a direção clara, o dado real decide a urgência — quanto tempo de folga existe
-antes do estouro. Rode na máquina do cliente e mande a saída:
+A direção não dependia dele, mas duas coisas dependem: o tamanho do backfill inicial
+(quantos meses o cliente vai subir na primeira semana) e se algum mês isolado chega
+perto do teto de 500 MB. Rode na máquina do cliente e mande a saída:
 
 ```powershell
 # Ajuste o caminho para a pasta de dados do ERP

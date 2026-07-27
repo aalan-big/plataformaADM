@@ -25,8 +25,11 @@ import {
   marcarBackupConfirmado,
   marcarBackupFalhou,
   contarBackupsDoDia,
+  contarBackfillDoDia,
   findUltimoBackupConfirmado,
+  findPedacosDeOsConfirmados,
   findBackupsRecentes,
+  periodoAtual,
   type TipoBackupDb,
 } from '@startbig/database'
 import {
@@ -59,7 +62,23 @@ function limiteDeEnv(chave: string, padrao: number): number {
 const LIMITE_DIARIO: Record<TipoBackupDb, number> = {
   BANCO:   limiteDeEnv('BACKUP_LIMITE_DIARIO_BANCO',   2),
   IMAGENS: limiteDeEnv('BACKUP_LIMITE_DIARIO_IMAGENS', 2),
+  /// Em OS a cota vale POR MÊS, não pelo tipo inteiro — senão o mês corrente
+  /// competiria por vaga com o backfill dos meses antigos.
+  OS:      limiteDeEnv('BACKUP_LIMITE_DIARIO_OS',      2),
 }
+
+/// Cota separada para primeiro envio de pedaço de mês JÁ FECHADO — o backfill.
+///
+/// Um cliente que instala hoje com dois anos de ordens de serviço tem 24 pedaços
+/// para subir, cada um uma vez na vida. Contra a cota normal de 2/dia isso
+/// levaria 12 dias com o acervo desprotegido, justamente na janela em que ele
+/// ainda não tem backup nenhum.
+///
+/// A folga é segura porque o caso é limitado por construção: o que a cota diária
+/// protege é upload REPETIDO, e pedaço fechado que já subiu bate o checksum e
+/// volta PULAR sem consumir vaga. O número de pedaços novos possíveis é o número
+/// de meses de histórico — finito, e só diminui.
+const LIMITE_BACKFILL_DIARIO = limiteDeEnv('BACKUP_LIMITE_BACKFILL_DIARIO', 12)
 
 /// Se o backup de hoje vier com menos da metade do último confirmado, algo está
 /// errado (banco truncado, ransomware, export pela metade). Com arquivo único e
@@ -67,10 +86,14 @@ const LIMITE_DIARIO: Record<TipoBackupDb, number> = {
 /// e não existe de onde voltar. Recusa e deixa o de ontem em paz.
 const QUEDA_SUSPEITA = 0.5
 
-/// Teto de dias que o backup de imagens pode ficar sem subir por causa do
+/// Teto de dias que um pacote MUTÁVEL pode ficar sem subir por causa do
 /// checksum. Ver a explicação no ponto onde é usado — é a rede de proteção
-/// contra checksum errado congelar as imagens em silêncio.
-const DIAS_FORCA_IMAGENS = 7
+/// contra checksum errado congelar o backup em silêncio.
+///
+/// Não se aplica a pedaço de mês fechado: ali o conteúdo é imutável de verdade,
+/// então checksum igual significa mesmo "nada mudou", e forçar reenvio semanal
+/// destruiria exatamente a economia que a partição existe para obter.
+const DIAS_FORCA_ESPELHO = 7
 
 @Injectable()
 export class ErpBackupService {
@@ -169,13 +192,28 @@ export class ErpBackupService {
    * uma com seu banco local. Sem ele, duas lojas do mesmo dono escreveriam no
    * mesmo objeto e a segunda apagaria o backup da primeira.
    */
-  private montarChave(clienteId: string, licencaId: string, tipo: TipoBackupDb): string {
-    const arquivo = tipo === 'BANCO' ? 'banco.zip' : 'imagens.zip'
+  private montarChave(
+    clienteId: string,
+    licencaId: string,
+    tipo:      TipoBackupDb,
+    periodo:   string | null,
+  ): string {
+    const arquivo =
+      tipo === 'BANCO'   ? 'banco.zip'   :
+      tipo === 'IMAGENS' ? 'imagens.zip' :
+      `os-${periodo}.zip`
     return `clientes/${clienteId}/${licencaId}/${arquivo}`
   }
 
-  private paraTipoDb(tipo: 'banco' | 'imagens'): TipoBackupDb {
-    return tipo === 'banco' ? 'BANCO' : 'IMAGENS'
+  private paraTipoDb(tipo: 'banco' | 'imagens' | 'os'): TipoBackupDb {
+    return tipo === 'banco' ? 'BANCO' : tipo === 'imagens' ? 'IMAGENS' : 'OS'
+  }
+
+  /// Pedaço de mês que já acabou. É a única coisa neste sistema que pode ser
+  /// tratada como imutável, e é disso que sai tanto a cota de backfill quanto a
+  /// dispensa do reenvio forçado semanal.
+  private ehPedacoFechado(tipo: TipoBackupDb, periodo: string | null): boolean {
+    return tipo === 'OS' && periodo !== null && periodo < periodoAtual()
   }
 
   // ── Endpoints ─────────────────────────────────────────────────────────────
@@ -192,16 +230,33 @@ export class ErpBackupService {
         'HWID informado não corresponde ao da sessão autenticada.',
       )
 
-    // Imagens sem checksum não dá para deduplicar, e sem dedupe a mesma pasta de
-    // 150 MB sobe todo dia sem nada ter mudado. É o maior desperdício possível.
-    if (tipo === 'IMAGENS' && !dados.checksumSha256)
+    const periodo = dados.periodo ?? null
+
+    // Mês que ainda não começou não tem conteúdo para empacotar. Aceitar seria
+    // gravar um pedaço que depois precisaria ser reenviado, ocupando a chave
+    // definitiva daquele mês com dados pela metade.
+    if (tipo === 'OS' && periodo && periodo > periodoAtual())
+      throw this.erro(
+        HttpStatus.BAD_REQUEST,
+        'BACKUP_PERIODO_FUTURO',
+        `Período ${periodo} ainda não terminou de existir. Envie no máximo até o mês corrente.`,
+      )
+
+    // Sem checksum não dá para deduplicar, e sem dedupe a mesma pasta de fotos
+    // sobe todo dia sem nada ter mudado. É o maior desperdício possível — e em
+    // OS é o mecanismo inteiro: é o checksum que faz o pedaço fechado responder
+    // PULAR para sempre depois do primeiro envio.
+    if (tipo !== 'BANCO' && !dados.checksumSha256)
       throw this.erro(
         HttpStatus.BAD_REQUEST,
         'BACKUP_CHECKSUM_OBRIGATORIO',
-        'checksumSha256 é obrigatório para backup de imagens.',
+        `checksumSha256 é obrigatório para backup de ${dados.tipo}.`,
       )
 
-    const ultimo = await findUltimoBackupConfirmado(licencaId, tipo)
+    // Escopo do "último": em OS é o último DAQUELE MÊS. Comparar com o mês
+    // anterior não faz sentido nenhum — são acervos diferentes, e a checagem de
+    // queda suspeita acusaria todo mês mais fraco que o anterior.
+    const ultimo = await findUltimoBackupConfirmado(licencaId, tipo, tipo === 'OS' ? periodo : undefined)
 
     // Espelho de imagens: nada mudou, nada sobe. Resposta é sucesso, não erro —
     // o ERP deve tratar como "backup em dia".
@@ -212,21 +267,28 @@ export class ErpBackupService {
     // congeladas no primeiro dia, e só descobriria na hora de restaurar. Por
     // isso o pulo tem prazo: passado o limite, sobe inteiro de novo mesmo que o
     // checksum bata. Custa um upload por semana e elimina a falha silenciosa.
-    if (tipo === 'IMAGENS' && ultimo?.checksumSha256 && ultimo.checksumSha256 === dados.checksumSha256) {
+    if (tipo !== 'BANCO' && ultimo?.checksumSha256 && ultimo.checksumSha256 === dados.checksumSha256) {
       const referencia = ultimo.confirmadoEm ?? ultimo.emitidoEm
       const diasDesde  = (Date.now() - referencia.getTime()) / (24 * 60 * 60 * 1000)
 
-      if (diasDesde < DIAS_FORCA_IMAGENS) {
+      // Pedaço de mês fechado não recebe a rede de proteção, e é de propósito: o
+      // conteúdo dele é imutável de verdade, então checksum igual significa mesmo
+      // "nada mudou". Forçar reenvio semanal aqui reintroduziria exatamente o
+      // custo que a partição existe para eliminar — anos de fotos subindo de novo
+      // toda semana, para sempre.
+      if (this.ehPedacoFechado(tipo, periodo) || diasDesde < DIAS_FORCA_ESPELHO) {
         return {
-          acao:      'PULAR',
-          motivo:    'Nenhuma imagem mudou desde o último backup.',
-          chave:     ultimo.chaveS3,
-          ultimoEm:  referencia,
+          acao:     'PULAR',
+          motivo:   tipo === 'OS'
+            ? `O pedaço de ${periodo} já está na nuvem e não mudou.`
+            : 'Nenhuma imagem mudou desde o último backup.',
+          chave:    ultimo.chaveS3,
+          ultimoEm: referencia,
         }
       }
 
       this.logger.log(
-        `[backup] imagens sem mudança há ${Math.floor(diasDesde)} dias na licença ${licencaId} — ` +
+        `[backup] ${tipo} sem mudança há ${Math.floor(diasDesde)} dias na licença ${licencaId} — ` +
         `forçando envio completo para não depender do checksum indefinidamente.`,
       )
     }
@@ -249,15 +311,32 @@ export class ErpBackupService {
         `sobrescrever a cópia boa. Se a redução é esperada, refaça pelo botão de backup manual.`,
       )
 
-    const enviadosHoje = await contarBackupsDoDia(licencaId, tipo)
-    if (enviadosHoje >= LIMITE_DIARIO[tipo])
-      throw this.erro(
-        HttpStatus.TOO_MANY_REQUESTS,
-        'BACKUP_LIMITE_DIARIO',
-        `Limite de ${LIMITE_DIARIO[tipo]} backup(s) de ${dados.tipo} por dia já atingido. Tente amanhã.`,
-      )
+    // Duas cotas, porque são dois usos diferentes. Backfill (pedaço de mês
+    // fechado que ainda não subiu) tem folga maior e conta num balde próprio;
+    // tudo o mais — banco, imagens, mês corrente — usa a cota diária normal.
+    if (this.ehPedacoFechado(tipo, periodo)) {
+      const backfillHoje = await contarBackfillDoDia(licencaId, periodoAtual())
+      if (backfillHoje >= LIMITE_BACKFILL_DIARIO)
+        throw this.erro(
+          HttpStatus.TOO_MANY_REQUESTS,
+          'BACKUP_LIMITE_BACKFILL',
+          `Limite de ${LIMITE_BACKFILL_DIARIO} pedaços de meses anteriores por dia já atingido. ` +
+          `O backfill continua amanhã de onde parou — nenhum mês é perdido.`,
+        )
+    } else {
+      // Em OS a cota é por mês: o mês corrente tem as 2 vagas dele, sem disputar
+      // com backfill nem com outros meses.
+      const enviadosHoje = await contarBackupsDoDia(licencaId, tipo, tipo === 'OS' ? periodo : undefined)
+      if (enviadosHoje >= LIMITE_DIARIO[tipo])
+        throw this.erro(
+          HttpStatus.TOO_MANY_REQUESTS,
+          'BACKUP_LIMITE_DIARIO',
+          `Limite de ${LIMITE_DIARIO[tipo]} backup(s) de ${dados.tipo}` +
+          `${tipo === 'OS' ? ` (${periodo})` : ''} por dia já atingido. Tente amanhã.`,
+        )
+    }
 
-    const chave = this.montarChave(licenca.clienteId, licencaId, tipo)
+    const chave = this.montarChave(licenca.clienteId, licencaId, tipo, periodo)
 
     // Assina ANTES de gravar a linha. A linha é o que conta cota diária, então se
     // a assinatura falhar (bucket mal configurado, credencial vencida) o cliente
@@ -273,6 +352,7 @@ export class ErpBackupService {
       licencaId,
       hwid:           dados.hwid,
       tipo,
+      periodo,
       chaveS3:        chave,
       origem:         dados.origem,
       tamanhoBytes:   dados.tamanhoBytes,
@@ -284,6 +364,7 @@ export class ErpBackupService {
       uploadId: registro.id,
       url,
       chave,
+      periodo,
       metodo:   'PUT',
       // O ERP precisa mandar exatamente estes headers — o Content-Length está
       // dentro da assinatura, então divergir de um byte invalida a URL.
@@ -351,15 +432,21 @@ export class ErpBackupService {
 
     const motivo = this.motivoDeBloqueio(licenca)
 
-    const [ultimoBanco, ultimoImagens, recentes] = await Promise.all([
+    const mesAtual = periodoAtual()
+
+    const [ultimoBanco, ultimoImagens, pedacosOs, recentes] = await Promise.all([
       findUltimoBackupConfirmado(licencaId, 'BANCO'),
       findUltimoBackupConfirmado(licencaId, 'IMAGENS'),
+      findPedacosDeOsConfirmados(licencaId),
       findBackupsRecentes(licencaId, 30),
     ])
 
     const enviadosHoje = {
       banco:   await contarBackupsDoDia(licencaId, 'BANCO'),
       imagens: await contarBackupsDoDia(licencaId, 'IMAGENS'),
+      // Só o mês corrente: é contra esta cota que o ciclo diário compete.
+      os:      await contarBackupsDoDia(licencaId, 'OS', mesAtual),
+      backfill: await contarBackfillDoDia(licencaId, mesAtual),
     }
 
     return {
@@ -368,20 +455,32 @@ export class ErpBackupService {
       /// campo muda quando a redação melhorar.
       motivoBloqueio:     motivo?.mensagem ?? null,
       codigoBloqueio:     motivo?.codigo   ?? null,
-      limiteDiario:       { banco: LIMITE_DIARIO.BANCO, imagens: LIMITE_DIARIO.IMAGENS },
+      limiteDiario: {
+        banco:    LIMITE_DIARIO.BANCO,
+        imagens:  LIMITE_DIARIO.IMAGENS,
+        os:       LIMITE_DIARIO.OS,
+        backfill: LIMITE_BACKFILL_DIARIO,
+      },
       enviadosHoje,
       tamanhoMaximoBytes: BACKUP_TAMANHO_MAX_BYTES,
+      /// Mês que o ERP deve tratar como pedaço aberto. Vem do servidor porque o
+      /// corte é no fuso de São Paulo pelo relógio DELE — se o ERP calcular
+      /// sozinho, uma máquina com data errada fecharia o mês na hora errada.
+      periodoCorrente: mesAtual,
 
-      // Cópias que EXISTEM na nuvem hoje: no máximo uma de cada tipo. O histórico
-      // abaixo é registro de eventos, não lista de arquivos restauráveis — a tela
-      // precisa deixar isso claro para não prometer restauração que não existe.
+      // Cópias que EXISTEM na nuvem hoje. Uma de banco, uma de imagens, e um
+      // pedaço por mês de OS. O histórico abaixo é registro de eventos, não lista
+      // de arquivos restauráveis — a tela precisa deixar isso claro para não
+      // prometer restauração que não existe.
       copiaAtual: {
         banco:   ultimoBanco   ? this.resumo(ultimoBanco)   : null,
         imagens: ultimoImagens ? this.resumo(ultimoImagens) : null,
+        os:      pedacosOs.map(p => ({ periodo: p.periodo, ...this.resumo(p) })),
       },
 
       historicoEventos: recentes.map(r => ({
         tipo:         r.tipo,
+        periodo:      r.periodo,
         status:       r.status,
         origem:       r.origem,
         tamanhoBytes: r.tamanhoRealBytes ?? r.tamanhoBytes,
@@ -404,10 +503,15 @@ export class ErpBackupService {
         'HWID informado não corresponde ao da sessão autenticada.',
       )
 
-    const tipo   = this.paraTipoDb(dados.tipo)
-    const ultimo = await findUltimoBackupConfirmado(licencaId, tipo)
+    const tipo = this.paraTipoDb(dados.tipo)
 
-    if (!ultimo)
+    // Espelho tem uma cópia; OS tem uma por mês, e restaurar é baixar todas —
+    // meio acervo restaurado é pior que nenhum, porque parece completo.
+    const registros = tipo === 'OS'
+      ? await findPedacosDeOsConfirmados(licencaId)
+      : [await findUltimoBackupConfirmado(licencaId, tipo)].filter(r => r !== null)
+
+    if (registros.length === 0)
       throw this.erro(
         HttpStatus.NOT_FOUND,
         'BACKUP_INEXISTENTE',
@@ -416,24 +520,73 @@ export class ErpBackupService {
 
     // Confere antes de assinar: link para objeto apagado pela retenção viraria
     // um 404 no meio do download, sem explicação para o cliente.
-    const objeto = await this.storage.conferirObjeto(ultimo.chaveS3)
-    if (!objeto)
+    const conferidos = await Promise.all(
+      registros.map(async r => ({ registro: r, objeto: await this.storage.conferirObjeto(r.chaveS3) })),
+    )
+
+    const presentes = conferidos.filter(c => c.objeto !== null)
+
+    // Pedaço registrado que sumiu do bucket é informado, nunca omitido em
+    // silêncio: uma restauração com buracos que se apresenta como completa é o
+    // pior resultado possível aqui.
+    const indisponiveis = conferidos
+      .filter(c => c.objeto === null)
+      .map(c => c.registro.periodo ?? dados.tipo)
+
+    if (presentes.length === 0)
       throw this.erro(
         HttpStatus.NOT_FOUND,
         'BACKUP_INEXISTENTE',
         'O backup registrado não está mais disponível na nuvem.',
       )
 
-    const { url, expiraEm } = await this.storage.gerarUrlDownload(ultimo.chaveS3)
+    const assinados = await Promise.all(
+      presentes.map(async ({ registro, objeto }) => {
+        const { url, expiraEm } = await this.storage.gerarUrlDownload(registro.chaveS3)
+        return {
+          expiraEm,
+          arquivo: {
+            periodo:      registro.periodo,
+            url,
+            chave:        registro.chaveS3,
+            tamanhoBytes: objeto!.tamanhoBytes,
+            geradoEm:     registro.confirmadoEm ?? registro.emitidoEm,
+          },
+        }
+      }),
+    )
 
-    this.logger.log(`[backup] download emitido — licenca=${licencaId} tipo=${tipo} hwid=${dados.hwid}`)
+    const arquivos = assinados.map(a => a.arquivo)
+    // A mais curta manda: é a primeira que expira, e o ERP precisa de UM prazo
+    // para decidir quando pedir a lista de novo.
+    const expiraEm = new Date(Math.min(...assinados.map(a => a.expiraEm.getTime())))
+
+    if (indisponiveis.length > 0)
+      this.logger.warn(
+        `[backup] restauração incompleta — licenca=${licencaId} tipo=${tipo} ` +
+        `pedaços ausentes na nuvem: ${indisponiveis.join(', ')}`,
+      )
+
+    this.logger.log(
+      `[backup] download emitido — licenca=${licencaId} tipo=${tipo} ` +
+      `arquivos=${arquivos.length} hwid=${dados.hwid}`,
+    )
 
     return {
-      url,
-      chave:        ultimo.chaveS3,
-      tamanhoBytes: objeto.tamanhoBytes,
-      geradoEm:     ultimo.confirmadoEm ?? ultimo.emitidoEm,
-      expiraEm:     expiraEm.toISOString(),
+      tipo:     dados.tipo,
+      arquivos,
+      /// Pedaços que constam no registro mas não estão mais na nuvem. Lista vazia
+      /// é o caso normal; qualquer item aqui significa restauração parcial, e a
+      /// tela do ERP tem que dizer isso ao usuário antes de restaurar.
+      indisponiveis,
+      totalBytes: arquivos.reduce((s, a) => s + a.tamanhoBytes, 0),
+      /// Quando a primeira URL desta lista expira.
+      ///
+      /// Para restaurar OS com muitos meses o prazo não dá, e é de propósito: em
+      /// vez de esticar a validade de um link que entrega o banco inteiro do
+      /// cliente, o ERP baixa o que conseguir e CHAMA DE NOVO para o que faltar.
+      /// `url-download` é leitura pura e não tem cota diária — repetir é barato.
+      expiraEm: expiraEm.toISOString(),
     }
   }
 
@@ -444,20 +597,20 @@ export class ErpBackupService {
   /// de fotos só para ouvir PULAR no fim. Zipar é a parte cara do ciclo, e é a
   /// única que o servidor não tinha como ajudar a evitar.
   private resumo(r: {
-    tamanhoRealBytes: number | null
-    tamanhoBytes:     number
-    confirmadoEm:     Date | null
-    emitidoEm:        Date
-    hwid:             string | null
-    chaveS3:          string
-    checksumSha256:   string | null
+    tamanhoRealBytes:  number | null
+    tamanhoBytes:      number
+    confirmadoEm:      Date | null
+    emitidoEm:         Date
+    hwid?:             string | null
+    chaveS3?:          string
+    checksumSha256?:   string | null
   }) {
     return {
       tamanhoBytes:   r.tamanhoRealBytes ?? r.tamanhoBytes,
       geradoEm:       r.confirmadoEm ?? r.emitidoEm,
-      hwid:           r.hwid,
-      chave:          r.chaveS3,
-      checksumSha256: r.checksumSha256,
+      hwid:           r.hwid ?? null,
+      chave:          r.chaveS3 ?? null,
+      checksumSha256: r.checksumSha256 ?? null,
     }
   }
 
