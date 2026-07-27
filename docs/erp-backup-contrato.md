@@ -765,6 +765,12 @@ restauração seja um item planejado e não a surpresa daqui a três meses.
 **Nada aqui está implementado.** O que existe hoje do lado do servidor é o
 `url-download` (D.4) e o download do admin. Tudo abaixo é lado ERP.
 
+Com duas exceções, que **não** devem esperar por esta seção:
+
+- **E.5, "testar meu backup"** — não depende de nada destrutivo e pertence à fase 1.
+- **Restaurar só o banco** — é operação válida e útil por si só (ver E.2), e não precisa
+  da restauração de fotos existir.
+
 ### E.1 — A partição encareceu a restauração, e isso era previsível
 
 | Antes | Agora |
@@ -786,9 +792,20 @@ chega aqui.
 5. Reiniciar o ERP
 ```
 
-**Fotos antes do banco.** O banco referencia fotos por nome de arquivo. Banco restaurado
-com fotos faltando dá tela quebrada em toda OS antiga; fotos restauradas sem o banco não
-quebram nada — ficam ali, sem referência, até o banco chegar.
+**Fotos antes do banco, quando as duas coisas vão ser restauradas.** O banco referencia
+fotos por nome de arquivo, então banco restaurado com as fotos ainda ausentes mostra
+**imagem quebrada na tela** nas OS que tinham foto. É um defeito visual, não perda de
+dado: a OS abre, os campos estão lá, o histórico está lá — falta a miniatura. Assim que
+os pedaços de OS chegarem, as imagens voltam sozinhas.
+
+Isso importa porque sustenta uma entrega parcial legítima: **restaurar só o banco é uma
+operação válida e útil**, e não precisa esperar a restauração de fotos existir. Um
+cliente que perdeu a máquina recupera cadastro, financeiro e o histórico de OS de
+imediato, com as fotos voltando depois. Se o efeito fosse "OS antiga quebrada", essa
+porta estaria fechada — e ela não está.
+
+Fotos restauradas sem o banco também não quebram nada: ficam em disco, sem referência,
+até o banco chegar.
 
 **Nunca apague o banco local antes de o novo estar verificado e aberto com sucesso.**
 Renomeie o antigo, não delete. O caso "restaurei e agora não abre nem o novo nem o
@@ -828,38 +845,44 @@ Cada zip carrega um `manifest.json` (ver A.2). Depois de baixar:
 faltar e peça confirmação explícita antes de seguir. Acervo com buraco que se apresenta
 como completo é o pior resultado possível desta tela.
 
-### E.5 — O item barato que deveria vir antes de tudo
+### E.5 — "Testar meu backup" — **isto é fase 1**, não restauração
 
-Um **"testar meu backup"**: baixa, verifica (E.4) e joga fora, sem restaurar nada.
+Um botão que baixa, verifica (E.4) e joga fora, sem restaurar nada.
 
-É pequeno — reaproveita o download e a verificação, sem a parte destrutiva — e é o que
-transforma o backup de promessa em fato verificado. Rodando uma vez por mês em segundo
-plano, o cliente descobre que o backup está quebrado num dia comum, e não no dia em que
-o HD morreu.
+**Não pertence a esta seção na prática, e por isso não deve esperar por ela.** É o único
+item aqui que não depende da troca do SQLite, da ordem de restauração, nem de nada
+destrutivo — reaproveita o download e a verificação e para por aí. Preso à restauração,
+ele herdaria um cronograma que não tem dono nem data.
 
-Se algo desta seção for feito antes da restauração completa, que seja este.
+Na fase 1 ele custa pouco e paga muito: é o que transforma o backup de promessa em fato
+verificado. Rodando uma vez por mês em segundo plano, o cliente descobre que o backup
+está quebrado num dia comum, e não no dia em que o HD morreu.
 
-### E.6 — Um buraco do lado do servidor, ainda não resolvido
+### E.6 — Integridade do download: por tipo, não em todo lugar
 
 O `checksumSha256` que o servidor guarda é o hash do **manifesto**, não dos bytes do
 zip — foi assim de propósito, para o dedupe ser estável (A.2). A consequência é que ele
 **não serve para verificar o download**: baixar o arquivo e comparar não é possível.
 
-Hoje a verificação da E.4 se vira sozinha com o `manifest.json` de dentro do zip, o que
-funciona. Mas o caminho mais direto seria o servidor guardar **também** um
-`checksumZipSha256` — o hash dos bytes que subiram. Ele não precisa ser estável entre
-envios (o zip não é determinístico, e tudo bem), porque o uso é outro: comparar o que
-desceu com o que subiu.
+A pergunta é o que preencher essa lacuna, e a resposta é diferente por tipo:
 
-São dois campos com dois trabalhos diferentes:
-
-| Campo | Para quê | Precisa ser estável? |
+| Tipo | Como verificar | Precisa de `checksumZipSha256`? |
 |---|---|---|
-| `checksumSha256` (manifesto) | dedupe / `PULAR` | **sim** |
-| `checksumZipSha256` (bytes) | integridade do download | não |
+| `banco` | `PRAGMA integrity_check` no arquivo restaurado | **não** |
+| `imagens`, `os` | CRC do zip + lista do `manifest.json` interno | opcional, ajuda |
 
-É uma coluna, um campo no `url-upload` e um no `url-download`. **Não foi feito** — está
-aqui para entrar junto quando a restauração sair do papel.
+**Em `banco` o `integrity_check` é melhor que um hash de bytes**, não só suficiente. Um
+hash prova que o download bateu com o upload; o `integrity_check` prova que o banco é
+internamente consistente — pega também o caso do arquivo já ter subido corrompido, que é
+o que realmente importa na hora de restaurar. Comparar bytes ali é responder a pergunta
+mais fraca.
+
+Nos zips não há equivalente semântico, mas a cobertura já é razoável: o zip tem CRC por
+entrada, e o `manifest.json` interno denuncia arquivo faltando. Um
+`checksumZipSha256` acrescentaria a garantia ponta a ponta barata — não precisa ser
+estável entre envios (o zip não é determinístico, e tudo bem), porque o uso é outro.
+
+**Nada disso foi feito**, e o escopo encolheu: se entrar, entra só para `imagens` e `os`.
 
 ---
 
