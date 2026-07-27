@@ -592,52 +592,111 @@ Três pacotes, não dois:
 | `imagens.zip` | fotos de **produto** (catálogo) | todo dia |
 | `os-AAAA-MM.zip` | fotos de OS **daquele mês** | ver abaixo |
 
-O mês de cada foto sai da **data de criação do arquivo** (ou da data da OS, se o ERP
-guardar essa relação — é mais confiável). Uma foto só pode estar em um pedaço.
+### D.1.1 — A regra do mês: **data do arquivo, não data da OS**
+
+O mês de uma foto é o da **data de criação do próprio arquivo**. Uma foto só pode estar
+em um pedaço.
+
+> **Correção.** Uma versão anterior deste documento sugeria usar a data da OS "por ser
+> mais confiável". Está errado, e o erro é estrutural: uma foto anexada em 2 de agosto
+> a uma OS aberta em 28 de julho iria para o pedaço de **julho**, que já estava fechado
+> e enviado. Mês fechado deixaria de ser imutável, e a premissa inteira da partição cai
+> junto.
+
+Com a data do arquivo, "fechado" significa mesmo imutável: a chave de particionamento é
+um atributo que **não muda depois de escrito**. A foto de 2 de agosto entra no pedaço de
+agosto, o de julho continua idêntico, e ninguém precisa reabrir nada.
+
+O custo é que fotos da mesma OS podem cair em meses diferentes. Para backup isso é
+irrelevante — a restauração traz todos os pedaços de volta, e o vínculo foto↔OS mora no
+banco, que tem backup próprio.
+
+### D.1.2 — Quando um mês passa a ser fechado
+
+| | Regra |
+|---|---|
+| Mês de uma foto | data de criação do arquivo |
+| Mês corrente | `periodoCorrente` do `/status` — **nunca** calculado localmente |
+| Mês fechado | qualquer `periodo < periodoCorrente` |
+| Quando reenviar um mês | **quando o checksum local diferir do que está na nuvem** — fechado ou não |
+
+**A última linha é a que fecha o buraco.** Nunca pule um mês por ele "já estar na
+nuvem". Pule por **checksum igual**. São coisas diferentes, e confundi-las é o que
+perderia foto em silêncio: bastaria uma foto entrar com data retroativa, ou um arquivo
+ser recuperado de um pen drive, para o mês mudar depois de já ter subido.
+
+Com a regra do checksum isso se conserta sozinho no ciclo seguinte, e não custa nada no
+caso normal — mês fechado tem checksum estável, então a resposta é `PULAR`.
+
+**Otimização opcional:** recalcular o manifesto de 24 meses todo dia é barato (só
+`stat`, não lê o conteúdo dos arquivos), mas se incomodar, guarde localmente o checksum
+de cada mês junto de um carimbo da pasta e só recalcule o que parecer sujo. **Não troque
+isso pela regra de "já subiu, pula"** — é a otimização que reintroduz o bug.
 
 ### D.2 — O ciclo diário
 
 ```python
-st = get("/erp/backup/status")
+st        = get("/erp/backup/status")
 mes_atual = st["periodoCorrente"]          # NUNCA calcule isso localmente
+na_nuvem  = { p["periodo"]: p["checksumSha256"] for p in st["copiaAtual"]["os"] }
 
 # 1) Espelhos, como sempre
 enviar("banco",   checksum=None)
 enviar("imagens", checksum=checksum_do_manifesto(pasta_produtos))
 
-# 2) Mês corrente de OS — muda todo dia, então sobe todo dia
-enviar("os", periodo=mes_atual, checksum=checksum_do_manifesto(fotos_de(mes_atual)))
+# 2) TODOS os meses que existem em disco — corrente e fechados, no mesmo laço.
+#    O que decide se sobe é o CHECKSUM, nunca "já está na nuvem".
+for mes in sorted(meses_com_fotos(), reverse=True):   # mais novo primeiro
+    local = checksum_do_manifesto(fotos_de(mes))
 
-# 3) Meses fechados que ainda não estão na nuvem — o backfill
-ja_na_nuvem = { p["periodo"] for p in st["copiaAtual"]["os"] }
-for mes in sorted(meses_com_fotos()):
-    if mes >= mes_atual or mes in ja_na_nuvem:
-        continue
-    r = enviar("os", periodo=mes, checksum=checksum_do_manifesto(fotos_de(mes)))
-    if r.status_code == 429:               # BACKUP_LIMITE_BACKFILL
+    if na_nuvem.get(mes) == local:
+        continue                           # nada mudou: nem zipa, nem chama a API
+
+    r = enviar("os", periodo=mes, checksum=local)
+
+    if r.status_code == 429:               # cota do dia acabou
         break                              # continua amanhã, nada é perdido
 ```
+
+**Por que um laço só, e não "corrente" separado de "backfill".** São a mesma operação:
+"este mês está diferente do que a nuvem tem?". O servidor é que separa os baldes de
+cota, e ele faz isso sozinho olhando o `periodo`. Do lado do ERP, tratar como dois
+casos é o que abre espaço para o mês fechado ser esquecido.
 
 **Três coisas que economizam trabalho de verdade:**
 
 1. **Compare o checksum antes de zipar.** `copiaAtual.os[].checksumSha256` diz o que já
    está na nuvem. Bateu, não zipe — o servidor responderia `PULAR` de qualquer forma, e
-   zipar é a parte cara.
-2. **`PULAR` é o caminho normal em `os`.** Depois do primeiro envio, todo mês fechado
-   responde `PULAR` para sempre. Trate como sucesso silencioso, sem alarme na tela.
-3. **Ordene o backfill do mais novo para o mais antigo** se quiser proteger primeiro o
-   que é mais provável de ser necessário numa restauração.
+   zipar é a parte cara. No estado estável, o laço acima não zipa nada além do mês
+   corrente.
+2. **`PULAR` é o caminho normal em `os`.** Se o checksum local escapar da comparação e a
+   chamada acontecer, o servidor devolve `PULAR`. Trate como sucesso silencioso, sem
+   alarme na tela.
+3. **Do mais novo para o mais antigo.** No backfill, protege primeiro o que tem mais
+   chance de ser necessário numa restauração.
 
 ### D.3 — A virada do mês
 
-No dia 1º, `periodoCorrente` muda e o mês anterior vira pedaço fechado. O ERP não
-precisa fazer nada de especial: no ciclo seguinte ele envia o novo mês corrente
-(pequeno) e o mês que fechou entra no laço do backfill, sobe uma última vez com o
-conteúdo definitivo e nunca mais é tocado.
+**Com a regra da D.1.2, a virada deixa de ser um evento.** O ERP não precisa detectar
+nada, não precisa de rotina de fechamento e não precisa de ordem especial entre os
+envios. No dia 1º, `periodoCorrente` muda; o laço da D.2 percorre os mesmos meses de
+sempre, encontra o mês que acabou com checksum diferente do que está na nuvem (porque
+entraram fotos nos últimos dias), sobe ele uma última vez, e a partir daí ele bate o
+checksum para sempre.
 
-**Um detalhe que evita perda:** feche o mês anterior **antes** de enviar o novo. Uma
-foto lançada às 23h50 do dia 31 tem que entrar no pedaço de julho, não no de agosto —
-e é por isso que o corte vem do servidor, no fuso de São Paulo.
+Os casos que costumam quebrar esse tipo de esquema, e o que acontece aqui:
+
+| Situação | Resultado |
+|---|---|
+| Foto lançada 31/07 às 23h50 | Entra em julho. O ciclo de 01/08 vê julho diferente e reenvia. |
+| PC desligado de 25/07 a 10/08 | Em 10/08 o laço acha julho e agosto diferentes e envia os dois. |
+| Foto de agosto anexada a uma OS de julho | Vai para **agosto** — o mês é o do arquivo (D.1.1). Julho não muda. |
+| Foto recuperada de pen drive com data de maio | Maio fica diferente, reenvia sozinho no ciclo seguinte. |
+| Foto apagada em disco | Manifesto muda, mês reenvia. Se encolher além de 50 %, vira `409 BACKUP_TAMANHO_SUSPEITO` no automático — refazer pelo botão manual. |
+
+**O que NÃO fazer:** marcar um mês como "concluído" localmente e pular a verificação a
+partir dali. É a otimização que parece óbvia e perde foto em silêncio — exatamente o
+buraco que essa regra existe para tapar.
 
 ### D.4 — Restauração
 

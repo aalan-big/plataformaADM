@@ -140,7 +140,9 @@ O `hwid` deve ser derivado de algo fixo da máquina (serial da placa-mãe, do di
 
 **`os` é diferente: um arquivo por mês, e cada mês fechado sobe uma vez só.** Restaurar OS significa baixar **todos** os pedaços. O contrato completo está em [`erp-backup-contrato.md`](./erp-backup-contrato.md), seção D.
 
-**Nunca calcule o mês corrente localmente.** Ele vem em `periodoCorrente` no `/status`, cortado no fuso de São Paulo pelo relógio do servidor. Máquina com data errada fecharia o mês na hora errada, e pedaço fechado cedo demais perde as fotos que ainda entrariam.
+**Nunca calcule o mês corrente localmente.** Ele vem em `periodoCorrente` no `/status`, cortado no fuso de São Paulo pelo relógio do servidor.
+
+**Nunca pule um mês porque ele "já está na nuvem" — pule por checksum igual.** São coisas diferentes. Um mês fechado pode mudar (foto com data retroativa, arquivo recuperado, exclusão), e a regra do "já subiu" perderia isso em silêncio. A do checksum se conserta sozinha no ciclo seguinte e não custa nada quando nada mudou. Ver seção D.1.2 do contrato.
 
 ---
 
@@ -176,8 +178,9 @@ zipar(['tmp/banco.db', 'manifest.json'], 'tmp/banco.zip')
 # IMAGENS — só o catálogo de produtos
 zipar_pasta('dados/imagens/produtos/', 'tmp/imagens.zip')
 
-# OS — um zip por mês. O mês vem da data da ordem de serviço.
-for mes, fotos in agrupar_por_mes('dados/imagens/ordens-servico/'):
+# OS — um zip por mês. O mês vem da data de criação DO ARQUIVO, não da OS:
+# é o que faz "mês fechado" significar imutável de verdade.
+for mes, fotos in agrupar_por_mes_do_arquivo('dados/imagens/ordens-servico/'):
     zipar(fotos, f'tmp/os-{mes}.zip')          # mes no formato 'AAAA-MM'
 
 # Medir DEPOIS de fechar o zip — este número vai na assinatura
