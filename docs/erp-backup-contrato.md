@@ -85,23 +85,34 @@ ordem de entrada, versão da lib de compressão) e o sintoma da derrota é silen
 o checksum muda todo dia, o dedupe nunca dispara, e a loja sobe 300 MB por dia sem
 que ninguém perceba.
 
-**Calcule o checksum sobre um manifesto, não sobre o ZIP:**
+**Calcule o checksum sobre um manifesto, não sobre o ZIP** — e monte o manifesto com
+dados do **banco**, não do sistema de arquivos:
 
 ```python
-import hashlib, os
+import hashlib
 
-def checksum_das_imagens(pasta):
+def checksum_do_manifesto(linhas):
+    """`linhas` vem do banco: (nome_arquivo, tamanho, data_criacao)."""
     h = hashlib.sha256()
-    for caminho in sorted(todos_os_arquivos(pasta)):        # ordem estável
-        rel = os.path.relpath(caminho, pasta).replace('\\', '/')
-        st  = os.stat(caminho)
-        h.update(f"{rel}|{st.st_size}|{int(st.st_mtime)}\n".encode('utf-8'))
+    for nome, tamanho, data_criacao in sorted(linhas):       # ordem estável
+        h.update(f"{nome}|{tamanho}|{data_criacao.isoformat()}\n".encode('utf-8'))
     return h.hexdigest()
 ```
 
-Isso é estável por construção, é barato (não relê os bytes das fotos) e responde
-exatamente à pergunta que o dedupe faz. Se quiser rigor maior, troque `st_mtime` pelo
-sha256 de cada arquivo — mais lento, imune a mexida de relógio.
+Estável por construção, barato (não relê os bytes das fotos) e responde exatamente à
+pergunta que o dedupe faz.
+
+> **Por que do banco e não do disco.** Um manifesto montado com `os.stat().st_mtime`
+> muda inteiro quando a pasta é copiada para outra máquina — e aí o checksum de todos os
+> meses muda de uma vez, disparando o reenvio do acervo completo justamente no dia da
+> migração. `data_criacao` vem do banco e sobrevive à cópia. Mesmo raciocínio da D.1.1,
+> e vale para os dois usos: particionar e comparar.
+
+**Guarde o manifesto dentro do próprio zip** (`manifest.json`), não só o hash dele. Sem
+isso a restauração não tem como se verificar: o hash do manifesto não é o hash dos bytes
+do zip, então baixar o arquivo não prova que ele veio inteiro. Com o `manifest.json`
+dentro, a verificação é auto-suficiente — descompacta, confere a lista contra o que
+saiu, e não precisa do banco para isso. Ver a seção **E**.
 
 > ⚠ **Corrigido na doc do ERP:** a seção 7 de `erp-portas-de-entrada.md` mandava fazer
 > `checksum = sha256_do_arquivo('tmp/banco.zip')`. Para `imagens` e `os` isso é a
@@ -592,24 +603,33 @@ Três pacotes, não dois:
 | `imagens.zip` | fotos de **produto** (catálogo) | todo dia |
 | `os-AAAA-MM.zip` | fotos de OS **daquele mês** | ver abaixo |
 
-### D.1.1 — A regra do mês: **data do arquivo, não data da OS**
+### D.1.1 — A regra do mês: `data_criacao` **da foto**, no banco
 
-O mês de uma foto é o da **data de criação do próprio arquivo**. Uma foto só pode estar
-em um pedaço.
+O mês de uma foto é o da **`data_criacao` da linha dela em `ordem_servico_fotos`**. Não
+é a data da OS, e não é o timestamp do arquivo no disco. Uma foto só pode estar em um
+pedaço.
 
-> **Correção.** Uma versão anterior deste documento sugeria usar a data da OS "por ser
-> mais confiável". Está errado, e o erro é estrutural: uma foto anexada em 2 de agosto
-> a uma OS aberta em 28 de julho iria para o pedaço de **julho**, que já estava fechado
-> e enviado. Mês fechado deixaria de ser imutável, e a premissa inteira da partição cai
-> junto.
+Duas correções sobre versões anteriores deste documento, ambas relevantes:
 
-Com a data do arquivo, "fechado" significa mesmo imutável: a chave de particionamento é
-um atributo que **não muda depois de escrito**. A foto de 2 de agosto entra no pedaço de
-agosto, o de julho continua idêntico, e ninguém precisa reabrir nada.
+> **Não use a data da OS.** Uma foto anexada em 2 de agosto a uma OS aberta em 28 de
+> julho iria para o pedaço de **julho**, que já estava fechado e enviado. Mês fechado
+> deixaria de ser imutável e a premissa inteira da partição cai junto.
 
-O custo é que fotos da mesma OS podem cair em meses diferentes. Para backup isso é
-irrelevante — a restauração traz todos os pedaços de volta, e o vínculo foto↔OS mora no
-banco, que tem backup próprio.
+> **Não use o mtime do arquivo.** Timestamp de arquivo **não sobrevive a cópia de
+> pasta**. Migrar o cliente para um PC novo reescreve todos eles com a data de hoje, e o
+> histórico inteiro re-particiona para um mês só. A Regra 1 impede a perda — o checksum
+> muda e tudo é reenviado — mas o cliente sobe anos de fotos exatamente no pior momento
+> possível, que é o dia em que acabou de trocar de máquina.
+
+`data_criacao` é um dado do banco: sobrevive a cópia de pasta, a restauração e a troca de
+máquina. É o único dos três candidatos que é estável de verdade.
+
+**Fallback:** arquivo órfão, sem linha correspondente no banco, cai no mtime. É o único
+caso em que não há alternativa, e é raro o bastante para não contaminar o resto.
+
+O custo dessa escolha é que fotos da mesma OS podem cair em meses diferentes. Para
+backup isso é irrelevante — a restauração traz todos os pedaços de volta, e o vínculo
+foto↔OS mora no banco, que tem backup próprio.
 
 ### D.1.2 — Quando um mês passa a ser fechado
 
@@ -628,10 +648,11 @@ ser recuperado de um pen drive, para o mês mudar depois de já ter subido.
 Com a regra do checksum isso se conserta sozinho no ciclo seguinte, e não custa nada no
 caso normal — mês fechado tem checksum estável, então a resposta é `PULAR`.
 
-**Otimização opcional:** recalcular o manifesto de 24 meses todo dia é barato (só
-`stat`, não lê o conteúdo dos arquivos), mas se incomodar, guarde localmente o checksum
-de cada mês junto de um carimbo da pasta e só recalcule o que parecer sujo. **Não troque
-isso pela regra de "já subiu, pula"** — é a otimização que reintroduz o bug.
+**Otimização opcional:** recalcular o manifesto de 24 meses todo dia é barato — é uma
+consulta ao banco agrupada por mês, não uma varredura de disco. Se ainda incomodar,
+guarde o checksum de cada mês numa tabela local e recalcule só o que teve escrita desde
+a última vez. **Não troque isso pela regra de "já subiu, pula"** — é a otimização que
+reintroduz o bug.
 
 ### D.2 — O ciclo diário
 
@@ -690,9 +711,16 @@ Os casos que costumam quebrar esse tipo de esquema, e o que acontece aqui:
 |---|---|
 | Foto lançada 31/07 às 23h50 | Entra em julho. O ciclo de 01/08 vê julho diferente e reenvia. |
 | PC desligado de 25/07 a 10/08 | Em 10/08 o laço acha julho e agosto diferentes e envia os dois. |
-| Foto de agosto anexada a uma OS de julho | Vai para **agosto** — o mês é o do arquivo (D.1.1). Julho não muda. |
-| Foto recuperada de pen drive com data de maio | Maio fica diferente, reenvia sozinho no ciclo seguinte. |
-| Foto apagada em disco | Manifesto muda, mês reenvia. Se encolher além de 50 %, vira `409 BACKUP_TAMANHO_SUSPEITO` no automático — refazer pelo botão manual. |
+| Foto de agosto anexada a uma OS de julho | Vai para **agosto** — o mês é o da foto, não o da OS (D.1.1). Julho não muda. |
+| **Cliente migra para um PC novo** | **Nada muda.** `data_criacao` vem do banco e a cópia de pasta não a altera. Nenhum reenvio. |
+| Foto apagada em disco, linha continua no banco | Manifesto igual (o banco não mudou), mas o zip sai menor. Vale conferir na montagem: arquivo faltando é sintoma, não detalhe. |
+| Linha apagada do banco | Manifesto muda, mês reenvia menor. Encolheu além de 50 %, vira `409 BACKUP_TAMANHO_SUSPEITO` no automático — refazer pelo botão manual. |
+
+> **Um limite conhecido:** o manifesto é `nome | tamanho | data_criacao`. Uma foto
+> substituída por outra de **exatamente** o mesmo tamanho, mantendo nome e linha no
+> banco, não muda o checksum e não seria reenviada. Como foto de OS é escrita uma vez e
+> nunca editada, o caso é teórico. Se algum dia deixar de ser, a saída é somar o sha256
+> de cada arquivo ao manifesto do mês corrente apenas — os fechados não precisam.
 
 **O que NÃO fazer:** marcar um mês como "concluído" localmente e pular a verificação a
 partir dali. É a otimização que parece óbvia e perde foto em silêncio — exatamente o
@@ -726,6 +754,112 @@ pura e não tem cota diária; repetir é barato.
 ali significa que um pedaço registrado não está mais na nuvem, e a restauração vai sair
 com buraco. Avise o usuário **antes** de restaurar: acervo parcial que se apresenta
 como completo é o pior resultado possível nesta tela.
+
+---
+
+## E. Restauração — a fase que ainda não tem dono
+
+Backup que ninguém sabe restaurar é fé, não seguro. Esta seção existe para que a
+restauração seja um item planejado e não a surpresa daqui a três meses.
+
+**Nada aqui está implementado.** O que existe hoje do lado do servidor é o
+`url-download` (D.4) e o download do admin. Tudo abaixo é lado ERP.
+
+### E.1 — A partição encareceu a restauração, e isso era previsível
+
+| Antes | Agora |
+|---|---|
+| 1 download | N downloads (1 por mês de OS + 2 espelhos) |
+| 1 URL de 5 min | N URLs de 5 min, com repedido quando vencem |
+| — | pedaço ausente (`indisponiveis`) = restauração parcial |
+
+Foi o preço de não ter o backup diário crescendo para sempre. Vale a troca, mas a conta
+chega aqui.
+
+### E.2 — A ordem importa, e a errada corrompe
+
+```
+1. Baixar tudo e VERIFICAR         ← nada é tocado ainda
+2. Conferir compatibilidade de schema
+3. Restaurar as fotos (aditivo, reversível)
+4. Restaurar o banco (destrutivo)  ← por último, e só se 1–3 passaram
+5. Reiniciar o ERP
+```
+
+**Fotos antes do banco.** O banco referencia fotos por nome de arquivo. Banco restaurado
+com fotos faltando dá tela quebrada em toda OS antiga; fotos restauradas sem o banco não
+quebram nada — ficam ali, sem referência, até o banco chegar.
+
+**Nunca apague o banco local antes de o novo estar verificado e aberto com sucesso.**
+Renomeie o antigo, não delete. O caso "restaurei e agora não abre nem o novo nem o
+velho" é o único desfecho pior que não ter backup.
+
+### E.3 — O SQLite não deixa trocar o arquivo em uso
+
+O engine segura o arquivo. Sobrescrever com o ERP aberto vai de "erro claro" a
+"corrupção silenciosa", dependendo do sistema de arquivos. O padrão seguro:
+
+```
+1. Baixar e verificar em  tmp/restauracao/banco.db
+2. Gravar uma marca:      tmp/restauracao/PENDENTE
+3. Pedir para o usuário fechar o ERP
+4. NA PRÓXIMA ABERTURA, antes de abrir qualquer conexão:
+   - achou a marca? renomeia o atual para banco-antigo-<data>.db
+   - move o restaurado para o lugar
+   - só então abre a conexão e continua o boot normal
+```
+
+A troca acontece no boot, com zero conexões abertas. É o único momento em que ela é
+segura, e não depende de o usuário fazer nada certo além de reabrir o programa.
+
+### E.4 — Verificar é o que separa seguro de fé
+
+Cada zip carrega um `manifest.json` (ver A.2). Depois de baixar:
+
+1. **O zip abre?** Zip corrompido no meio da rede acontece.
+2. **A lista bate?** Todo arquivo do `manifest.json` saiu na descompactação, com o
+   tamanho declarado.
+3. **O banco abre?** `PRAGMA integrity_check` antes de considerar o arquivo bom.
+4. **O schema é compatível?** O `manifest.json` do banco traz a versão do schema. Backup
+   de um ERP mais novo que o instalado **não** pode ser restaurado em silêncio — ou o
+   ERP atualiza primeiro, ou recusa com mensagem clara.
+
+**`indisponiveis` não vazio = restauração parcial.** Diga ao usuário **quais meses** vão
+faltar e peça confirmação explícita antes de seguir. Acervo com buraco que se apresenta
+como completo é o pior resultado possível desta tela.
+
+### E.5 — O item barato que deveria vir antes de tudo
+
+Um **"testar meu backup"**: baixa, verifica (E.4) e joga fora, sem restaurar nada.
+
+É pequeno — reaproveita o download e a verificação, sem a parte destrutiva — e é o que
+transforma o backup de promessa em fato verificado. Rodando uma vez por mês em segundo
+plano, o cliente descobre que o backup está quebrado num dia comum, e não no dia em que
+o HD morreu.
+
+Se algo desta seção for feito antes da restauração completa, que seja este.
+
+### E.6 — Um buraco do lado do servidor, ainda não resolvido
+
+O `checksumSha256` que o servidor guarda é o hash do **manifesto**, não dos bytes do
+zip — foi assim de propósito, para o dedupe ser estável (A.2). A consequência é que ele
+**não serve para verificar o download**: baixar o arquivo e comparar não é possível.
+
+Hoje a verificação da E.4 se vira sozinha com o `manifest.json` de dentro do zip, o que
+funciona. Mas o caminho mais direto seria o servidor guardar **também** um
+`checksumZipSha256` — o hash dos bytes que subiram. Ele não precisa ser estável entre
+envios (o zip não é determinístico, e tudo bem), porque o uso é outro: comparar o que
+desceu com o que subiu.
+
+São dois campos com dois trabalhos diferentes:
+
+| Campo | Para quê | Precisa ser estável? |
+|---|---|---|
+| `checksumSha256` (manifesto) | dedupe / `PULAR` | **sim** |
+| `checksumZipSha256` (bytes) | integridade do download | não |
+
+É uma coluna, um campo no `url-upload` e um no `url-download`. **Não foi feito** — está
+aqui para entrar junto quando a restauração sair do papel.
 
 ---
 

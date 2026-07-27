@@ -178,10 +178,11 @@ zipar(['tmp/banco.db', 'manifest.json'], 'tmp/banco.zip')
 # IMAGENS — só o catálogo de produtos
 zipar_pasta('dados/imagens/produtos/', 'tmp/imagens.zip')
 
-# OS — um zip por mês. O mês vem da data de criação DO ARQUIVO, não da OS:
-# é o que faz "mês fechado" significar imutável de verdade.
-for mes, fotos in agrupar_por_mes_do_arquivo('dados/imagens/ordens-servico/'):
-    zipar(fotos, f'tmp/os-{mes}.zip')          # mes no formato 'AAAA-MM'
+# OS — um zip por mês. O mês vem da coluna data_criacao da FOTO no banco:
+# não é a data da OS, e não é o mtime do arquivo (que não sobrevive a cópia
+# de pasta — migrar de PC re-particionaria o acervo inteiro para um mês só).
+for mes, fotos in agrupar_por_data_criacao_da_foto():
+    zipar(fotos + [manifesto(mes)], f'tmp/os-{mes}.zip')   # mes = 'AAAA-MM'
 
 # Medir DEPOIS de fechar o zip — este número vai na assinatura
 tamanho = os.path.getsize('tmp/banco.zip')
@@ -196,18 +197,21 @@ O servidor não recalcula nem confere esse valor. Ele guarda a string e, no envi
 Por isso **não** use o sha256 do arquivo `.zip`. Zip não é determinístico — timestamps, ordem das entradas e versão da biblioteca de compressão fazem o hash mudar mesmo com as fotos idênticas. O resultado é uma falha silenciosa e cara: o checksum muda todo dia, a deduplicação nunca dispara, e a loja sobe o pacote inteiro de imagens diariamente sem que ninguém perceba.
 
 ```python
-import hashlib, os
+import hashlib
 
-def checksum_das_imagens(pasta):
+def checksum_do_manifesto(linhas):
+    """`linhas` vem do BANCO: (nome_arquivo, tamanho, data_criacao)."""
     h = hashlib.sha256()
-    for caminho in sorted(todos_os_arquivos(pasta)):      # ordem estável é essencial
-        rel = os.path.relpath(caminho, pasta).replace('\\', '/')
-        st  = os.stat(caminho)
-        h.update(f"{rel}|{st.st_size}|{int(st.st_mtime)}\n".encode('utf-8'))
+    for nome, tamanho, data_criacao in sorted(linhas):    # ordem estável é essencial
+        h.update(f"{nome}|{tamanho}|{data_criacao.isoformat()}\n".encode('utf-8'))
     return h.hexdigest()
 ```
 
-Estável por construção, e barato — não relê os bytes das fotos. Se quiser rigor maior (imune a mexida no relógio do sistema), troque `st_mtime` pelo sha256 de cada arquivo, ao custo de ler tudo.
+Estável por construção, e barato — é consulta ao banco, não varredura de disco.
+
+**Monte o manifesto com dados do banco, não do sistema de arquivos.** Um manifesto feito com `os.stat().st_mtime` muda inteiro quando a pasta é copiada para outra máquina: o cliente troca de PC e o acervo completo é reenviado no mesmo dia. `data_criacao` vem do banco e sobrevive à cópia. Para arquivo órfão, sem linha no banco, aí sim caia no mtime.
+
+**Guarde o `manifest.json` dentro de cada zip**, não só o hash dele. É o que permite verificar um download sem depender do banco — e é o que a restauração vai precisar.
 
 Em `banco` o campo é opcional e o dedupe não se aplica na prática — o banco muda todo dia. Envie se quiser, ou omita.
 
