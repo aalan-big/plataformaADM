@@ -21,7 +21,7 @@ export class BackupController {
   @Post(':licencaId/url-download')
   urlDownload(
     @Param('licencaId') licencaId: string,
-    @Body() body: { tipo?: string; periodo?: string },
+    @Body() body: { ciclo?: string; sequencia?: number },
     @Req() req: Request & { user?: { userId?: string } },
   ) {
     // O IP vem do proxy à frente da API (Nginx), então o cabeçalho encaminhado
@@ -29,10 +29,11 @@ export class BackupController {
     // dado forjável aqui não abre porta nenhuma, só suja a trilha.
     const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.ip ?? null
 
-    return this.backupService.urlDownloadAdmin(licencaId, body?.tipo ?? 'banco', {
+    return this.backupService.urlDownloadAdmin(licencaId, {
       usuarioId: req.user?.userId ?? null,
       ip,
-      periodo:   body?.periodo ?? null,
+      ciclo:     body?.ciclo     ?? null,
+      sequencia: body?.sequencia ?? null,
     })
   }
 }

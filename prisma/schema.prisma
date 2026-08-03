@@ -24,28 +24,35 @@ enum TipoTransacao {
   PAGAMENTO_RECEBIDO
 }
 
-/// Os três tipos existem porque são três ciclos de vida diferentes, e misturá-los
-/// num pacote só foi o que quebrou o desenho anterior.
+/// Os dois papéis dentro de um CICLO (uma semana, aberta na segunda-feira).
 ///
-/// BANCO e IMAGENS são ESPELHOS: o pacote de hoje substitui o de ontem, a chave é
-/// fixa, e o conteúdo muda o tempo todo (venda nova, produto editado, foto
-/// trocada). Só faz sentido guardar o estado atual.
+/// FULL é o acervo inteiro num pacote — banco completo mais todos os arquivos.
+/// Sobe no primeiro login do ciclo, e é ele que autoriza apagar o ciclo anterior:
+/// só se pode destruir a cópia velha porque a nova contém tudo que ela continha.
 ///
-/// OS é ARQUIVO MORTO: foto de ordem de serviço é escrita uma vez e nunca mais
-/// tocada. Guardar isso como espelho significa reenviar todo dia anos de fotos
-/// que não mudaram — o envio diário cresceria para sempre até bater no teto e o
-/// backup parar de funcionar. Particionado por mês, o pedaço fechado sobe uma
-/// única vez e o envio diário fica constante, independente da idade da instalação.
+/// FRAGMENTO é o que mudou desde o envio anterior — tabelas alteradas e arquivos
+/// novos, montados pelo ERP a partir de uma pasta de pendentes alimentada no
+/// momento da escrita. A granularidade é por tabela e por arquivo, nunca por
+/// registro: isso dá a mesma semântica dos arquivos ("a última versão vence"), e
+/// é o que torna a restauração uma extração em ordem em vez de um replay de
+/// registros dentro do banco.
+///
+/// A integridade referencial se sustenta por construção: se uma venda nova aponta
+/// para um cliente novo, as duas tabelas mudaram no mesmo dia e as duas estão no
+/// mesmo fragmento. Não existe linha órfã.
 enum TipoBackup {
-  BANCO
-  IMAGENS
-  OS
+  FULL
+  FRAGMENTO
 }
 
 enum StatusBackup {
   EMITIDO
   CONFIRMADO
   FALHOU
+  /// Apagado da nuvem pela rotação de ciclo. A linha fica: sem ela a restauração
+  /// tentaria assinar URL para objeto inexistente, e o histórico perderia o
+  /// registro de que aquele ciclo existiu.
+  REMOVIDO
 }
 
 // ── Plano ─────────────────────────────────────────────────────────────────────
@@ -414,12 +421,26 @@ model Backup {
   /// registrada, é sinal de instalação paralela subindo banco velho por cima.
   hwid             String?
   tipo             TipoBackup
-  /// Mês do pedaço, em 'YYYY-MM'. Só existe em OS; é null nos tipos espelho.
+  /// Ciclo a que este envio pertence, em 'YYYY-MM-DD' — sempre a SEGUNDA-FEIRA
+  /// que o abriu.
   ///
   /// Texto e não data porque a única operação que se faz com ele é comparar e
-  /// ordenar — e 'YYYY-MM' ordena igual em texto e em data, sem fuso no meio.
-  /// É o que permite `periodo: { lt: mesAtual }` significar "pedaço fechado".
-  periodo          String?
+  /// ordenar, e 'YYYY-MM-DD' ordena igual em texto e em data, sem fuso no meio.
+  ///
+  /// A âncora é a segunda-feira, e não um contador de "dia 1 a 7", porque
+  /// contador é ESTADO: some numa reinstalação, diverge entre as duas pontas, e
+  /// aí ninguém mais sabe em que dia do ciclo está. A segunda de referência os
+  /// dois lados derivam da data e sempre chegam no mesmo valor — e é o próprio
+  /// nome da pasta no bucket.
+  ciclo            String
+  /// Ordem de extração dentro do ciclo. 0 é sempre o FULL; os fragmentos seguem
+  /// 1, 2, 3...
+  ///
+  /// Explícito, e não derivado de `emitidoEm`, porque restaurar na ordem errada
+  /// produz um banco silenciosamente errado — a última versão de cada tabela
+  /// venceria pela hora do relógio, e dois envios no mesmo segundo (ou com
+  /// relógio ajustado no meio) resolveriam o empate de forma indefinida.
+  sequencia        Int          @default(0)
   chaveS3          String
   status           StatusBackup @default(EMITIDO)
   origem           String       @default("AUTOMATICO")  // AUTOMATICO | MANUAL
@@ -428,11 +449,18 @@ model Backup {
   tamanhoBytes     Int
   /// Tamanho que o HeadObject encontrou de verdade depois do upload.
   tamanhoRealBytes Int?
-  /// SHA-256 do zip. É o que permite pular upload quando nada mudou — o maior
-  /// corte de custo do backup, já que imagem é o que pesa. Em OS ele carrega o
-  /// trabalho todo: pedaço de mês fechado bate o checksum para sempre, então
-  /// depois do primeiro envio a resposta é sempre PULAR, sem lógica adicional.
-  checksumSha256   String?
+  /// O código que o ERP calcula sobre a pasta de pendentes. É o que permite
+  /// responder "não precisa subir, nada mudou" sem abrir o pacote.
+  ///
+  /// O servidor NÃO recalcula nem confere este valor — guarda a string e compara
+  /// por igualdade literal com a do último envio CONFIRMADO. O contrato do campo
+  /// é só um: muda quando o conteúdo muda, não muda quando não muda.
+  ///
+  /// ⚠ A comparação é contra o último CONFIRMADO, nunca contra a linha emitida.
+  /// Promover o código na autorização faria o seguinte: o upload morre no meio,
+  /// no login seguinte o ERP manda o mesmo código, bate, respondemos "nada novo"
+  /// — e aquele conteúdo nunca sobe, sem erro em lugar nenhum.
+  codigoConteudo   String?
   erroMensagem     String?
   emitidoEm        DateTime     @default(now())
   confirmadoEm     DateTime?
@@ -441,9 +469,9 @@ model Backup {
   licenca          Licenca      @relation(fields: [licencaId], references: [id], onDelete: Cascade)
 
   @@index([licencaId, tipo, emitidoEm])
-  /// Sustenta a pergunta mais frequente do fluxo de OS: "qual o último confirmado
-  /// DESTE mês?", feita uma vez por pedaço a cada ciclo de backup.
-  @@index([licencaId, tipo, periodo, status])
+  /// Sustenta as duas perguntas mais frequentes do fluxo: "este ciclo já tem full
+  /// confirmado?" e "qual a corrente deste ciclo, em ordem?".
+  @@index([licencaId, ciclo, status, sequencia])
   @@index([clienteId])
   @@index([status, emitidoEm])
   @@map("backups")

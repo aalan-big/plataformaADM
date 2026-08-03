@@ -1,21 +1,34 @@
 import { prisma } from '../client'
 
-export type TipoBackupDb = 'BANCO' | 'IMAGENS' | 'OS'
+export type TipoBackupDb = 'FULL' | 'FRAGMENTO'
 
-/// Mês corrente em 'YYYY-MM', no fuso de São Paulo.
+/// Ciclo corrente em 'YYYY-MM-DD': a SEGUNDA-FEIRA da semana atual, no fuso de
+/// São Paulo.
 ///
-/// O fuso importa: em 31/07 às 22h em SP já é 01/08 em UTC. Usar UTC faria o
-/// ERP fechar o pedaço de julho um dia antes do mês acabar de verdade para quem
-/// está no Brasil, e as fotos das últimas horas do dia 31 cairiam em agosto.
-export function periodoAtual(agora: Date = new Date()): string {
-  const partes = new Intl.DateTimeFormat('en-CA', {
+/// O fuso importa: no domingo às 22h em SP já é segunda em UTC. Usar UTC abriria
+/// o ciclo novo um dia antes para quem está no Brasil, e o full seria cobrado do
+/// cliente num domingo à noite.
+///
+/// Só o servidor calcula isto. O ERP lê `cicloCorrente` do /status — se ele
+/// derivasse da própria máquina, um PC com a data errada faria o full no dia
+/// errado, ou nunca faria.
+export function cicloAtual(agora: Date = new Date()): string {
+  // Resolve primeiro qual é o dia do calendário em SP; só depois faz aritmética.
+  const hojeLocal = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Sao_Paulo',
     year:     'numeric',
     month:    '2-digit',
-  }).formatToParts(agora)
+    day:      '2-digit',
+  }).format(agora)
 
-  const valor = (tipo: string) => partes.find(p => p.type === tipo)?.value ?? ''
-  return `${valor('year')}-${valor('month')}`
+  // A partir daqui é aritmética de calendário pura, em UTC: a data local já foi
+  // resolvida acima, e UTC não tem horário de verão para deslocar o resultado.
+  const dia = new Date(`${hojeLocal}T00:00:00Z`)
+  const diaDaSemana  = dia.getUTCDay()             // 0 = domingo … 6 = sábado
+  const desdeSegunda = (diaDaSemana + 6) % 7       // domingo → 6, segunda → 0
+  dia.setUTCDate(dia.getUTCDate() - desdeSegunda)
+
+  return dia.toISOString().slice(0, 10)
 }
 
 /// 00:00 de hoje no fuso de São Paulo, expresso como instante UTC.
@@ -24,7 +37,7 @@ export function periodoAtual(agora: Date = new Date()): string {
 /// mexer na data da máquina não pode virar mais uploads na sua conta. E é pelo
 /// fuso de SP porque "2 backups por dia" tem que virar dia para quem está no
 /// Brasil, não à meia-noite de Greenwich (que aqui são 21h do dia anterior).
-export function inicioDoDiaSaoPaulo(agora: Date = new Date()): Date {
+function inicioDoDiaSaoPaulo(agora: Date = new Date()): Date {
   const partes = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Sao_Paulo',
     hour12:   false,
@@ -51,11 +64,12 @@ export async function criarBackup(dados: {
   licencaId:      string
   hwid:           string | null
   tipo:           TipoBackupDb
-  periodo:        string | null
+  ciclo:          string
+  sequencia:      number
   chaveS3:        string
   origem:         string
   tamanhoBytes:   number
-  checksumSha256: string | null
+  codigoConteudo: string
 }) {
   return prisma.backup.create({ data: dados })
 }
@@ -89,86 +103,179 @@ export async function marcarBackupFalhou(id: string, erroMensagem: string) {
 /// inteiro sem conseguir backup nenhum — justamente quem mais precisa. Quem
 /// reporta a falha pelo /confirmar recupera a vaga; quem trava sem reportar
 /// continua consumindo até o varredor marcar como FALHOU, que é o certo.
-export async function contarBackupsDoDia(
-  licencaId: string,
-  tipo:      TipoBackupDb,
-  periodo?:  string | null,
-) {
+export async function contarBackupsDoDia(licencaId: string) {
   return prisma.backup.count({
     where: {
       licencaId,
-      tipo,
-      ...(periodo !== undefined ? { periodo } : {}),
       emitidoEm: { gte: inicioDoDiaSaoPaulo() },
       status:    { not: 'FALHOU' },
     },
   })
 }
 
-/// Quantos pedaços de mês JÁ FECHADO foram emitidos hoje.
+/// O último envio confirmado da licença, qualquer que seja o ciclo ou o tipo.
 ///
-/// Tem cota própria, separada da diária, porque é uma operação de natureza
-/// diferente: o backfill. Um cliente que instala hoje com dois anos de OS tem 24
-/// pedaços para subir, cada um exatamente uma vez na vida. Contra a cota normal
-/// de 2/dia isso levaria 12 dias com o acervo desprotegido.
-///
-/// E é seguro dar mais folga aqui justamente porque é limitado por construção: o
-/// que a cota diária protege é upload REPETIDO — o loop com bug que sobe o mesmo
-/// arquivo 500 vezes. Pedaço fechado que já subiu bate o checksum e volta PULAR,
-/// sem consumir nada. O número de pedaços novos possíveis é o número de meses de
-/// histórico, que é finito e só diminui.
-export async function contarBackfillDoDia(licencaId: string, mesAtual: string) {
-  return prisma.backup.count({
-    where: {
-      licencaId,
-      tipo:      'OS',
-      periodo:   { lt: mesAtual },
-      emitidoEm: { gte: inicioDoDiaSaoPaulo() },
-      status:    { not: 'FALHOU' },
-    },
-  })
-}
-
-export async function findUltimoBackupConfirmado(
-  licencaId: string,
-  tipo:      TipoBackupDb,
-  periodo?:  string | null,
-) {
+/// É contra o `codigoConteudo` DESTA linha que o envio novo é comparado. Contra o
+/// último CONFIRMADO, nunca contra uma linha ainda emitida: se o código fosse
+/// promovido na autorização e o upload morresse no meio, no login seguinte o ERP
+/// mandaria o mesmo código, bateria, e responderíamos "nada novo" — o conteúdo
+/// nunca subiria e nenhum erro apareceria em lugar nenhum.
+export async function findUltimoBackupConfirmado(licencaId: string) {
   return prisma.backup.findFirst({
-    where:   {
-      licencaId,
-      tipo,
-      ...(periodo !== undefined ? { periodo } : {}),
-      status: 'CONFIRMADO',
-    },
+    where:   { licencaId, status: 'CONFIRMADO' },
     orderBy: { emitidoEm: 'desc' },
   })
 }
 
-/// Todos os pedaços de OS que existem na nuvem para esta licença — um por mês,
-/// o mais recente de cada. É o que a restauração precisa baixar inteiro.
+/// O FULL confirmado mais recente da licença, de qualquer ciclo.
 ///
-/// `distinct` com `orderBy` desc devolve a linha mais nova de cada período, que é
-/// exatamente o objeto que está lá hoje (reenvio do mesmo mês sobrescreve).
-export async function findPedacosDeOsConfirmados(licencaId: string) {
+/// É a referência da checagem de queda suspeita, e ela compara FULL com FULL de
+/// propósito: fragmento é por desenho muito menor que o full, então comparar os
+/// dois faria a trava disparar em todo primeiro fragmento da semana.
+export async function findUltimoFullConfirmado(licencaId: string) {
+  return prisma.backup.findFirst({
+    where:   { licencaId, tipo: 'FULL', status: { in: ['CONFIRMADO', 'REMOVIDO'] } },
+    orderBy: { emitidoEm: 'desc' },
+  })
+}
+
+/// O FULL confirmado deste ciclo, se já houver. É o que responde as duas
+/// perguntas do início do dia: "o próximo envio é full ou fragmento?" e "já dá
+/// para apagar o ciclo anterior?".
+export async function findFullConfirmadoDoCiclo(licencaId: string, ciclo: string) {
+  return prisma.backup.findFirst({
+    where:   { licencaId, ciclo, tipo: 'FULL', status: 'CONFIRMADO' },
+    orderBy: { emitidoEm: 'desc' },
+  })
+}
+
+/// A corrente do ciclo, na ORDEM DE EXTRAÇÃO: o full primeiro, depois cada
+/// fragmento. É o que a restauração baixa inteiro.
+///
+/// Ordena por `sequencia`, não por data: restaurar fora de ordem produz um banco
+/// silenciosamente errado, e empate de relógio não pode decidir isso.
+///
+/// `REMOVIDO` fica de fora — a linha existe para o histórico, mas o objeto não
+/// está mais na nuvem e assinar URL para ele daria 404 no meio do download.
+export async function findCorrenteDoCiclo(licencaId: string, ciclo: string) {
   return prisma.backup.findMany({
-    where:    { licencaId, tipo: 'OS', status: 'CONFIRMADO' },
-    distinct: ['periodo'],
-    orderBy:  [{ periodo: 'asc' }, { emitidoEm: 'desc' }],
+    where:   { licencaId, ciclo, status: 'CONFIRMADO' },
+    orderBy: { sequencia: 'asc' },
+  })
+}
+
+/// O envio em andamento desta licença, se houver — é o LOCK entre as máquinas da
+/// loja.
+///
+/// O ERP dispara no login, então três estações abrindo às 8h tentariam três
+/// backups do mesmo cliente, escrevendo na mesma chave e queimando a cota antes
+/// das 9h. Fazer esse lock na rede local seria frágil (se a máquina servidor está
+/// desligada, não há quem arbitre); aqui o estado já existe.
+///
+/// Só conta emissão dentro do TTL: passado ele a URL não vale mais, o upload não
+/// tem como concluir, e segurar o lock indefinidamente deixaria a loja inteira
+/// sem backup por causa de uma máquina que travou.
+export async function findEnvioPendente(licencaId: string, minutosTtl: number) {
+  const limite = new Date(Date.now() - minutosTtl * 60_000)
+  return prisma.backup.findFirst({
+    where:   { licencaId, status: 'EMITIDO', emitidoEm: { gte: limite } },
+    orderBy: { emitidoEm: 'desc' },
+  })
+}
+
+/// Próxima posição na corrente do ciclo. O FULL ocupa a 0; os fragmentos seguem.
+///
+/// Conta linhas EMITIDAS também, e não só confirmadas: duas autorizações
+/// concorrentes que recebessem a mesma sequência produziriam duas ordens de
+/// extração possíveis para o mesmo ciclo — e uma delas restaura errado.
+export async function proximaSequencia(licencaId: string, ciclo: string): Promise<number> {
+  const maior = await prisma.backup.aggregate({
+    where: { licencaId, ciclo, status: { not: 'FALHOU' } },
+    _max:  { sequencia: true },
+  })
+
+  return (maior._max.sequencia ?? -1) + 1
+}
+
+/// Ciclos que já podem sair da nuvem, com as chaves a apagar.
+///
+/// A regra de segurança está inteira na consulta: só entram linhas de ciclos
+/// ANTERIORES a um ciclo que tem FULL confirmado. Enquanto o full novo não
+/// confirmar, nada é elegível — é o que impede o caso em que o full da segunda
+/// falha, a limpeza roda assim mesmo e o cliente fica com zero backup.
+///
+/// `manterCiclos` é quantos ciclos completos preservar além do corrente.
+export async function findCiclosSuperados(manterCiclos = 1) {
+  const fulls = await prisma.backup.findMany({
+    where:    { tipo: 'FULL', status: 'CONFIRMADO' },
+    distinct: ['licencaId'],
+    orderBy:  { ciclo: 'desc' },
+    select:   { licencaId: true, ciclo: true },
+  })
+
+  const superados: { licencaId: string; ciclo: string; ids: string[]; chaves: string[] }[] = []
+
+  for (const full of fulls) {
+    // Ciclos distintos desta licença que são mais antigos que o do full atual.
+    const antigos = await prisma.backup.findMany({
+      where:    { licencaId: full.licencaId, ciclo: { lt: full.ciclo }, status: 'CONFIRMADO' },
+      distinct: ['ciclo'],
+      orderBy:  { ciclo: 'desc' },
+      select:   { ciclo: true },
+    })
+
+    for (const { ciclo } of antigos.slice(manterCiclos)) {
+      const linhas = await prisma.backup.findMany({
+        where:  { licencaId: full.licencaId, ciclo, status: 'CONFIRMADO' },
+        select: { id: true, chaveS3: true },
+      })
+
+      if (linhas.length > 0)
+        superados.push({
+          licencaId: full.licencaId,
+          ciclo,
+          ids:    linhas.map(l => l.id),
+          chaves: linhas.map(l => l.chaveS3),
+        })
+    }
+  }
+
+  return superados
+}
+
+/// Tudo que o inventário afirma existir na nuvem, para a varredura de verificação
+/// conferir objeto por objeto.
+///
+/// Existe porque o full semanal tinha uma segunda função que ninguém tinha
+/// nomeado: re-baseline. Elo corrompido ou sumido era curado pelo full seguinte,
+/// em silêncio. Sem isso, um buraco na corrente só apareceria na restauração —
+/// no pior dia possível para descobrir.
+export async function findBackupsConfirmadosParaVerificar() {
+  return prisma.backup.findMany({
+    where:   { status: 'CONFIRMADO' },
+    orderBy: [{ licencaId: 'asc' }, { ciclo: 'asc' }, { sequencia: 'asc' }],
+    select: {
+      id: true, licencaId: true, ciclo: true, sequencia: true,
+      tipo: true, chaveS3: true, tamanhoRealBytes: true,
+    },
+  })
+}
+
+/// Marca linhas como removidas depois que o objeto saiu do bucket.
+///
+/// A linha NÃO é apagada: sem ela a restauração tentaria assinar URL para um
+/// objeto que não existe mais, e o histórico perderia o registro de que aquele
+/// ciclo existiu.
+export async function marcarBackupsRemovidos(ids: string[]) {
+  return prisma.backup.updateMany({
+    where: { id: { in: ids } },
+    data:  { status: 'REMOVIDO' },
   })
 }
 
 export async function findBackupsRecentes(licencaId: string, limite = 30) {
   return prisma.backup.findMany({
     where:   { licencaId },
-    orderBy: { emitidoEm: 'desc' },
-    take:    limite,
-  })
-}
-
-export async function findBackupsPorCliente(clienteId: string, limite = 60) {
-  return prisma.backup.findMany({
-    where:   { clienteId },
     orderBy: { emitidoEm: 'desc' },
     take:    limite,
   })
@@ -221,7 +328,7 @@ export async function deletarBackupsDaLicenca(licencaId: string) {
 /// está". Cliente pagante sem nenhuma cópia na nuvem é o caso que importa, e ele
 /// some se a consulta partir da tabela de backups.
 export async function findVisaoGeralDeBackups() {
-  const [licencas, ultimos, pedacosOs, falhas] = await Promise.all([
+  const [licencas, fulls, fragmentos, falhas] = await Promise.all([
     prisma.licenca.findMany({
       select: {
         id:              true,
@@ -243,19 +350,15 @@ export async function findVisaoGeralDeBackups() {
       orderBy: { criadoEm: 'desc' },
     }),
 
-    // `distinct` com `orderBy` desc devolve a linha mais recente de cada
-    // (licença, tipo) — que é exatamente o arquivo que existe na nuvem hoje.
-    //
-    // Só os tipos ESPELHO entram aqui. OS tem um objeto por mês, então "a linha
-    // mais recente" seria só o último pedaço, e a tela mostraria o tamanho de um
-    // mês como se fosse o acervo inteiro — número errado por ordem de grandeza.
+    // O FULL mais recente de cada licença — a base da cópia que existe na nuvem.
+    // `distinct` com `orderBy` desc devolve a linha mais nova de cada licença.
     prisma.backup.findMany({
-      where:    { status: 'CONFIRMADO', tipo: { in: ['BANCO', 'IMAGENS'] } },
-      distinct: ['licencaId', 'tipo'],
+      where:    { status: 'CONFIRMADO', tipo: 'FULL' },
+      distinct: ['licencaId'],
       orderBy:  { emitidoEm: 'desc' },
       select: {
         licencaId:        true,
-        tipo:             true,
+        ciclo:            true,
         tamanhoBytes:     true,
         tamanhoRealBytes: true,
         confirmadoEm:     true,
@@ -265,20 +368,18 @@ export async function findVisaoGeralDeBackups() {
       },
     }),
 
-    // OS entra pedaço a pedaço, para o service agregar por licença.
+    // Os fragmentos entram um a um, para o service agregar por licença e ciclo.
     //
-    // Não dá para usar groupBy aqui: reenvio do mesmo mês (correção, backfill
-    // repetido) gera várias linhas CONFIRMADO para o mesmo período, e o groupBy
-    // contaria cada uma como um mês diferente e somaria o tamanho duas vezes. O
-    // `distinct` por (licença, período) é o que devolve os objetos que existem
-    // de verdade na nuvem — um por mês.
+    // Não dá para usar groupBy: a tela precisa da SEQUÊNCIA para mostrar a
+    // corrente na ordem em que seria restaurada, e um total agregado esconderia
+    // exatamente o que importa olhar — se falta um elo no meio.
     prisma.backup.findMany({
-      where:    { status: 'CONFIRMADO', tipo: 'OS' },
-      distinct: ['licencaId', 'periodo'],
-      orderBy:  [{ periodo: 'desc' }, { emitidoEm: 'desc' }],
+      where:   { status: 'CONFIRMADO', tipo: 'FRAGMENTO' },
+      orderBy: [{ ciclo: 'desc' }, { sequencia: 'asc' }],
       select: {
         licencaId:        true,
-        periodo:          true,
+        ciclo:            true,
+        sequencia:        true,
         tamanhoBytes:     true,
         tamanhoRealBytes: true,
         confirmadoEm:     true,
@@ -296,7 +397,7 @@ export async function findVisaoGeralDeBackups() {
     }),
   ])
 
-  return { licencas, ultimos, pedacosOs, falhas }
+  return { licencas, fulls, fragmentos, falhas }
 }
 
 /// Diário de eventos de uma licença, para a gaveta de detalhe.

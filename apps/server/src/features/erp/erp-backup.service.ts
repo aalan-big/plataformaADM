@@ -7,12 +7,18 @@
  * Regras do backup em nuvem do ERP local. Decide QUEM pode subir, QUANTO pode
  * subir por dia e ONDE o arquivo é gravado — o ERP não escolhe nada disso.
  *
- * Modelo de arquivo: cada licença tem UM banco.zip e UM imagens.zip na nuvem.
- * O backup de hoje sobrescreve o de ontem. Não há versões nem ring de dias.
+ * Modelo: a semana é um CICLO, aberto na segunda-feira. O primeiro login do
+ * ciclo sobe um FULL (acervo inteiro); os demais sobem FRAGMENTOS (só o que
+ * mudou). Quando o full do ciclo novo confirma, a rotação apaga o ciclo
+ * anterior — só se pode destruir a cópia velha porque a nova contém tudo.
+ *
+ * O gatilho é o LOGIN do usuário, não um horário: o PC do cliente pode estar
+ * desligado à noite.
  *
  * O QUE ELE CONTÉM:
  * - Gate de plano (trial e inadimplente não sobem nem baixam).
  * - Limite diário por licença (proteção de custo).
+ * - Lock entre as máquinas da loja.
  * - Emissão e confirmação de URL assinada.
  * ============================================================================
  */
@@ -25,11 +31,14 @@ import {
   marcarBackupConfirmado,
   marcarBackupFalhou,
   contarBackupsDoDia,
-  contarBackfillDoDia,
   findUltimoBackupConfirmado,
-  findPedacosDeOsConfirmados,
+  findUltimoFullConfirmado,
+  findFullConfirmadoDoCiclo,
+  findCorrenteDoCiclo,
+  findEnvioPendente,
+  proximaSequencia,
   findBackupsRecentes,
-  periodoAtual,
+  cicloAtual,
   type TipoBackupDb,
 } from '@startbig/database'
 import {
@@ -38,7 +47,7 @@ import {
   urlDownloadBackupSchema,
   BACKUP_TAMANHO_MAX_BYTES,
 } from '@startbig/schemas'
-import { StorageService } from '../../common/storage/storage.service'
+import { StorageService, TTL_UPLOAD_SEGUNDOS } from '../../common/storage/storage.service'
 
 /// Cobre o backup automático + um manual do usuário no mesmo dia. Mais que isso
 /// não é uso legítimo, é loop com bug — e loop com bug na nuvem é fatura.
@@ -52,48 +61,33 @@ function limiteDeEnv(chave: string, padrao: number): number {
   return Number.isInteger(n) && n > 0 ? n : padrao
 }
 
-/// Os dois tipos têm a MESMA cota, e por um motivo específico: com 1/dia em
-/// imagens, o automático zerava a cota e o botão de backup manual nascia
-/// quebrado — no único dia em que ele importa, que é aquele em que o usuário
-/// mexeu nas fotos e quis forçar o envio. Um botão que responde 429 é pior que
-/// não ter botão. O custo extra é limitado: o segundo envio de imagens só
-/// acontece se o conteúdo mudou de verdade, senão o dedupe responde PULAR sem
-/// gastar vaga nem banda.
-const LIMITE_DIARIO: Record<TipoBackupDb, number> = {
-  BANCO:   limiteDeEnv('BACKUP_LIMITE_DIARIO_BANCO',   2),
-  IMAGENS: limiteDeEnv('BACKUP_LIMITE_DIARIO_IMAGENS', 2),
-  /// Em OS a cota vale POR MÊS, não pelo tipo inteiro — senão o mês corrente
-  /// competiria por vaga com o backfill dos meses antigos.
-  OS:      limiteDeEnv('BACKUP_LIMITE_DIARIO_OS',      2),
-}
-
-/// Cota separada para primeiro envio de pedaço de mês JÁ FECHADO — o backfill.
+/// Cota diária POR LICENÇA, não por tipo: com o gatilho no login, "tipo" deixou
+/// de ser um eixo de cota — num dia normal sobe um pacote só.
 ///
-/// Um cliente que instala hoje com dois anos de ordens de serviço tem 24 pedaços
-/// para subir, cada um uma vez na vida. Contra a cota normal de 2/dia isso
-/// levaria 12 dias com o acervo desprotegido, justamente na janela em que ele
-/// ainda não tem backup nenhum.
+/// A folga de 4 cobre o caso legítimo: o envio do dia, um manual do usuário, e
+/// uma retentativa depois de uma queda de internet. Mais que isso não é uso
+/// legítimo, é loop com bug — e loop com bug na nuvem é fatura.
 ///
-/// A folga é segura porque o caso é limitado por construção: o que a cota diária
-/// protege é upload REPETIDO, e pedaço fechado que já subiu bate o checksum e
-/// volta PULAR sem consumir vaga. O número de pedaços novos possíveis é o número
-/// de meses de histórico — finito, e só diminui.
-const LIMITE_BACKFILL_DIARIO = limiteDeEnv('BACKUP_LIMITE_BACKFILL_DIARIO', 12)
+/// O lock entre terminais já impede o caso mais provável de estouro (três
+/// estações logando às 8h), então esta cota volta a ser o que sempre foi: teto
+/// contra bug, não regra de negócio.
+const LIMITE_DIARIO = limiteDeEnv('BACKUP_LIMITE_DIARIO', 4)
 
-/// Se o backup de hoje vier com menos da metade do último confirmado, algo está
-/// errado (banco truncado, ransomware, export pela metade). Com arquivo único e
-/// sem versionamento, aceitar isso é sobrescrever a única cópia boa com lixo —
-/// e não existe de onde voltar. Recusa e deixa o de ontem em paz.
+/// Se o FULL de hoje vier com menos da metade do FULL anterior, algo está errado
+/// (banco truncado, export pela metade, pasta de fotos que sumiu). Aceitar isso
+/// é deixar a rotação apagar o ciclo bom logo em seguida, com base num full que
+/// não contém o que ele deveria conter.
+///
+/// ⚠ Só se compara FULL com FULL. Fragmento é, por desenho, muito menor que o
+/// full — comparar os dois faria a trava disparar em todo primeiro fragmento da
+/// semana, todas as semanas.
 const QUEDA_SUSPEITA = 0.5
 
-/// Teto de dias que um pacote MUTÁVEL pode ficar sem subir por causa do
-/// checksum. Ver a explicação no ponto onde é usado — é a rede de proteção
-/// contra checksum errado congelar o backup em silêncio.
-///
-/// Não se aplica a pedaço de mês fechado: ali o conteúdo é imutável de verdade,
-/// então checksum igual significa mesmo "nada mudou", e forçar reenvio semanal
-/// destruiria exatamente a economia que a partição existe para obter.
-const DIAS_FORCA_ESPELHO = 7
+/// Janela do lock entre as máquinas da loja. Acompanha o TTL da URL assinada por
+/// invariante: passado ele a URL não vale mais e o upload não tem como concluir,
+/// então segurar o lock além disso deixaria a loja inteira sem backup por causa
+/// de uma máquina que travou.
+const MINUTOS_LOCK = Math.ceil(TTL_UPLOAD_SEGUNDOS / 60)
 
 @Injectable()
 export class ErpBackupService {
@@ -192,28 +186,26 @@ export class ErpBackupService {
    * uma com seu banco local. Sem ele, duas lojas do mesmo dono escreveriam no
    * mesmo objeto e a segunda apagaria o backup da primeira.
    */
+  /// Tudo que é apagável fica sob `ciclos/`. Não é organização: é o que torna a
+  /// rotação ESTRUTURALMENTE incapaz de alcançar qualquer coisa que não seja um
+  /// ciclo — mesmo espírito da chave montada no servidor, que elimina o path
+  /// traversal em vez de tentar validá-lo.
   private montarChave(
     clienteId: string,
     licencaId: string,
     tipo:      TipoBackupDb,
-    periodo:   string | null,
+    ciclo:     string,
+    sequencia: number,
   ): string {
-    const arquivo =
-      tipo === 'BANCO'   ? 'banco.zip'   :
-      tipo === 'IMAGENS' ? 'imagens.zip' :
-      `os-${periodo}.zip`
-    return `clientes/${clienteId}/${licencaId}/${arquivo}`
+    const arquivo = tipo === 'FULL'
+      ? 'full.zip'
+      : `frag-${String(sequencia).padStart(3, '0')}.zip`
+
+    return `clientes/${clienteId}/${licencaId}/ciclos/${ciclo}/${arquivo}`
   }
 
-  private paraTipoDb(tipo: 'banco' | 'imagens' | 'os'): TipoBackupDb {
-    return tipo === 'banco' ? 'BANCO' : tipo === 'imagens' ? 'IMAGENS' : 'OS'
-  }
-
-  /// Pedaço de mês que já acabou. É a única coisa neste sistema que pode ser
-  /// tratada como imutável, e é disso que sai tanto a cota de backfill quanto a
-  /// dispensa do reenvio forçado semanal.
-  private ehPedacoFechado(tipo: TipoBackupDb, periodo: string | null): boolean {
-    return tipo === 'OS' && periodo !== null && periodo < periodoAtual()
+  private paraTipoDb(tipo: 'full' | 'fragmento'): TipoBackupDb {
+    return tipo === 'full' ? 'FULL' : 'FRAGMENTO'
   }
 
   // ── Endpoints ─────────────────────────────────────────────────────────────
@@ -230,121 +222,114 @@ export class ErpBackupService {
         'HWID informado não corresponde ao da sessão autenticada.',
       )
 
-    const periodo = dados.periodo ?? null
+    const ciclo = cicloAtual()
 
-    // Mês que ainda não começou não tem conteúdo para empacotar. Aceitar seria
-    // gravar um pedaço que depois precisaria ser reenviado, ocupando a chave
-    // definitiva daquele mês com dados pela metade.
-    if (tipo === 'OS' && periodo && periodo > periodoAtual())
-      throw this.erro(
-        HttpStatus.BAD_REQUEST,
-        'BACKUP_PERIODO_FUTURO',
-        `Período ${periodo} ainda não terminou de existir. Envie no máximo até o mês corrente.`,
-      )
-
-    // Sem checksum não dá para deduplicar, e sem dedupe a mesma pasta de fotos
-    // sobe todo dia sem nada ter mudado. É o maior desperdício possível — e em
-    // OS é o mecanismo inteiro: é o checksum que faz o pedaço fechado responder
-    // PULAR para sempre depois do primeiro envio.
-    if (tipo !== 'BANCO' && !dados.checksumSha256)
-      throw this.erro(
-        HttpStatus.BAD_REQUEST,
-        'BACKUP_CHECKSUM_OBRIGATORIO',
-        `checksumSha256 é obrigatório para backup de ${dados.tipo}.`,
-      )
-
-    // Escopo do "último": em OS é o último DAQUELE MÊS. Comparar com o mês
-    // anterior não faz sentido nenhum — são acervos diferentes, e a checagem de
-    // queda suspeita acusaria todo mês mais fraco que o anterior.
-    const ultimo = await findUltimoBackupConfirmado(licencaId, tipo, tipo === 'OS' ? periodo : undefined)
-
-    // Espelho de imagens: nada mudou, nada sobe. Resposta é sucesso, não erro —
-    // o ERP deve tratar como "backup em dia".
-    //
-    // Só que o checksum vem do ERP. Se ele calcular sobre a coisa errada e o
-    // valor nunca mudar, o primeiro upload passa e TODOS os seguintes pulam —
-    // para sempre. O cliente veria "backup em dia" por meses com as imagens
-    // congeladas no primeiro dia, e só descobriria na hora de restaurar. Por
-    // isso o pulo tem prazo: passado o limite, sobe inteiro de novo mesmo que o
-    // checksum bata. Custa um upload por semana e elimina a falha silenciosa.
-    if (tipo !== 'BANCO' && ultimo?.checksumSha256 && ultimo.checksumSha256 === dados.checksumSha256) {
-      const referencia = ultimo.confirmadoEm ?? ultimo.emitidoEm
-      const diasDesde  = (Date.now() - referencia.getTime()) / (24 * 60 * 60 * 1000)
-
-      // Pedaço de mês fechado não recebe a rede de proteção, e é de propósito: o
-      // conteúdo dele é imutável de verdade, então checksum igual significa mesmo
-      // "nada mudou". Forçar reenvio semanal aqui reintroduziria exatamente o
-      // custo que a partição existe para eliminar — anos de fotos subindo de novo
-      // toda semana, para sempre.
-      if (this.ehPedacoFechado(tipo, periodo) || diasDesde < DIAS_FORCA_ESPELHO) {
-        return {
-          acao:     'PULAR',
-          motivo:   tipo === 'OS'
-            ? `O pedaço de ${periodo} já está na nuvem e não mudou.`
-            : 'Nenhuma imagem mudou desde o último backup.',
-          chave:    ultimo.chaveS3,
-          ultimoEm: referencia,
-        }
-      }
-
-      this.logger.log(
-        `[backup] ${tipo} sem mudança há ${Math.floor(diasDesde)} dias na licença ${licencaId} — ` +
-        `forçando envio completo para não depender do checksum indefinidamente.`,
-      )
-    }
-
-    // A trava vale para o backup AUTOMÁTICO, que roda sem ninguém olhando — é ali
-    // que um banco truncado sobrescreve a única cópia boa em silêncio. No envio
-    // manual existe uma pessoa que clicou sabendo do que se trata, e a redução
-    // pode ser legítima (limpeza de histórico, exclusão de filial). Recusar os
-    // dois deixaria o cliente sem nenhuma forma de subir um banco menor.
-    if (
-      dados.origem !== 'MANUAL' &&
-      ultimo?.tamanhoRealBytes &&
-      dados.tamanhoBytes < ultimo.tamanhoRealBytes * QUEDA_SUSPEITA
-    )
+    // O ERP LÊ o ciclo do /status, não calcula. Divergência é máquina com data
+    // errada ou tela velha — e gravar no ciclo errado embaralha a ordem de
+    // restauração de um jeito que só aparece no dia do desastre.
+    if (dados.ciclo !== ciclo)
       throw this.erro(
         HttpStatus.CONFLICT,
-        'BACKUP_TAMANHO_SUSPEITO',
-        `Backup de ${this.tamanho(dados.tamanhoBytes)} é muito menor que o último enviado ` +
-        `(${this.tamanho(ultimo.tamanhoRealBytes)}). Envio automático recusado para não ` +
-        `sobrescrever a cópia boa. Se a redução é esperada, refaça pelo botão de backup manual.`,
+        'BACKUP_CICLO_DIVERGENTE',
+        `O ciclo corrente é ${ciclo}, não ${dados.ciclo}. Releia o /status antes de enviar.`,
       )
 
-    // Duas cotas, porque são dois usos diferentes. Backfill (pedaço de mês
-    // fechado que ainda não subiu) tem folga maior e conta num balde próprio;
-    // tudo o mais — banco, imagens, mês corrente — usa a cota diária normal.
-    if (this.ehPedacoFechado(tipo, periodo)) {
-      const backfillHoje = await contarBackfillDoDia(licencaId, periodoAtual())
-      if (backfillHoje >= LIMITE_BACKFILL_DIARIO)
+    // ── Lock entre as máquinas da loja ────────────────────────────────────────
+    // O ERP dispara no login, então três estações abrindo às 8h tentariam três
+    // backups da mesma licença. Isto NÃO é erro: é a resposta normal para o
+    // segundo terminal, não consome cota e não deve virar retentativa em laço.
+    const pendente = await findEnvioPendente(licencaId, MINUTOS_LOCK)
+
+    if (pendente)
+      return {
+        acao:   'AGUARDANDO_OUTRO_TERMINAL',
+        desde:  pendente.emitidoEm.toISOString(),
+        hwid:   pendente.hwid,
+        motivo: 'Outro terminal já está enviando o backup de hoje.',
+      }
+
+    // ── Nada mudou ────────────────────────────────────────────────────────────
+    // O `codigoConteudo` é um token do estado do conteúdo da INSTALAÇÃO, não um
+    // hash daquele pacote: ele avança quando entra coisa nova e fica parado
+    // quando não entra. Por isso a comparação é direta, sem olhar o tipo.
+    //
+    // A referência é o último envio CONFIRMADO, nunca uma linha ainda emitida. Se
+    // o código fosse promovido na autorização, um upload que morresse no meio
+    // faria o envio seguinte bater com ele e receber "nada novo" — o conteúdo
+    // nunca subiria, e nenhum erro apareceria em lugar nenhum.
+    const ultimo = await findUltimoBackupConfirmado(licencaId)
+
+    if (ultimo?.codigoConteudo && ultimo.codigoConteudo === dados.codigoConteudo)
+      return {
+        acao:     'PULAR',
+        motivo:   'Nada mudou desde o último envio confirmado.',
+        chave:    ultimo.chaveS3,
+        ultimoEm: ultimo.confirmadoEm ?? ultimo.emitidoEm,
+      }
+
+    // ── O tipo tem que fechar com o estado do ciclo ───────────────────────────
+    const fullDoCiclo = await findFullConfirmadoDoCiclo(licencaId, ciclo)
+
+    // Fragmento sem full é elo solto: ocupa espaço na nuvem e não restaura nada,
+    // porque não existe base sobre a qual aplicá-lo.
+    if (!fullDoCiclo && tipo !== 'FULL')
+      throw this.erro(
+        HttpStatus.CONFLICT,
+        'BACKUP_FULL_OBRIGATORIO',
+        `O ciclo ${ciclo} ainda não tem full confirmado. O próximo envio precisa ser full.`,
+      )
+
+    // Um full por ciclo, sempre na sequência 0. Dois fulls na mesma corrente
+    // deixam "qual é a base?" em aberto, e a escolha errada restaura um acervo
+    // incompleto sem parecer que falhou.
+    if (fullDoCiclo && tipo === 'FULL')
+      throw this.erro(
+        HttpStatus.CONFLICT,
+        'BACKUP_FULL_JA_EXISTE',
+        `O ciclo ${ciclo} já tem full confirmado. Envie fragmento até a próxima segunda.`,
+      )
+
+    // ── Queda suspeita: FULL contra FULL, nunca contra fragmento ──────────────
+    // A trava vale para o envio AUTOMÁTICO, que roda sem ninguém olhando. No
+    // manual existe uma pessoa que clicou sabendo do que se trata, e a redução
+    // pode ser legítima (limpeza de histórico, exclusão de filial).
+    //
+    // Aqui ela pesa mais do que pesava no espelho: é o full confirmado que
+    // autoriza a rotação a apagar o ciclo anterior. Aceitar um full pela metade é
+    // destruir a cópia boa logo em seguida.
+    if (tipo === 'FULL' && dados.origem !== 'MANUAL') {
+      const ultimoFull = await findUltimoFullConfirmado(licencaId)
+
+      if (ultimoFull?.tamanhoRealBytes && dados.tamanhoBytes < ultimoFull.tamanhoRealBytes * QUEDA_SUSPEITA)
         throw this.erro(
-          HttpStatus.TOO_MANY_REQUESTS,
-          'BACKUP_LIMITE_BACKFILL',
-          `Limite de ${LIMITE_BACKFILL_DIARIO} pedaços de meses anteriores por dia já atingido. ` +
-          `O backfill continua amanhã de onde parou — nenhum mês é perdido.`,
-        )
-    } else {
-      // Em OS a cota é por mês: o mês corrente tem as 2 vagas dele, sem disputar
-      // com backfill nem com outros meses.
-      const enviadosHoje = await contarBackupsDoDia(licencaId, tipo, tipo === 'OS' ? periodo : undefined)
-      if (enviadosHoje >= LIMITE_DIARIO[tipo])
-        throw this.erro(
-          HttpStatus.TOO_MANY_REQUESTS,
-          'BACKUP_LIMITE_DIARIO',
-          `Limite de ${LIMITE_DIARIO[tipo]} backup(s) de ${dados.tipo}` +
-          `${tipo === 'OS' ? ` (${periodo})` : ''} por dia já atingido. Tente amanhã.`,
+          HttpStatus.CONFLICT,
+          'BACKUP_TAMANHO_SUSPEITO',
+          `Full de ${this.tamanho(dados.tamanhoBytes)} é muito menor que o anterior ` +
+          `(${this.tamanho(ultimoFull.tamanhoRealBytes)}). Envio automático recusado para não ` +
+          `autorizar a limpeza do ciclo antigo. Se a redução é esperada, refaça pelo botão manual.`,
         )
     }
 
-    const chave = this.montarChave(licenca.clienteId, licencaId, tipo, periodo)
+    const enviadosHoje = await contarBackupsDoDia(licencaId)
 
-    // Assina ANTES de gravar a linha. A linha é o que conta cota diária, então se
-    // a assinatura falhar (bucket mal configurado, credencial vencida) o cliente
-    // não pode sair com 2 de 2 backups "usados" num dia em que nada foi enviado.
+    if (enviadosHoje >= LIMITE_DIARIO)
+      throw this.erro(
+        HttpStatus.TOO_MANY_REQUESTS,
+        'BACKUP_LIMITE_DIARIO',
+        `Limite de ${LIMITE_DIARIO} envios por dia já atingido nesta licença. Tente amanhã.`,
+      )
+
+    // O full sempre abre a corrente; o fragmento pega a próxima vaga livre.
+    const sequencia = tipo === 'FULL' ? 0 : await proximaSequencia(licencaId, ciclo)
+    const chave     = this.montarChave(licenca.clienteId, licencaId, tipo, ciclo, sequencia)
+
+    // Assina ANTES de gravar a linha. A linha conta cota E segura o lock, então
+    // se a assinatura falhar (bucket mal configurado, credencial vencida) o
+    // cliente não pode sair com uma vaga gasta e a loja inteira travada num dia
+    // em que nada foi enviado.
     const { url, expiraEm } = await this.storage.gerarUrlUpload({
       chave,
-      tamanhoBytes:   dados.tamanhoBytes,
-      checksumSha256: dados.checksumSha256,
+      tamanhoBytes: dados.tamanhoBytes,
     })
 
     const registro = await criarBackup({
@@ -352,11 +337,12 @@ export class ErpBackupService {
       licencaId,
       hwid:           dados.hwid,
       tipo,
-      periodo,
+      ciclo,
+      sequencia,
       chaveS3:        chave,
       origem:         dados.origem,
       tamanhoBytes:   dados.tamanhoBytes,
-      checksumSha256: dados.checksumSha256 ?? null,
+      codigoConteudo: dados.codigoConteudo,
     })
 
     return {
@@ -364,7 +350,8 @@ export class ErpBackupService {
       uploadId: registro.id,
       url,
       chave,
-      periodo,
+      ciclo,
+      sequencia,
       metodo:   'PUT',
       // O ERP precisa mandar exatamente estes headers — o Content-Length está
       // dentro da assinatura, então divergir de um byte invalida a URL.
@@ -432,22 +419,15 @@ export class ErpBackupService {
 
     const motivo = this.motivoDeBloqueio(licenca)
 
-    const mesAtual = periodoAtual()
+    const ciclo = cicloAtual()
 
-    const [ultimoBanco, ultimoImagens, pedacosOs, recentes] = await Promise.all([
-      findUltimoBackupConfirmado(licencaId, 'BANCO'),
-      findUltimoBackupConfirmado(licencaId, 'IMAGENS'),
-      findPedacosDeOsConfirmados(licencaId),
+    const [fullDoCiclo, corrente, pendente, enviadosHoje, recentes] = await Promise.all([
+      findFullConfirmadoDoCiclo(licencaId, ciclo),
+      findCorrenteDoCiclo(licencaId, ciclo),
+      findEnvioPendente(licencaId, MINUTOS_LOCK),
+      contarBackupsDoDia(licencaId),
       findBackupsRecentes(licencaId, 30),
     ])
-
-    const enviadosHoje = {
-      banco:   await contarBackupsDoDia(licencaId, 'BANCO'),
-      imagens: await contarBackupsDoDia(licencaId, 'IMAGENS'),
-      // Só o mês corrente: é contra esta cota que o ciclo diário compete.
-      os:      await contarBackupsDoDia(licencaId, 'OS', mesAtual),
-      backfill: await contarBackfillDoDia(licencaId, mesAtual),
-    }
 
     return {
       planoPermiteBackup: motivo === null,
@@ -455,32 +435,42 @@ export class ErpBackupService {
       /// campo muda quando a redação melhorar.
       motivoBloqueio:     motivo?.mensagem ?? null,
       codigoBloqueio:     motivo?.codigo   ?? null,
-      limiteDiario: {
-        banco:    LIMITE_DIARIO.BANCO,
-        imagens:  LIMITE_DIARIO.IMAGENS,
-        os:       LIMITE_DIARIO.OS,
-        backfill: LIMITE_BACKFILL_DIARIO,
-      },
+      limiteDiario:       LIMITE_DIARIO,
       enviadosHoje,
       tamanhoMaximoBytes: BACKUP_TAMANHO_MAX_BYTES,
-      /// Mês que o ERP deve tratar como pedaço aberto. Vem do servidor porque o
-      /// corte é no fuso de São Paulo pelo relógio DELE — se o ERP calcular
-      /// sozinho, uma máquina com data errada fecharia o mês na hora errada.
-      periodoCorrente: mesAtual,
 
-      // Cópias que EXISTEM na nuvem hoje. Uma de banco, uma de imagens, e um
-      // pedaço por mês de OS. O histórico abaixo é registro de eventos, não lista
-      // de arquivos restauráveis — a tela precisa deixar isso claro para não
-      // prometer restauração que não existe.
-      copiaAtual: {
-        banco:   ultimoBanco   ? this.resumo(ultimoBanco)   : null,
-        imagens: ultimoImagens ? this.resumo(ultimoImagens) : null,
-        os:      pedacosOs.map(p => ({ periodo: p.periodo, ...this.resumo(p) })),
-      },
+      /// Ciclo que o ERP deve informar no url-upload. Vem do servidor porque o
+      /// corte é no fuso de São Paulo pelo relógio DELE — se o ERP calculasse
+      /// sozinho, uma máquina com a data errada faria o full no dia errado, ou
+      /// nunca faria.
+      cicloCorrente: ciclo,
+
+      /// `false` significa "o próximo envio é FULL", em qualquer dia da semana.
+      /// É isto que faz a terça assumir quando a oficina não abre na segunda, e é
+      /// o que torna o primeiro backup de uma instalação nova um full sem regra
+      /// extra nenhuma.
+      fullDoCicloConfirmado: Boolean(fullDoCiclo),
+
+      /// Outro terminal segurando o lock. Não é erro: é para a tela dizer
+      /// "backup sendo feito em outra máquina" em vez de tentar de novo.
+      envioEmAndamento: pendente
+        ? { hwid: pendente.hwid, desde: pendente.emitidoEm }
+        : null,
+
+      /// A corrente que EXISTE na nuvem hoje, na ordem em que seria extraída. O
+      /// histórico abaixo é registro de eventos, não lista de arquivos
+      /// restauráveis — a tela precisa deixar isso claro para não prometer
+      /// restauração que não existe.
+      corrente: corrente.map(r => ({
+        tipo:      r.tipo,
+        sequencia: r.sequencia,
+        ...this.resumo(r),
+      })),
 
       historicoEventos: recentes.map(r => ({
         tipo:         r.tipo,
-        periodo:      r.periodo,
+        ciclo:        r.ciclo,
+        sequencia:    r.sequencia,
         status:       r.status,
         origem:       r.origem,
         tamanhoBytes: r.tamanhoRealBytes ?? r.tamanhoBytes,
@@ -503,19 +493,27 @@ export class ErpBackupService {
         'HWID informado não corresponde ao da sessão autenticada.',
       )
 
-    const tipo = this.paraTipoDb(dados.tipo)
+    const ciclo = dados.ciclo ?? cicloAtual()
 
-    // Espelho tem uma cópia; OS tem uma por mês, e restaurar é baixar todas —
-    // meio acervo restaurado é pior que nenhum, porque parece completo.
-    const registros = tipo === 'OS'
-      ? await findPedacosDeOsConfirmados(licencaId)
-      : [await findUltimoBackupConfirmado(licencaId, tipo)].filter(r => r !== null)
+    // Restaurar é baixar a CORRENTE inteira, na ordem: o full e depois cada
+    // fragmento. Meia restauração é pior que nenhuma, porque parece completa.
+    const registros = await findCorrenteDoCiclo(licencaId, ciclo)
 
     if (registros.length === 0)
       throw this.erro(
         HttpStatus.NOT_FOUND,
         'BACKUP_INEXISTENTE',
-        `Nenhum backup de ${dados.tipo} confirmado para esta licença.`,
+        `Nenhum backup confirmado no ciclo ${ciclo} para esta licença.`,
+      )
+
+    // Corrente sem full não restaura: fragmento é diferença, e não existe base
+    // sobre a qual aplicá-lo. Falhar aqui, alto, é melhor que entregar links que
+    // reconstroem um acervo pela metade.
+    if (registros[0].tipo !== 'FULL' || registros[0].sequencia !== 0)
+      throw this.erro(
+        HttpStatus.CONFLICT,
+        'BACKUP_CORRENTE_SEM_FULL',
+        `O ciclo ${ciclo} não tem full confirmado — os fragmentos sozinhos não restauram nada.`,
       )
 
     // Confere antes de assinar: link para objeto apagado pela retenção viraria
@@ -524,16 +522,19 @@ export class ErpBackupService {
       registros.map(async r => ({ registro: r, objeto: await this.storage.conferirObjeto(r.chaveS3) })),
     )
 
-    const presentes = conferidos.filter(c => c.objeto !== null)
-
-    // Pedaço registrado que sumiu do bucket é informado, nunca omitido em
-    // silêncio: uma restauração com buracos que se apresenta como completa é o
-    // pior resultado possível aqui.
+    // Elo registrado que sumiu do bucket é informado, nunca omitido em silêncio.
     const indisponiveis = conferidos
       .filter(c => c.objeto === null)
-      .map(c => c.registro.periodo ?? dados.tipo)
+      .map(c => c.registro.sequencia)
 
-    if (presentes.length === 0)
+    // Numa CORRENTE um buraco não deixa a restauração parcial — ele invalida
+    // tudo que vem depois, porque fragmento é diferença aplicada sobre o estado
+    // anterior. Então a corrente é cortada no primeiro elo ausente, e o que
+    // sobra é honestamente utilizável.
+    const primeiroBuraco = conferidos.findIndex(c => c.objeto === null)
+    const utilizaveis    = primeiroBuraco === -1 ? conferidos : conferidos.slice(0, primeiroBuraco)
+
+    if (utilizaveis.length === 0)
       throw this.erro(
         HttpStatus.NOT_FOUND,
         'BACKUP_INEXISTENTE',
@@ -541,12 +542,13 @@ export class ErpBackupService {
       )
 
     const assinados = await Promise.all(
-      presentes.map(async ({ registro, objeto }) => {
+      utilizaveis.map(async ({ registro, objeto }) => {
         const { url, expiraEm } = await this.storage.gerarUrlDownload(registro.chaveS3)
         return {
           expiraEm,
           arquivo: {
-            periodo:      registro.periodo,
+            tipo:         registro.tipo,
+            sequencia:    registro.sequencia,
             url,
             chave:        registro.chaveS3,
             tamanhoBytes: objeto!.tamanhoBytes,
@@ -563,22 +565,26 @@ export class ErpBackupService {
 
     if (indisponiveis.length > 0)
       this.logger.warn(
-        `[backup] restauração incompleta — licenca=${licencaId} tipo=${tipo} ` +
-        `pedaços ausentes na nuvem: ${indisponiveis.join(', ')}`,
+        `[backup] corrente com buraco — licenca=${licencaId} ciclo=${ciclo} ` +
+        `elos ausentes na nuvem: ${indisponiveis.join(', ')}`,
       )
 
     this.logger.log(
-      `[backup] download emitido — licenca=${licencaId} tipo=${tipo} ` +
+      `[backup] download emitido — licenca=${licencaId} ciclo=${ciclo} ` +
       `arquivos=${arquivos.length} hwid=${dados.hwid}`,
     )
 
     return {
-      tipo:     dados.tipo,
+      ciclo,
       arquivos,
-      /// Pedaços que constam no registro mas não estão mais na nuvem. Lista vazia
-      /// é o caso normal; qualquer item aqui significa restauração parcial, e a
-      /// tela do ERP tem que dizer isso ao usuário antes de restaurar.
+      /// Elos que constam no registro mas não estão mais na nuvem. Lista vazia é
+      /// o caso normal.
       indisponiveis,
+      /// Até onde a corrente reconstrói de verdade. Se for menor que a última
+      /// sequência registrada, o acervo volta ao estado daquele dia e NÃO ao de
+      /// hoje — a tela do ERP tem que dizer isso antes de restaurar.
+      cadeiaCompleta: indisponiveis.length === 0,
+      restauraAte:    arquivos[arquivos.length - 1]?.geradoEm ?? null,
       totalBytes: arquivos.reduce((s, a) => s + a.tamanhoBytes, 0),
       /// Quando a primeira URL desta lista expira.
       ///
@@ -603,14 +609,14 @@ export class ErpBackupService {
     emitidoEm:         Date
     hwid?:             string | null
     chaveS3?:          string
-    checksumSha256?:   string | null
+    codigoConteudo?:   string | null
   }) {
     return {
       tamanhoBytes:   r.tamanhoRealBytes ?? r.tamanhoBytes,
       geradoEm:       r.confirmadoEm ?? r.emitidoEm,
       hwid:           r.hwid ?? null,
       chave:          r.chaveS3 ?? null,
-      checksumSha256: r.checksumSha256 ?? null,
+      codigoConteudo: r.codigoConteudo ?? null,
     }
   }
 

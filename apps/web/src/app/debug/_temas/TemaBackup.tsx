@@ -105,25 +105,27 @@ function LinhaPasso({ passo, n }: { passo: Passo; n: number }) {
 
 // ── Ciclo completo ─────────────────────────────────────────────────────────
 
-/// Mês corrente no formato 'AAAA-MM', só como valor inicial do campo. O que vale
-/// é o `periodoCorrente` do /status — este aqui é palpite de tela, e o servidor
-/// recusa mês futuro de qualquer forma.
-function mesCorrenteLocal(): string {
+/// Segunda-feira desta semana em 'AAAA-MM-DD', só como valor inicial do campo.
+/// O que vale é o `cicloCorrente` do /status — este aqui é palpite de tela, e o
+/// servidor recusa ciclo divergente de qualquer forma (é justamente uma das
+/// travas que dá para exercitar aqui).
+function segundaCorrenteLocal(): string {
   const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7))   // domingo → 6, segunda → 0
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 function SecaoCiclo({ token, onFim }: { token: string; onFim: () => void }) {
   const [hwid,     setHwid]     = useState('')
-  const [tipo,     setTipo]     = useState<'banco' | 'imagens' | 'os'>('banco')
-  const [periodo,  setPeriodo]  = useState(mesCorrenteLocal())
+  const [tipo,     setTipo]     = useState<'full' | 'fragmento'>('full')
+  const [ciclo,    setCiclo]    = useState(segundaCorrenteLocal())
   const [tamanho,  setTamanho]  = useState(65536)
   const [load,     setLoad]     = useState(false)
   const [passos,   setPassos]   = useState<Passo[]>([])
   const [res,      setRes]      = useState<ApiResponse | null>(null)
 
-  const hwidEfetivo  = hwid.trim() || hwidDoToken(token)
-  const periodoValido = /^\d{4}-(0[1-9]|1[0-2])$/.test(periodo)
+  const hwidEfetivo = hwid.trim() || hwidDoToken(token)
+  const cicloValido = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(ciclo)
 
   const atualizar = (i: number, dados: Partial<Passo>) =>
     setPassos(ps => ps.map((p, idx) => idx === i ? { ...p, ...dados } : p))
@@ -131,27 +133,29 @@ function SecaoCiclo({ token, onFim }: { token: string; onFim: () => void }) {
   const rodar = async () => {
     setLoad(true); setRes(null)
     setPassos([
-      { nome: 'Gerar arquivo e calcular SHA-256',        estado: 'rodando' },
-      { nome: 'POST /erp/backup/url-upload',             estado: 'pendente' },
-      { nome: 'PUT na URL assinada (via ponte /api)',    estado: 'pendente' },
-      { nome: 'POST /erp/backup/confirmar',              estado: 'pendente' },
+      { nome: 'Gerar arquivo e calcular o código do conteúdo', estado: 'rodando' },
+      { nome: 'POST /erp/backup/url-upload',                   estado: 'pendente' },
+      { nome: 'PUT na URL assinada (via ponte /api)',          estado: 'pendente' },
+      { nome: 'POST /erp/backup/confirmar',                    estado: 'pendente' },
     ])
 
-    // 1. Arquivo + checksum
-    const bytes    = gerarConteudo(tamanho)
-    const checksum = await sha256Hex(bytes)
-    atualizar(0, { estado: 'ok', detalhe: `${mb(tamanho)} · sha256 ${checksum.slice(0, 16)}…` })
+    // 1. Arquivo + código do conteúdo
+    //
+    // Aqui o código sai do hash do próprio conteúdo gerado, o que é bom o
+    // bastante para o laboratório: conteúdo novo → código novo → ENVIAR;
+    // repetir o mesmo tamanho e semente → mesmo código → PULAR. No ERP de
+    // verdade ele é um token do estado da instalação, não um hash do pacote.
+    const bytes  = gerarConteudo(tamanho)
+    const codigo = await sha256Hex(bytes)
+    atualizar(0, { estado: 'ok', detalhe: `${mb(tamanho)} · código ${codigo.slice(0, 16)}…` })
 
     // 2. Pedir a URL
     atualizar(1, { estado: 'rodando' })
     const pedido = await api(`${API}/erp/backup/url-upload`, token, {
       method: 'POST',
       body: JSON.stringify({
-        hwid: hwidEfetivo, tipo, tamanhoBytes: tamanho,
-        // `periodo` só pode ir em `os` — o schema recusa nos espelhos, e é essa
-        // recusa que uma das travas exercita de propósito.
-        ...(tipo === 'os' ? { periodo } : {}),
-        checksumSha256: checksum, origem: 'MANUAL',
+        hwid: hwidEfetivo, tipo, ciclo, tamanhoBytes: tamanho,
+        codigoConteudo: codigo, origem: 'MANUAL',
       }),
     })
     setRes(pedido)
@@ -166,11 +170,13 @@ function SecaoCiclo({ token, onFim }: { token: string; onFim: () => void }) {
       acao: string; uploadId?: string; url?: string; chave?: string; motivo?: string
     }
 
-    // O servidor pode responder PULAR: imagens com checksum igual ao último não
-    // sobem. É sucesso, não erro — e é o corte de custo funcionando.
-    if (dados.acao === 'PULAR') {
-      atualizar(1, { estado: 'ok', detalhe: `acao=PULAR — ${dados.motivo ?? 'nada mudou'}` })
-      atualizar(2, { estado: 'ok', detalhe: 'nada a enviar (upload economizado)' })
+    // Duas respostas que são sucesso, não erro, e que o ERP precisa tratar como
+    // "não há nada a fazer agora": nada mudou, ou outro terminal já está
+    // enviando. Nenhuma das duas consome cota nem deve virar retentativa.
+    if (dados.acao === 'PULAR' || dados.acao === 'AGUARDANDO_OUTRO_TERMINAL') {
+      const pular = dados.acao === 'PULAR'
+      atualizar(1, { estado: 'ok', detalhe: `acao=${dados.acao} — ${dados.motivo ?? ''}` })
+      atualizar(2, { estado: 'ok', detalhe: pular ? 'nada a enviar (upload economizado)' : 'outro terminal segura o lock' })
       atualizar(3, { estado: 'ok', detalhe: 'nada a confirmar' })
       setLoad(false); onFim(); return
     }
@@ -233,24 +239,25 @@ function SecaoCiclo({ token, onFim }: { token: string; onFim: () => void }) {
         <RotaBadge metodo="POST" rota="/erp/backup/url-upload" />
       </div>
       <p className="text-slate-500 text-xs mb-4">
-        Faz o que o ERP vai fazer: gera o arquivo, pede a URL, sobe e confirma. Em{' '}
-        <code>os</code> o pacote é de um mês só — é o pedaço, não o acervo.
+        Faz o que o ERP vai fazer: gera o arquivo, pede a URL, sobe e confirma. O{' '}
+        <code>full</code> abre o ciclo na sequência 0; os <code>fragmento</code> entram depois dele.
       </p>
 
       <div className="p-3 rounded border border-red-700/60 bg-red-950/30 mb-4">
         <p className="text-red-300 text-xs font-bold mb-1">⚠ Este teste ESCREVE no backup real da licença</p>
         <p className="text-red-400/80 text-[11px] leading-relaxed">
-          {tipo === 'os' ? (
+          {tipo === 'full' ? (
             <>
-              Grava em <code>os-{periodo}.zip</code>. Se a licença já tiver esse mês na nuvem, ele é
-              substituído por este arquivo de brinquedo; se não tiver, um mês falso passa a existir no
-              acervo dela. Use uma licença de teste.
+              Grava em <code>ciclos/{ciclo}/full.zip</code>. Um full confirmado é o que autoriza a
+              rotação a apagar o ciclo anterior — num cliente real, este arquivo de brinquedo passaria
+              a ser a base da corrente e o backup bom da semana passada seria destruído no cron da
+              madrugada. Use uma licença de teste.
             </>
           ) : (
             <>
-              Cada licença tem um único <code>banco.zip</code> e um único <code>imagens.zip</code>, e o
-              upload sobrescreve o que estava lá. Rodar isto numa licença de cliente real substitui o
-              backup dele por este arquivo de brinquedo. Use uma licença de teste.
+              Grava um fragmento em <code>ciclos/{ciclo}/</code>, entrando na corrente que a
+              restauração vai extrair em ordem. Num cliente real isso insere um elo de brinquedo no
+              meio do acervo dele. Use uma licença de teste.
             </>
           )}
         </p>
@@ -260,10 +267,9 @@ function SecaoCiclo({ token, onFim }: { token: string; onFim: () => void }) {
         <div className="grid grid-cols-2 gap-3">
           <Field label="Tipo">
             <select className={`${ic} focus:border-emerald-500`} value={tipo}
-              onChange={e => setTipo(e.target.value as 'banco' | 'imagens' | 'os')}>
-              <option value="banco">banco</option>
-              <option value="imagens">imagens</option>
-              <option value="os">os (por mês)</option>
+              onChange={e => setTipo(e.target.value as 'full' | 'fragmento')}>
+              <option value="full">full (abre o ciclo)</option>
+              <option value="fragmento">fragmento (só o que mudou)</option>
             </select>
           </Field>
           <Field label="Tamanho em bytes (mín. 1024)">
@@ -272,13 +278,11 @@ function SecaoCiclo({ token, onFim }: { token: string; onFim: () => void }) {
           </Field>
         </div>
 
-        {tipo === 'os' && (
-          <Field label="Período (AAAA-MM) — mês futuro é recusado pela API">
-            <input className={`${ic} ${periodoValido ? 'focus:border-emerald-500' : 'border-red-600'}`}
-              placeholder="2026-07" value={periodo}
-              onChange={e => setPeriodo(e.target.value.trim())} />
-          </Field>
-        )}
+        <Field label="Ciclo (AAAA-MM-DD, a segunda-feira) — divergir do /status é recusado">
+          <input className={`${ic} ${cicloValido ? 'focus:border-emerald-500' : 'border-red-600'}`}
+            placeholder="2026-08-03" value={ciclo}
+            onChange={e => setCiclo(e.target.value.trim())} />
+        </Field>
 
         <Field label="HWID (vazio = usa o do token)">
           <input className={`${ic} focus:border-emerald-500`}
@@ -288,18 +292,21 @@ function SecaoCiclo({ token, onFim }: { token: string; onFim: () => void }) {
 
         <button
           onClick={rodar}
-          disabled={load || !token || tamanho < 1024 || (tipo === 'os' && !periodoValido)}
+          disabled={load || !token || tamanho < 1024 || !cicloValido}
           className="w-full bg-emerald-700 hover:bg-emerald-600 disabled:bg-slate-600 text-white font-bold py-2 rounded transition">
           {load ? 'Rodando ciclo...' : 'Rodar ciclo completo'}
         </button>
 
-        {tipo === 'os' && (
-          <p className="text-slate-500 text-[11px] leading-relaxed">
-            Rode duas vezes seguidas no mesmo mês, sem mudar o tamanho: o segundo tem que voltar{' '}
-            <code className="text-emerald-400">acao: PULAR</code>. É a deduplicação por pedaço
-            funcionando — o que faz um mês fechado subir uma vez só.
-          </p>
-        )}
+        <p className="text-slate-500 text-[11px] leading-relaxed">
+          Três travas que dá para exercitar daqui, e todas devem recusar:{' '}
+          <b>fragmento antes do full</b> do ciclo volta{' '}
+          <code className="text-amber-400">BACKUP_FULL_OBRIGATORIO</code>; um{' '}
+          <b>segundo full no mesmo ciclo</b> volta{' '}
+          <code className="text-amber-400">BACKUP_FULL_JA_EXISTE</code>; e{' '}
+          <b>rodar duas vezes sem mudar o tamanho</b> volta{' '}
+          <code className="text-emerald-400">acao: PULAR</code>, que é a deduplicação pelo código do
+          conteúdo funcionando.
+        </p>
 
         {passos.length > 0 && (
           <div className="space-y-1.5">
@@ -325,21 +332,17 @@ function SecaoStatus({ token, versao }: { token: string; versao: number }) {
     setLoad(false)
   }
 
-  type Copia = { tamanhoBytes: number; geradoEm: string }
-
   const d = res?.ok ? (res.payload as {
-    planoPermiteBackup: boolean
-    motivoBloqueio:     string | null
-    codigoBloqueio:     string | null
-    periodoCorrente:    string
-    limiteDiario:       { banco: number; imagens: number; os: number; backfill: number }
-    enviadosHoje:       { banco: number; imagens: number; os: number; backfill: number }
-    copiaAtual:         {
-      banco:   Copia | null
-      imagens: Copia | null
-      os:      Array<Copia & { periodo: string | null }>
-    }
-    historicoEventos:   Array<{ tipo: string; periodo: string | null; status: string; tamanhoBytes: number; emitidoEm: string; erro: string | null }>
+    planoPermiteBackup:    boolean
+    motivoBloqueio:        string | null
+    codigoBloqueio:        string | null
+    cicloCorrente:         string
+    fullDoCicloConfirmado: boolean
+    envioEmAndamento:      { hwid: string | null; desde: string } | null
+    limiteDiario:          number
+    enviadosHoje:          number
+    corrente: Array<{ tipo: string; sequencia: number; tamanhoBytes: number; geradoEm: string }>
+    historicoEventos: Array<{ tipo: string; ciclo: string; sequencia: number; status: string; tamanhoBytes: number; emitidoEm: string; erro: string | null }>
   }) : null
 
   return (
@@ -371,76 +374,66 @@ function SecaoStatus({ token, versao }: { token: string; versao: number }) {
             )}
           </div>
 
-          <div className="grid grid-cols-4 gap-2 text-xs">
-            {([
-              ['banco',    d.enviadosHoje.banco,    d.limiteDiario.banco],
-              ['imagens',  d.enviadosHoje.imagens,  d.limiteDiario.imagens],
-              ['os (mês)', d.enviadosHoje.os,       d.limiteDiario.os],
-              ['backfill', d.enviadosHoje.backfill, d.limiteDiario.backfill],
-            ] as const).map(([rotulo, usado, limite]) => (
-              <div key={rotulo} className="p-2 rounded border border-slate-700/50 bg-[#0f172a]">
-                <p className="text-slate-500 text-[10px] uppercase font-bold">{rotulo}</p>
-                <p className={`font-mono ${usado >= limite ? 'text-orange-400' : 'text-slate-200'}`}>
-                  {usado} / {limite}
-                </p>
-              </div>
-            ))}
-          </div>
-
-          <div>
-            <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">
-              Espelhos — 1 cópia de cada, sobrescrita todo dia
-            </p>
-            <div className="space-y-1">
-              {(['banco', 'imagens'] as const).map(t => {
-                const c = d.copiaAtual?.[t]
-                return (
-                  <div key={t} className="flex items-center justify-between text-xs p-2 rounded border border-slate-700/50 bg-[#0f172a]">
-                    <span className="font-mono text-slate-400">{t}.zip</span>
-                    {c
-                      ? <span className="text-emerald-400 font-mono">
-                          {mb(c.tamanhoBytes)} · {new Date(c.geradoEm).toLocaleString('pt-BR')}
-                        </span>
-                      : <span className="text-slate-600">nenhuma</span>}
-                  </div>
-                )
-              })}
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <div className="p-2 rounded border border-slate-700/50 bg-[#0f172a]">
+              <p className="text-slate-500 text-[10px] uppercase font-bold">envios hoje</p>
+              <p className={`font-mono ${d.enviadosHoje >= d.limiteDiario ? 'text-orange-400' : 'text-slate-200'}`}>
+                {d.enviadosHoje} / {d.limiteDiario}
+              </p>
+            </div>
+            <div className="p-2 rounded border border-slate-700/50 bg-[#0f172a]">
+              <p className="text-slate-500 text-[10px] uppercase font-bold">ciclo corrente</p>
+              <p className="font-mono text-slate-200">{d.cicloCorrente}</p>
+            </div>
+            <div className="p-2 rounded border border-slate-700/50 bg-[#0f172a]">
+              <p className="text-slate-500 text-[10px] uppercase font-bold">próximo envio</p>
+              <p className={`font-mono ${d.fullDoCicloConfirmado ? 'text-slate-200' : 'text-amber-400'}`}>
+                {d.fullDoCicloConfirmado ? 'fragmento' : 'FULL'}
+              </p>
             </div>
           </div>
 
+          {d.envioEmAndamento && (
+            <div className="p-2 rounded border border-amber-700/40 bg-amber-950/20 text-amber-300 text-xs">
+              <p className="font-bold text-[11px]">Outro terminal está enviando</p>
+              <p className="text-[10px] font-mono opacity-80 mt-0.5">
+                hwid {d.envioEmAndamento.hwid ?? '—'} · desde{' '}
+                {new Date(d.envioEmAndamento.desde).toLocaleString('pt-BR')}
+              </p>
+            </div>
+          )}
+
           <div>
             <p className="text-slate-500 text-[10px] uppercase font-bold mb-1">
-              Pedaços de OS — 1 por mês, imutável depois de fechado
+              A corrente do ciclo — na ordem em que a restauração extrai
               <span className="ml-1 normal-case font-normal text-slate-600">
-                (mês corrente: {d.periodoCorrente})
+                (o full é a sequência 0; sem ele nada restaura)
               </span>
             </p>
-            {d.copiaAtual?.os?.length > 0 ? (
+            {d.corrente?.length > 0 ? (
               <>
                 <div className="max-h-40 overflow-auto space-y-1">
-                  {d.copiaAtual.os.map(p => (
-                    <div key={p.periodo ?? '—'}
+                  {d.corrente.map(e => (
+                    <div key={e.sequencia}
                       className="flex items-center justify-between text-xs p-2 rounded border border-slate-700/50 bg-[#0f172a]">
                       <span className="font-mono text-slate-400">
-                        os-{p.periodo}.zip
-                        {p.periodo === d.periodoCorrente && (
-                          <span className="ml-1 text-[10px] text-sky-500">aberto</span>
-                        )}
+                        <span className="text-slate-600">#{e.sequencia}</span>{' '}
+                        {e.tipo === 'FULL' ? 'full.zip' : `frag-${String(e.sequencia).padStart(3, '0')}.zip`}
                       </span>
                       <span className="text-emerald-400 font-mono">
-                        {mb(p.tamanhoBytes)} · {new Date(p.geradoEm).toLocaleString('pt-BR')}
+                        {mb(e.tamanhoBytes)} · {new Date(e.geradoEm).toLocaleString('pt-BR')}
                       </span>
                     </div>
                   ))}
                 </div>
                 <p className="text-slate-600 text-[10px] mt-1">
-                  Total: {mb(d.copiaAtual.os.reduce((s, p) => s + p.tamanhoBytes, 0))} em{' '}
-                  {d.copiaAtual.os.length} mês(es)
+                  Total: {mb(d.corrente.reduce((s, e) => s + e.tamanhoBytes, 0))} em{' '}
+                  {d.corrente.length} elo(s)
                 </p>
               </>
             ) : (
               <p className="text-slate-600 text-xs p-2 rounded border border-slate-700/50 bg-[#0f172a]">
-                nenhum pedaço enviado
+                corrente vazia — o próximo envio abre o ciclo com um full
               </p>
             )}
           </div>
@@ -455,7 +448,7 @@ function SecaoStatus({ token, versao }: { token: string; versao: number }) {
                   <div key={i} className="flex items-center justify-between text-[11px] p-1.5 rounded bg-[#0f172a] border border-slate-800">
                     <span className="font-mono text-slate-500">
                       {new Date(h.emitidoEm).toLocaleString('pt-BR')} · {h.tipo}
-                      {h.periodo && ` ${h.periodo}`}
+                      {h.ciclo && ` ${h.ciclo}#${h.sequencia}`}
                     </span>
                     <span className={
                       h.status === 'CONFIRMADO' ? 'text-emerald-400'
@@ -490,58 +483,60 @@ interface Trava {
   exigeBackupAnterior?: boolean
 }
 
+/// Ciclo válido para os testes que precisam passar da validação de schema e
+/// chegar na regra que se quer exercitar.
+const CICLO_TESTE = segundaCorrenteLocal()
+const CODIGO_FALSO = 'a'.repeat(64)
+
 const TRAVAS: Trava[] = [
   {
-    nome:      'Tamanho acima de 500 MB',
-    descricao: 'Pede URL para um arquivo de 900 MB.',
+    nome:      'Tamanho acima do teto',
+    descricao: 'Pede URL para um arquivo de 6 GiB — acima do limite do PUT único.',
     esperado:  '400 · BACKUP_DADOS_INVALIDOS',
-    corpo:     h => ({ hwid: h, tipo: 'banco', tamanhoBytes: 900 * 1024 * 1024 }),
+    corpo:     h => ({ hwid: h, tipo: 'full', ciclo: CICLO_TESTE, tamanhoBytes: 6 * 1024 ** 3, codigoConteudo: CODIGO_FALSO }),
   },
   {
-    nome:      'Imagens sem checksum',
-    descricao: 'Sem checksum não há como pular upload de imagem que não mudou.',
-    esperado:  '400 · BACKUP_CHECKSUM_OBRIGATORIO',
-    corpo:     h => ({ hwid: h, tipo: 'imagens', tamanhoBytes: 65536 }),
+    nome:      'Envio sem código do conteúdo',
+    descricao: 'Sem o código não há como responder PULAR, e tudo sobe a cada login.',
+    esperado:  '400 · BACKUP_DADOS_INVALIDOS',
+    corpo:     h => ({ hwid: h, tipo: 'full', ciclo: CICLO_TESTE, tamanhoBytes: 65536 }),
   },
   {
     nome:      'HWID diferente do token',
     descricao: 'Máquina que não é a da sessão autenticada.',
     esperado:  '403 · BACKUP_HWID_DIVERGENTE',
-    corpo:     () => ({ hwid: 'PC-INTRUSO-999', tipo: 'banco', tamanhoBytes: 65536 }),
+    corpo:     () => ({ hwid: 'PC-INTRUSO-999', tipo: 'full', ciclo: CICLO_TESTE, tamanhoBytes: 65536, codigoConteudo: CODIGO_FALSO }),
   },
   {
     nome:      'Arquivo minúsculo',
     descricao: 'Abaixo de 1 KB não é backup de nada.',
     esperado:  '400 · BACKUP_DADOS_INVALIDOS',
-    corpo:     h => ({ hwid: h, tipo: 'banco', tamanhoBytes: 10 }),
+    corpo:     h => ({ hwid: h, tipo: 'full', ciclo: CICLO_TESTE, tamanhoBytes: 10, codigoConteudo: CODIGO_FALSO }),
   },
   {
-    nome:                'Queda suspeita de tamanho',
-    descricao:           'Só dispara se já existe um backup bem maior. Protege a única cópia boa.',
-    esperado:            '409 · BACKUP_TAMANHO_SUSPEITO',
-    corpo:               h => ({ hwid: h, tipo: 'banco', tamanhoBytes: 1024 }),
+    nome:      'Ciclo divergente do corrente',
+    descricao: 'O ERP lê o ciclo do /status; gravar no ciclo errado embaralha a ordem de restauração.',
+    esperado:  '409 · BACKUP_CICLO_DIVERGENTE',
+    corpo:     h => ({ hwid: h, tipo: 'full', ciclo: '2099-12-07', tamanhoBytes: 65536, codigoConteudo: CODIGO_FALSO }),
+  },
+  {
+    nome:      'Ciclo fora do formato',
+    descricao: 'AAAA-MM não serve: ciclo é um dia, não um mês.',
+    esperado:  '400 · BACKUP_DADOS_INVALIDOS',
+    corpo:     h => ({ hwid: h, tipo: 'full', ciclo: '2026-08', tamanhoBytes: 65536, codigoConteudo: CODIGO_FALSO }),
+  },
+  {
+    nome:      'Fragmento antes do full',
+    descricao: 'Fragmento sem full é elo solto: ocupa espaço e não restaura nada.',
+    esperado:  '409 · BACKUP_FULL_OBRIGATORIO',
+    corpo:     h => ({ hwid: h, tipo: 'fragmento', ciclo: CICLO_TESTE, tamanhoBytes: 65536, codigoConteudo: CODIGO_FALSO }),
+  },
+  {
+    nome:                'Segundo full no mesmo ciclo',
+    descricao:           'Dois fulls na mesma corrente deixam "qual é a base?" em aberto.',
+    esperado:            '409 · BACKUP_FULL_JA_EXISTE',
+    corpo:               h => ({ hwid: h, tipo: 'full', ciclo: CICLO_TESTE, tamanhoBytes: 65536, codigoConteudo: CODIGO_FALSO }),
     exigeBackupAnterior: true,
-  },
-  {
-    nome:      'OS sem período',
-    descricao: 'Pedaço de OS precisa dizer de que mês é — sem isso não há chave onde gravar.',
-    esperado:  '400 · BACKUP_DADOS_INVALIDOS',
-    corpo:     h => ({ hwid: h, tipo: 'os', tamanhoBytes: 65536, checksumSha256: 'a'.repeat(64) }),
-  },
-  {
-    nome:      'OS de mês futuro',
-    descricao: 'Mês que ainda não aconteceu não tem conteúdo, e ocuparia a chave definitiva dele.',
-    esperado:  '400 · BACKUP_PERIODO_FUTURO',
-    corpo:     h => ({
-      hwid: h, tipo: 'os', periodo: '2099-12',
-      tamanhoBytes: 65536, checksumSha256: 'a'.repeat(64),
-    }),
-  },
-  {
-    nome:      'Período em backup de banco',
-    descricao: 'Só OS é particionado. Período em espelho sugeriria um histórico que não existe.',
-    esperado:  '400 · BACKUP_DADOS_INVALIDOS',
-    corpo:     h => ({ hwid: h, tipo: 'banco', periodo: '2026-07', tamanhoBytes: 65536 }),
   },
 ]
 
@@ -564,13 +559,13 @@ function SecaoTravas({ token }: { token: string }) {
     // que transformaria um teste de leitura num efeito colateral silencioso.
     if (t.exigeBackupAnterior) {
       const st = await api(`${API}/erp/backup/status`, token)
-      const copia = (st.payload as { copiaAtual?: Record<string, unknown | null> })?.copiaAtual
-      if (!copia?.banco) {
+      const jaTemFull = (st.payload as { fullDoCicloConfirmado?: boolean })?.fullDoCicloConfirmado
+      if (!jaTemFull) {
         setSaidas(s => ({
           ...s,
           [t.nome]: {
             status: 0, codigo: 'AGUARDANDO BASE', naoAplicavel: true,
-            msg: 'Ainda não existe backup para comparar. Rode o Ciclo Completo primeiro e teste de novo.',
+            msg: 'O ciclo ainda não tem full. Rode o Ciclo Completo primeiro e teste de novo.',
           },
         }))
         setRodando(null); return
@@ -650,7 +645,6 @@ function SecaoTravas({ token }: { token: string }) {
 // ── Download ───────────────────────────────────────────────────────────────
 
 function SecaoDownload({ token }: { token: string }) {
-  const [tipo, setTipo] = useState<'banco' | 'imagens' | 'os'>('banco')
   const [load, setLoad] = useState(false)
   const [res,  setRes]  = useState<ApiResponse | null>(null)
 
@@ -658,16 +652,19 @@ function SecaoDownload({ token }: { token: string }) {
     setLoad(true); setRes(null)
     setRes(await api(`${API}/erp/backup/url-download`, token, {
       method: 'POST',
-      body:   JSON.stringify({ hwid: hwidDoToken(token), tipo }),
+      body:   JSON.stringify({ hwid: hwidDoToken(token) }),
     }))
     setLoad(false)
   }
 
   const d = res?.ok ? (res.payload as {
-    arquivos:      Array<{ periodo: string | null; url: string; tamanhoBytes: number; geradoEm: string }>
-    indisponiveis: string[]
-    totalBytes:    number
-    expiraEm:      string
+    ciclo:          string
+    arquivos:       Array<{ tipo: string; sequencia: number; url: string; tamanhoBytes: number; geradoEm: string }>
+    indisponiveis:  number[]
+    cadeiaCompleta: boolean
+    restauraAte:    string | null
+    totalBytes:     number
+    expiraEm:       string
   }) : null
 
   return (
@@ -677,21 +674,12 @@ function SecaoDownload({ token }: { token: string }) {
         <RotaBadge metodo="POST" rota="/erp/backup/url-download" />
       </div>
       <p className="text-slate-500 text-xs mb-4">
-        Mesmo gate do upload: licença vencida ou em teste não baixa. URLs válidas por 5 minutos —
-        em <code>os</code> vêm todos os meses de uma vez, e se o prazo acabar no meio basta pedir
-        de novo (leitura pura, sem cota).
+        Devolve a <b>corrente inteira do ciclo</b>, na ordem de extração: o full primeiro, depois cada
+        fragmento por cima. Mesmo gate do upload — licença vencida ou em teste não baixa. URLs válidas
+        por 5 minutos; se o prazo acabar no meio, basta pedir de novo (leitura pura, sem cota).
       </p>
 
       <div className="space-y-3">
-        <Field label="Tipo">
-          <select className={`${ic} focus:border-violet-500`} value={tipo}
-            onChange={e => setTipo(e.target.value as 'banco' | 'imagens' | 'os')}>
-            <option value="banco">banco</option>
-            <option value="imagens">imagens</option>
-            <option value="os">os (todos os meses)</option>
-          </select>
-        </Field>
-
         <button onClick={pedir} disabled={load || !token}
           className="w-full bg-violet-700 hover:bg-violet-600 disabled:bg-slate-600 text-white font-bold py-2 rounded transition">
           {load ? 'Gerando...' : 'POST /erp/backup/url-download'}
@@ -700,14 +688,18 @@ function SecaoDownload({ token }: { token: string }) {
         {d && (
           <div className="p-3 rounded border border-violet-700/40 bg-violet-950/20 text-xs space-y-2">
             <p className="text-slate-300">
-              {d.arquivos.length} arquivo(s) · {mb(d.totalBytes)} no total ·
+              ciclo {d.ciclo} · {d.arquivos.length} elo(s) · {mb(d.totalBytes)} no total ·
               expira {new Date(d.expiraEm).toLocaleTimeString('pt-BR')}
             </p>
 
-            {d.indisponiveis?.length > 0 && (
+            {d.cadeiaCompleta === false && (
               <p className="p-2 rounded border border-red-700/50 bg-red-950/30 text-red-300">
-                <strong>Restauração incompleta.</strong> Pedaços registrados que não estão mais
-                na nuvem: {d.indisponiveis.join(', ')}
+                <strong>Corrente com buraco.</strong> Elo(s) ausente(s) na nuvem:{' '}
+                {d.indisponiveis.join(', ')}. Como fragmento é diferença aplicada sobre o estado
+                anterior, tudo depois do buraco é inútil — a corrente foi cortada ali. Isto restaura o
+                acervo como ele estava em{' '}
+                {d.restauraAte ? new Date(d.restauraAte).toLocaleString('pt-BR') : '—'}, não como está
+                hoje.
               </p>
             )}
 
@@ -716,12 +708,18 @@ function SecaoDownload({ token }: { token: string }) {
                 <a key={a.url} href={a.url} target="_blank" rel="noreferrer"
                   className="flex items-center justify-between gap-2 bg-violet-800/60 hover:bg-violet-700 border border-violet-600/50 px-2 py-1.5 rounded font-bold text-violet-200 transition">
                   <span className="font-mono">
-                    {a.periodo ? `os-${a.periodo}.zip` : `${tipo}.zip`}
+                    <span className="opacity-60">#{a.sequencia}</span>{' '}
+                    {a.tipo === 'FULL' ? 'full.zip' : `frag-${String(a.sequencia).padStart(3, '0')}.zip`}
                   </span>
                   <span className="font-normal opacity-80">{mb(a.tamanhoBytes)}</span>
                 </a>
               ))}
             </div>
+
+            <p className="text-slate-500 text-[10px]">
+              Extraia <b>na ordem da lista</b>, sobrescrevendo. A última versão de cada tabela e de
+              cada arquivo vence.
+            </p>
           </div>
         )}
 

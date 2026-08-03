@@ -22,6 +22,11 @@ import {
   deletarSessoesInativas,
   findBackupsDeLicencasMortas,
   findBackupsPendentesExpirados,
+  findCiclosSuperados,
+  findBackupsConfirmadosParaVerificar,
+  findFullConfirmadoDoCiclo,
+  marcarBackupsRemovidos,
+  cicloAtual,
   findLicencasParaAvisoDeRetencao,
   findTodosIdsDeLicenca,
   deletarBackupsDaLicenca,
@@ -59,6 +64,14 @@ export class CronService {
   /// Os 30 min de folga cobrem o intervalo do próprio cron (10 min) e o atraso
   /// entre o fim do PUT e a chegada do /confirmar.
   private readonly MINUTOS_ORFA = Math.round(TTL_UPLOAD_SEGUNDOS / 60) + 30
+
+  /// Quantos ciclos COMPLETOS guardar além do corrente.
+  ///
+  /// 1, e não 0, por causa do instante logo depois da limpeza: com zero, o
+  /// cliente fica por um momento com um full só e nenhum fragmento, e se esse
+  /// full estiver corrompido acabou — corrupção percebida no dia seguinte seria
+  /// irrecuperável. Um ciclo a mais dá sempre entre 7 e 14 dias de janela.
+  private readonly CICLOS_A_MANTER = 1
 
   constructor(
     private readonly emailService:  EmailService,
@@ -140,6 +153,15 @@ export class CronService {
     await this.avisarRetencaoDeBackup()
 
     // 4. Retenção dos backups na nuvem
+    // A verificação vem ANTES de qualquer limpeza, de propósito: ela é a única
+    // rotina que olha o estado real da nuvem, e queremos o retrato de antes de
+    // apagar coisa nenhuma.
+    await this.verificarIntegridadeDeBackups()
+
+    // A rotação vem ANTES da retenção por licença morta: uma trabalha sobre
+    // ciclos superados de cliente ativo, a outra sobre o prefixo inteiro de quem
+    // não paga mais. Rodar a barata primeiro deixa menos objeto para a segunda.
+    await this.rotacionarCiclosDeBackup()
     await this.aplicarRetencaoDeBackups()
 
     // 5. Varrer arquivos sem dono no bucket
@@ -254,6 +276,116 @@ export class CronService {
         this.logger.log(`[backup] ${pendurados.length} upload(s) sem confirmação marcado(s) como falha.`)
     } catch (err) {
       this.logger.error('Erro ao fechar backups pendurados:', err)
+    }
+  }
+
+  /**
+   * Confere, objeto por objeto, se a nuvem tem o que o inventário afirma.
+   *
+   * No desenho antigo isso não fazia falta: o espelho subia todo dia, então um
+   * objeto corrompido se curava sozinho na noite seguinte. Numa CORRENTE não —
+   * o fragmento de terça sobe uma vez e fica. Se ele sumir do bucket, nada
+   * reescreve aquilo, e o buraco só aparece no dia da restauração, que é o pior
+   * dia possível para descobrir.
+   *
+   * É um HEAD por elo (operação Class B, barata) uma vez por dia. O que se ganha
+   * é a diferença entre saber hoje e saber no desastre.
+   */
+  async verificarIntegridadeDeBackups() {
+    if (!this.storage.configurado) return
+
+    try {
+      const linhas = await findBackupsConfirmadosParaVerificar()
+      const faltando: string[] = []
+      let divergentes = 0
+
+      for (const l of linhas) {
+        const objeto = await this.storage.conferirObjeto(l.chaveS3)
+
+        if (!objeto) {
+          faltando.push(`${l.licencaId} ${l.ciclo}#${l.sequencia} (${l.tipo})`)
+          continue
+        }
+
+        // Tamanho diferente do que foi confirmado significa que o objeto foi
+        // sobrescrito por fora — o inventário deixou de descrever o que está lá.
+        if (l.tamanhoRealBytes !== null && objeto.tamanhoBytes !== l.tamanhoRealBytes) {
+          divergentes++
+          this.logger.warn(
+            `[backup] tamanho divergente — ${l.chaveS3}: inventário ${l.tamanhoRealBytes}, ` +
+            `bucket ${objeto.tamanhoBytes}.`,
+          )
+        }
+      }
+
+      if (faltando.length === 0 && divergentes === 0) {
+        this.logger.log(`[backup] verificação: ${linhas.length} elo(s) conferido(s), tudo íntegro.`)
+        return
+      }
+
+      // Não conserta nada de propósito: um elo que sumiu não tem de onde voltar,
+      // e marcar a linha como falha esconderia o problema em vez de mostrá-lo.
+      // O que se quer aqui é alguém saber.
+      if (faltando.length > 0)
+        this.logger.error(
+          `[backup] ${faltando.length} elo(s) NO INVENTÁRIO E NÃO NA NUVEM — ` +
+          `a corrente desses ciclos não restaura por inteiro: ${faltando.join(' | ')}`,
+        )
+    } catch (err) {
+      this.logger.error('Erro na verificação de integridade dos backups:', err)
+    }
+  }
+
+  /**
+   * Rotação de ciclo: apaga da nuvem os ciclos já superados.
+   *
+   * A ordem aqui é a coisa mais importante deste arquivo. Um ciclo só é elegível
+   * quando existe um ciclo MAIS NOVO com FULL CONFIRMADO — confirmado no sentido
+   * forte, o que passou pelo HeadObject. E mesmo assim se confere o full de novo
+   * agora, antes de apagar: entre a confirmação e esta varredura passaram-se
+   * dias, e a única coisa que autoriza destruir a cópia velha é a cópia nova
+   * existir NESTE instante.
+   *
+   * Apaga por chave vinda do inventário, nunca por prefixo ou idade — no bucket
+   * de backup existe conteúdo que só tem uma cópia no mundo.
+   */
+  async rotacionarCiclosDeBackup(opcoes: { simular?: boolean } = {}) {
+    if (!this.storage.configurado) return
+    const marca = opcoes.simular ? '[SIMULAÇÃO] ' : ''
+
+    try {
+      const superados = await findCiclosSuperados(this.CICLOS_A_MANTER)
+
+      if (superados.length === 0) {
+        this.logger.log(`${marca}[backup] rotação: nenhum ciclo superado.`)
+        return
+      }
+
+      for (const s of superados) {
+        // Reconfere o full que autoriza esta limpeza. Se ele sumiu do bucket, o
+        // ciclo velho é a única cópia que resta e não se toca nele.
+        const fullAtual = await findFullConfirmadoDoCiclo(s.licencaId, cicloAtual())
+
+        if (!fullAtual || !(await this.storage.conferirObjeto(fullAtual.chaveS3))) {
+          this.logger.warn(
+            `${marca}[backup] rotação abortada em ${s.licencaId}: o full do ciclo corrente ` +
+            `não está no bucket. O ciclo ${s.ciclo} fica.`,
+          )
+          continue
+        }
+
+        if (!opcoes.simular) {
+          await this.storage.removerChaves(s.chaves)
+          await marcarBackupsRemovidos(s.ids)
+        }
+
+        this.logger.log(
+          `${marca}[backup] ciclo ${s.ciclo} da licença ${s.licencaId} removido ` +
+          `(${s.chaves.length} objeto(s)).`,
+        )
+      }
+    } catch (err) {
+      this.logger.error('Erro na rotação de ciclos de backup:', err)
     }
   }
 

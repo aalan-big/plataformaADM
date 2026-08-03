@@ -12,14 +12,14 @@
  * aparecem primeiro.
  * ============================================================================
  */
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common'
+import { Injectable, NotFoundException } from '@nestjs/common'
 import {
   findVisaoGeralDeBackups,
   findEventosDeBackup,
   findLicencaById,
-  findUltimoBackupConfirmado,
+  findCorrenteDoCiclo,
+  cicloAtual,
   registrarLog,
-  type TipoBackupDb,
 } from '@startbig/database'
 import { StorageService } from '../../common/storage/storage.service'
 
@@ -36,45 +36,42 @@ export class BackupService {
   constructor(private readonly storage: StorageService) {}
 
   async visaoGeral() {
-    const { licencas, ultimos, pedacosOs, falhas } = await findVisaoGeralDeBackups()
+    const { licencas, fulls, fragmentos, falhas } = await findVisaoGeralDeBackups()
 
-    const porLicenca = new Map<string, Record<string, (typeof ultimos)[number]>>()
-    for (const u of ultimos) {
-      const atual = porLicenca.get(u.licencaId) ?? {}
-      atual[u.tipo] = u
-      porLicenca.set(u.licencaId, atual)
-    }
+    const fullPorLicenca = new Map(fulls.map(f => [f.licencaId, f]))
 
-    // OS agregado por licença — mas com a LISTA de meses junto, não só a contagem.
+    // Fragmentos agregados por licença — mas com a LISTA junto, não só a contagem.
     //
-    // O agregado sozinho responde "o acervo está protegido?"; a lista é o que
-    // permite baixar. Como cada mês é um objeto próprio, não existe link único do
-    // acervo: sem os períodos aqui, a tela não teria o que colocar no botão e o
-    // suporte ficaria sem forma de recuperar OS de um cliente.
-    type AcervoOs = { meses: number; bytes: number; ultimoPeriodo: string | null; periodos: PedacoOs[] }
-    type PedacoOs = { periodo: string | null; bytes: number; geradoEm: Date }
+    // O agregado responde "o acervo está protegido?"; a lista é o que permite
+    // olhar a CORRENTE. Numa cadeia isso não é detalhe: um elo faltando no meio
+    // invalida tudo que vem depois, e é a sequência que denuncia o buraco. Um
+    // total agregado esconderia exatamente o que precisa ser visto.
+    type Elo     = { sequencia: number; bytes: number; geradoEm: Date }
+    type Corrente = { elos: number; bytes: number; ultimaSequencia: number; lista: Elo[] }
 
-    const osPorLicenca = new Map<string, AcervoOs>()
-    for (const p of pedacosOs) {
-      const atual = osPorLicenca.get(p.licencaId)
-        ?? { meses: 0, bytes: 0, ultimoPeriodo: null, periodos: [] as PedacoOs[] }
-      const bytes = p.tamanhoRealBytes ?? p.tamanhoBytes
+    const correntePorLicenca = new Map<string, Corrente>()
+    for (const f of fragmentos) {
+      // Só o ciclo do full que está na nuvem interessa: fragmento de ciclo antigo
+      // já foi apagado pela rotação, e mostrá-lo somaria bytes que não existem.
+      if (f.ciclo !== fullPorLicenca.get(f.licencaId)?.ciclo) continue
 
-      atual.meses += 1
+      const atual = correntePorLicenca.get(f.licencaId)
+        ?? { elos: 0, bytes: 0, ultimaSequencia: 0, lista: [] as Elo[] }
+      const bytes = f.tamanhoRealBytes ?? f.tamanhoBytes
+
+      atual.elos  += 1
       atual.bytes += bytes
-      atual.periodos.push({ periodo: p.periodo, bytes, geradoEm: p.confirmadoEm ?? p.emitidoEm })
-      // A consulta vem ordenada por período desc, então o primeiro é o mais novo.
-      if (atual.ultimoPeriodo === null) atual.ultimoPeriodo = p.periodo
-      osPorLicenca.set(p.licencaId, atual)
+      atual.lista.push({ sequencia: f.sequencia, bytes, geradoEm: f.confirmadoEm ?? f.emitidoEm })
+      atual.ultimaSequencia = Math.max(atual.ultimaSequencia, f.sequencia)
+      correntePorLicenca.set(f.licencaId, atual)
     }
 
     const falhasPorLicenca = new Map(falhas.map(f => [f.licencaId, f._count._all]))
     const agora = Date.now()
 
     const itens = licencas.map(l => {
-      const copias  = porLicenca.get(l.id) ?? {}
-      const banco   = copias['BANCO']   ?? null
-      const imagens = copias['IMAGENS'] ?? null
+      const full     = fullPorLicenca.get(l.id) ?? null
+      const corrente = correntePorLicenca.get(l.id) ?? null
 
       // A licença é elegível a backup pela mesma regra do gate do ERP. Sem isso
       // a tela acusaria de "atrasado" todo trial e toda licença vencida, e o
@@ -82,7 +79,15 @@ export class BackupService {
       const elegivel = l.status === 'ATIVA' && !l.isTrial &&
         (!l.dataVencimento || l.dataVencimento.getTime() > agora)
 
-      const referencia = banco ? (banco.confirmadoEm ?? banco.emitidoEm) : null
+      // O que importa é o ÚLTIMO elo da corrente, não o full: com fragmento
+      // diário, um full de segunda e nenhum fragmento desde então significa
+      // backup parado — e olhar só o full mostraria "em dia" a semana inteira.
+      const ultimoElo  = corrente?.lista.reduce(
+        (a, b) => (b.geradoEm > a.geradoEm ? b : a),
+        corrente.lista[0],
+      )
+      const referencia = ultimoElo?.geradoEm
+        ?? (full ? (full.confirmadoEm ?? full.emitidoEm) : null)
       const horasDesde = referencia ? (agora - referencia.getTime()) / 3_600_000 : null
 
       const situacao: Situacao =
@@ -107,9 +112,9 @@ export class BackupService {
         // O prefixo é o que se cola na busca do painel da Cloudflare. É por isso
         // que ele existe aqui: evita ter que caçar UUID no meio do bucket.
         prefixo:         `clientes/${l.clienteId}/${l.id}/`,
-        banco:   banco   ? this.resumo(banco)   : null,
-        imagens: imagens ? this.resumo(imagens) : null,
-        os:      osPorLicenca.get(l.id) ?? { meses: 0, bytes: 0, ultimoPeriodo: null, periodos: [] },
+        ciclo:    full?.ciclo ?? null,
+        full:     full ? this.resumo(full) : null,
+        corrente: corrente ?? { elos: 0, bytes: 0, ultimaSequencia: 0, lista: [] },
       }
     })
 
@@ -127,7 +132,7 @@ export class BackupService {
         atrasados: itens.filter(i => i.situacao === 'ATRASADO').length,
         nunca:     itens.filter(i => i.situacao === 'NUNCA').length,
         bytesTotal: itens.reduce(
-          (s, i) => s + (i.banco?.tamanhoBytes ?? 0) + (i.imagens?.tamanhoBytes ?? 0) + i.os.bytes, 0,
+          (s, i) => s + (i.full?.tamanhoBytes ?? 0) + i.corrente.bytes, 0,
         ),
         horasAteAtrasado: HORAS_ATE_ATRASADO,
       },
@@ -147,7 +152,8 @@ export class BackupService {
       eventos: eventos.map(e => ({
         id:           e.id,
         tipo:         e.tipo,
-        periodo:      e.periodo,
+        ciclo:        e.ciclo,
+        sequencia:    e.sequencia,
         status:       e.status,
         origem:       e.origem,
         tamanhoBytes: e.tamanhoRealBytes ?? e.tamanhoBytes,
@@ -174,31 +180,26 @@ export class BackupService {
    */
   async urlDownloadAdmin(
     licencaId: string,
-    tipo: string,
-    contexto: { usuarioId?: string | null; ip?: string | null; periodo?: string | null },
+    contexto: { usuarioId?: string | null; ip?: string | null; ciclo?: string | null; sequencia?: number | null },
   ) {
-    if (tipo !== 'banco' && tipo !== 'imagens' && tipo !== 'os')
-      throw new BadRequestException('tipo deve ser "banco", "imagens" ou "os".')
-
-    // OS tem um arquivo por mês, então o suporte precisa dizer QUAL mês quer.
-    // Sem isso a rota devolveria um pedaço arbitrário — o mais recente — e quem
-    // está atendendo o cliente acharia que baixou o acervo inteiro.
-    if (tipo === 'os' && !contexto.periodo)
-      throw new BadRequestException('Para tipo "os" informe o periodo no formato AAAA-MM.')
-
     const licenca = await findLicencaById(licencaId)
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
 
-    const tipoDb: TipoBackupDb = tipo === 'banco' ? 'BANCO' : tipo === 'imagens' ? 'IMAGENS' : 'OS'
-    const ultimo = await findUltimoBackupConfirmado(
-      licencaId,
-      tipoDb,
-      tipo === 'os' ? contexto.periodo : undefined,
-    )
+    const ciclo = contexto.ciclo ?? cicloAtual()
+
+    // Um elo por vez, e o suporte precisa dizer QUAL. Devolver "o mais recente"
+    // sem pedir seria entregar um fragmento — alguns MB do dia — a quem acha que
+    // baixou o acervo do cliente.
+    //
+    // O padrão é a sequência 0, que é sempre o full: é o único elo que sozinho
+    // significa alguma coisa.
+    const sequencia = contexto.sequencia ?? 0
+    const corrente  = await findCorrenteDoCiclo(licencaId, ciclo)
+    const ultimo    = corrente.find(b => b.sequencia === sequencia)
 
     if (!ultimo)
       throw new NotFoundException(
-        `Nenhum backup de ${tipo}${tipo === 'os' ? ` (${contexto.periodo})` : ''} confirmado para esta licença.`,
+        `Nenhum elo de sequência ${sequencia} confirmado no ciclo ${ciclo} desta licença.`,
       )
 
     // Confere antes de assinar: a retenção pode ter apagado o objeto, e um link
@@ -219,9 +220,8 @@ export class BackupService {
       .normalize('NFD').replace(/[̀-ͯ]/g, '')
       .replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase()
       .slice(0, 40)
-    const nomeArquivo = tipo === 'os'
-      ? `${apelido}-os-${ultimo.periodo}.zip`
-      : `${apelido}-${tipo}-${dia}.zip`
+    const rotulo = ultimo.tipo === 'FULL' ? 'full' : `frag${String(ultimo.sequencia).padStart(3, '0')}`
+    const nomeArquivo = `${apelido}-${rotulo}-${dia}.zip`
 
     const { url, expiraEm } = await this.storage.gerarUrlDownload(ultimo.chaveS3, nomeArquivo)
 
@@ -230,7 +230,7 @@ export class BackupService {
       acao:         'BACKUP_DOWNLOAD',
       entidadeNome: 'Licenca',
       entidadeId:   licencaId,
-      descricao:    `Download do backup de ${tipo}${ultimo.periodo ? ` ${ultimo.periodo}` : ''} ` +
+      descricao:    `Download do backup ${ultimo.tipo} seq ${ultimo.sequencia} do ciclo ${ciclo} ` +
                     `(${objeto.tamanhoBytes} bytes) do cliente ${nomeCliente}.`,
       ipAddress:    contexto.ip,
     })
@@ -238,7 +238,9 @@ export class BackupService {
     return {
       url,
       chave:        ultimo.chaveS3,
-      tipo,
+      tipo:         ultimo.tipo,
+      ciclo,
+      sequencia:    ultimo.sequencia,
       tamanhoBytes: objeto.tamanhoBytes,
       geradoEm:     ultimo.confirmadoEm ?? ultimo.emitidoEm,
       expiraEm:     expiraEm.toISOString(),

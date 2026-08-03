@@ -23,7 +23,6 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
-  ListBucketsCommand,
   DeleteObjectsCommand,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
@@ -135,7 +134,6 @@ export class StorageService {
   async gerarUrlUpload(params: {
     chave:        string
     tamanhoBytes: number
-    checksumSha256?: string | null
   }): Promise<{ url: string; expiraEm: Date }> {
     const comando = new PutObjectCommand({
       Bucket:        this.bucket,
@@ -189,16 +187,6 @@ export class StorageService {
   }
 
   /**
-   * Nomes dos buckets que a credencial enxerga. Só para diagnóstico: é o que
-   * separa "nome errado" de "bucket em outra conta ou jurisdição", que produzem
-   * o mesmo NoSuchBucket. Pode ser negado se o token só tem permissão de objeto.
-   */
-  async listarBuckets(): Promise<string[]> {
-    const r = await this.cliente.send(new ListBucketsCommand({}))
-    return (r.Buckets ?? []).map(b => b.Name as string).filter(Boolean)
-  }
-
-  /**
    * "Pastas" imediatamente abaixo de um prefixo, usando o delimitador — não
    * baixa a lista de objetos, só os prefixos comuns. Para 1000 clientes é uma
    * chamada por cliente, não uma por arquivo.
@@ -226,6 +214,35 @@ export class StorageService {
     } while (continuationTok)
 
     return pastas
+  }
+
+  /**
+   * Apaga uma lista EXPLÍCITA de chaves.
+   *
+   * É o que a rotação de ciclo usa, e nunca o `removerPrefixo` abaixo. A
+   * diferença não é estilo: apagar por prefixo ou por idade varreria junto
+   * qualquer coisa que estivesse no caminho, e no bucket de backup existe
+   * conteúdo que só tem uma cópia no mundo. Aqui a lista vem do inventário — se
+   * a linha não está no banco, o objeto não é tocado.
+   *
+   * O DeleteObjects aceita 1000 chaves por chamada, e a operação é gratuita no
+   * R2. Devolve quantas foram efetivamente pedidas para exclusão.
+   */
+  async removerChaves(chaves: string[]): Promise<number> {
+    if (chaves.length === 0) return 0
+
+    let apagadas = 0
+
+    for (let i = 0; i < chaves.length; i += 1000) {
+      const lote = chaves.slice(i, i + 1000)
+      await this.cliente.send(new DeleteObjectsCommand({
+        Bucket: this.bucket,
+        Delete: { Objects: lote.map(Key => ({ Key })) },
+      }))
+      apagadas += lote.length
+    }
+
+    return apagadas
   }
 
   /**

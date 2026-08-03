@@ -18,20 +18,21 @@ type Copia = {
   chave:        string
 }
 
-/// OS não é uma cópia, é um acervo: um arquivo por mês, e nenhum deles sozinho
-/// representa o conjunto. Vem agregado — quantos meses estão protegidos e quanto
-/// ocupam — mas com a lista junto, porque cada mês é um download separado.
-type PedacoOs = {
-  periodo:  string | null
-  bytes:    number
-  geradoEm: string
+/// A corrente do ciclo não é uma cópia, é uma CADEIA: o full mais os fragmentos,
+/// e nenhum elo sozinho representa o conjunto. Vem agregada — quantos elos e
+/// quanto ocupam — mas com a lista junto, porque é a sequência que denuncia um
+/// buraco, e buraco no meio invalida tudo que vem depois dele.
+type Elo = {
+  sequencia: number
+  bytes:     number
+  geradoEm:  string
 }
 
-type AcervoOs = {
-  meses:         number
-  bytes:         number
-  ultimoPeriodo: string | null
-  periodos:      PedacoOs[]
+type Corrente = {
+  elos:            number
+  bytes:           number
+  ultimaSequencia: number
+  lista:           Elo[]
 }
 
 type Item = {
@@ -48,9 +49,9 @@ type Item = {
   horasDesdeUltimo: number | null
   falhas7Dias:      number
   prefixo:          string
-  banco:            Copia | null
-  imagens:          Copia | null
-  os:               AcervoOs
+  ciclo:            string | null
+  full:             Copia | null
+  corrente:         Corrente
 }
 
 type Resumo = {
@@ -65,7 +66,8 @@ type Resumo = {
 type Evento = {
   id:           string
   tipo:         string
-  periodo:      string | null
+  ciclo:        string
+  sequencia:    number
   status:       string
   origem:       string
   tamanhoBytes: number
@@ -136,12 +138,15 @@ function BotaoCopiar({ texto, titulo }: { texto: string; titulo: string }) {
  * para o banco de dados de uma empresa — cadastro, financeiro e a carteira de
  * clientes dela. Não é o tipo de coisa que deve sair de um clique errado.
  */
-function BotaoBaixar({ licencaId, tipo, periodo, existe, compacto }: {
-  licencaId: string
-  tipo:      'banco' | 'imagens' | 'os'
-  periodo?:  string | null
-  existe:    boolean
-  compacto?: boolean
+/// Baixa UM elo da corrente. Sem `sequencia` vem o full (a sequência 0), que é o
+/// único elo que sozinho significa alguma coisa — um fragmento solto é diferença
+/// sem base, e quem clicasse acharia que baixou o backup do cliente.
+function BotaoBaixar({ licencaId, ciclo, sequencia, existe, compacto }: {
+  licencaId:  string
+  ciclo?:     string | null
+  sequencia?: number
+  existe:     boolean
+  compacto?:  boolean
 }) {
   const [confirmando, setConfirmando] = useState(false)
   const [baixando, setBaixando]       = useState(false)
@@ -159,9 +164,7 @@ function BotaoBaixar({ licencaId, tipo, periodo, existe, compacto }: {
       const res  = await fetch(`/api/backups/${licencaId}/url-download`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        // Em `os` o período é obrigatório: cada mês é um objeto próprio, e sem
-        // ele a API não saberia qual entregar.
-        body:    JSON.stringify(tipo === 'os' ? { tipo, periodo } : { tipo }),
+        body:    JSON.stringify({ ciclo, sequencia }),
       })
       const json = await res.json()
 
@@ -239,81 +242,86 @@ function ModalDetalhe({ item, onClose }: { item: Item; onClose: () => void }) {
 
         <div className="overflow-y-auto px-6 py-5 space-y-6">
 
-          {/* Espelhos */}
+          {/* O full — a base da corrente */}
           <div>
             <p className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold mb-2">
-              Espelhos — 1 cópia de cada, sobrescrita todo dia
+              Full do ciclo {item.ciclo ?? '—'} — a base sobre a qual tudo é aplicado
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {([['banco', item.banco, Database], ['imagens', item.imagens, ImageIcon]] as const).map(
-                ([nome, copia, Icone]) => (
-                  <div key={nome} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Icone size={13} className="text-slate-500" />
-                      <span className="text-[11px] font-mono text-slate-400">{nome}.zip</span>
-                    </div>
-                    {copia ? (
-                      <>
-                        <p className="text-slate-200 text-lg font-bold leading-none">{tamanho(copia.tamanhoBytes)}</p>
-                        <p className="text-[11px] text-slate-500 mt-1.5">{quando(copia.geradoEm)}</p>
-                      </>
-                    ) : (
-                      <p className="text-slate-600 text-sm">Nenhuma</p>
-                    )}
-                    <BotaoBaixar licencaId={item.licencaId} tipo={nome} existe={!!copia} />
-                  </div>
-                ),
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Database size={13} className="text-slate-500" />
+                <span className="text-[11px] font-mono text-slate-400">full.zip</span>
+                <span className="text-[10px] text-slate-600">sequência 0</span>
+              </div>
+              {item.full ? (
+                <>
+                  <p className="text-slate-200 text-lg font-bold leading-none">{tamanho(item.full.tamanhoBytes)}</p>
+                  <p className="text-[11px] text-slate-500 mt-1.5">{quando(item.full.geradoEm)}</p>
+                </>
+              ) : (
+                <p className="text-slate-600 text-sm">Nenhum — sem full, nada restaura</p>
               )}
+              <BotaoBaixar licencaId={item.licencaId} existe={!!item.full} />
             </div>
           </div>
 
-          {/* Acervo de OS */}
+          {/* A corrente de fragmentos */}
           <div>
             <p className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold mb-2">
-              Ordens de serviço — 1 arquivo por mês, imutável depois de fechado
+              Fragmentos — extraídos por cima do full, nesta ordem
             </p>
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-              {item.os.meses > 0 ? (
+              {item.corrente.elos > 0 ? (
                 <>
                   <div className="flex items-end justify-between gap-4 mb-3">
                     <div>
                       <p className="text-slate-200 text-lg font-bold leading-none">
-                        {item.os.meses} {item.os.meses === 1 ? 'mês' : 'meses'}
+                        {item.corrente.elos} {item.corrente.elos === 1 ? 'elo' : 'elos'}
                       </p>
                       <p className="text-[11px] text-slate-500 mt-1.5">
-                        {tamanho(item.os.bytes)} no total · mais recente: {item.os.ultimoPeriodo}
+                        {tamanho(item.corrente.bytes)} no total · até a sequência {item.corrente.ultimaSequencia}
                       </p>
                     </div>
                     <p className="text-[11px] text-slate-600 text-right max-w-[50%]">
-                      Um arquivo por mês. Não existe link do acervo inteiro — baixe os que precisar.
+                      Um elo faltando no meio invalida tudo que vem depois — confira se a sequência
+                      não pula número.
                     </p>
                   </div>
 
                   <div className="border-t border-slate-800 pt-2 space-y-1 max-h-56 overflow-y-auto">
-                    {item.os.periodos.map(p => (
-                      <div key={p.periodo ?? '—'}
-                        className="flex items-center justify-between gap-3 py-1">
-                        <div className="min-w-0">
-                          <p className="text-[12px] font-mono text-slate-300 truncate">
-                            os-{p.periodo}.zip
-                          </p>
-                          <p className="text-[10px] text-slate-600">
-                            {tamanho(p.bytes)} · {quando(p.geradoEm)}
-                          </p>
+                    {item.corrente.lista.map((e, i, lista) => {
+                      // Sequência que pula é buraco na corrente, e é o que mais
+                      // importa ver aqui. Compara com o elo anterior (o full é o 0).
+                      const esperado = i === 0 ? 1 : lista[i - 1].sequencia + 1
+                      const buraco   = e.sequencia !== esperado
+
+                      return (
+                        <div key={e.sequencia} className="flex items-center justify-between gap-3 py-1">
+                          <div className="min-w-0">
+                            <p className={`text-[12px] font-mono truncate ${buraco ? 'text-red-400' : 'text-slate-300'}`}>
+                              frag-{String(e.sequencia).padStart(3, '0')}.zip
+                              {buraco && <span className="ml-2 text-[10px]">⚠ falta o elo {esperado}</span>}
+                            </p>
+                            <p className="text-[10px] text-slate-600">
+                              {tamanho(e.bytes)} · {quando(e.geradoEm)}
+                            </p>
+                          </div>
+                          <BotaoBaixar
+                            licencaId={item.licencaId}
+                            ciclo={item.ciclo}
+                            sequencia={e.sequencia}
+                            existe
+                            compacto
+                          />
                         </div>
-                        <BotaoBaixar
-                          licencaId={item.licencaId}
-                          tipo="os"
-                          periodo={p.periodo}
-                          existe
-                          compacto
-                        />
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </>
               ) : (
-                <p className="text-slate-600 text-sm">Nenhum mês enviado</p>
+                <p className="text-slate-600 text-sm">
+                  Nenhum fragmento — o full sozinho já restaura o estado daquele momento
+                </p>
               )}
             </div>
           </div>
@@ -358,7 +366,7 @@ function ModalDetalhe({ item, onClose }: { item: Item; onClose: () => void }) {
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-[11px] text-slate-400 font-mono">
                         {quando(e.emitidoEm)} · {e.tipo.toLowerCase()}
-                        {e.periodo && ` ${e.periodo}`} · {e.origem.toLowerCase()}
+                        {e.ciclo && ` ${e.ciclo}#${e.sequencia}`} · {e.origem.toLowerCase()}
                       </span>
                       <span className={`text-[10px] font-bold shrink-0 ${
                         e.status === 'CONFIRMADO' ? 'text-emerald-400'
@@ -603,20 +611,17 @@ export default function BackupsPage() {
                     }`}>
                       {i.situacao === 'NUNCA' ? 'Nunca enviou' : haQuanto(i.horasDesdeUltimo)}
                     </p>
-                    {i.banco && <p className="text-[11px] text-slate-500">{quando(i.banco.geradoEm)}</p>}
+                    {i.ciclo && <p className="text-[11px] text-slate-500">ciclo {i.ciclo}</p>}
                   </td>
 
                   {/* Tamanho */}
                   <td className="px-5 py-4">
                     <p className="text-slate-300 text-[13px]">
-                      {i.banco ? tamanho(i.banco.tamanhoBytes) : '—'}
+                      {i.full ? tamanho(i.full.tamanhoBytes) : '—'}
                     </p>
-                    {i.imagens && (
-                      <p className="text-[11px] text-slate-500">+ {tamanho(i.imagens.tamanhoBytes)} img</p>
-                    )}
-                    {i.os.meses > 0 && (
+                    {i.corrente.elos > 0 && (
                       <p className="text-[11px] text-slate-500">
-                        + {tamanho(i.os.bytes)} OS ({i.os.meses}m)
+                        + {tamanho(i.corrente.bytes)} em {i.corrente.elos} frag.
                       </p>
                     )}
                   </td>
