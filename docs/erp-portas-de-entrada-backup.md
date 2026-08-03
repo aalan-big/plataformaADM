@@ -1,11 +1,12 @@
 # Backup em nuvem — o que o ERP precisa chamar
 
-> ⚠️ **Contrato v3, definido em 03/08/2026. As rotas descritas aqui ainda NÃO
-> estão no ar.** A API responde hoje o contrato antigo (três pacotes:
-> `banco`/`imagens`/`os`). Este documento existe para que os dois lados
-> programem em paralelo — **não tente exercitar estas chamadas contra a API
-> ainda**, você vai receber `400` de schema e perder tempo achando que é bug seu.
-> A data de subida vai ser combinada.
+> ✅ **Contrato v3, no ar em produção desde 03/08/2026.** As quatro rotas abaixo
+> já respondem em `https://api.startbig.com.br` e foram exercitadas ponta a ponta:
+> full autorizado, subido ao R2, confirmado por `HeadObject`, e a corrente
+> devolvida pelo `url-download`. Pode programar e testar contra a API.
+>
+> O contrato antigo (três pacotes `banco`/`imagens`/`os`) **não existe mais** — se
+> você encontrar documentação falando dele, está desatualizada.
 >
 > Este documento cobre **só backup**. Cadastro, conexão, heartbeat, validação e
 > cobrança estão em [`erp-portas-de-entrada.md`](./erp-portas-de-entrada.md) e
@@ -87,8 +88,9 @@ GET /erp/backup/status
   "cicloCorrente": "2026-08-03",        // a segunda de referência
   "fullDoCicloConfirmado": false,       // false → este envio é FULL
   "envioEmAndamento": null,             // ou { hwid, desde }
-  "tamanhoMaximoBytes": 524288000,
-  "limiteDiario": { ... },
+  "tamanhoMaximoBytes": 5368709120,   // 5 GiB — o teto do PUT único no protocolo
+  "limiteDiario": 4,                  // por licença, teto contra loop com bug
+  "enviadosHoje": 1,
   "enviadosHoje": { ... }
 }
 ```
@@ -303,7 +305,7 @@ resposta dela, não no início do envio.
 
 | # | Item | Situação |
 |---|---|---|
-| 1 | Teto de tamanho por envio | 500 MB hoje. O full de um cliente com meses de acervo passa disso — vai subir, mas acima de **5 GB** o PUT único deixa de existir (limite do protocolo S3/R2) e o full vai precisar sair em partes |
+| 1 | Teto de tamanho por envio | **5 GiB**, que é o limite do PUT único no protocolo S3/R2 — não é escolha nossa e não dá para subir. A ~12 MB/dia de fotos, o full de um cliente cruza isso por volta de **14 meses de operação** e o backup para de funcionar sem aviso. O conserto é o full sair em partes, e não muda a lógica do ciclo |
 | 2 | Primeiro backup de cliente antigo | a pasta de pendentes contém o acervo inteiro. Vários GB num zip só, em horário comercial. Precisa de tratamento próprio |
 | 3 | Cota diária | hoje são 2/dia por tipo. Com gatilho por login e lock no servidor, o número provavelmente muda |
 | 4 | Granularidade do fragmento de banco | por tabela. Vale medir quanto isso economiza de verdade — as tabelas que mudam todo dia são as grandes |
