@@ -283,9 +283,11 @@ psql "..." -c 'DELETE FROM backups;'
 git pull && npm install
 
 # 5. ⚠ CONFERE o que o db push faria. Leitura pura, não altera nada.
-npx prisma migrate diff \
-  --from-url "$(grep -m1 '^DATABASE_URL=' apps/server/.env | cut -d= -f2- | tr -d '"')" \
-  --to-schema-datamodel prisma/schema.prisma --script
+#
+#    `--from-config-datasource` é flag sem valor: pega a URL do prisma.config.ts,
+#    que já lê o apps/server/.env. Em Prisma 7 as flags antigas (--from-url e
+#    --to-schema-datamodel) não existem mais — só imprimem a ajuda.
+npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script
 
 #    esperado: só TYPE de TipoBackup/StatusBackup e ALTER TABLE backups.
 #    se aparecer ALTER em clientes/licencas/planos/usuarios → PARA.
