@@ -481,6 +481,11 @@ interface Trava {
   /// de todo cliente seria recusado. Mas "aceitar" aqui GRAVA uma linha e queima
   /// uma da cota diária, então nem se tenta antes de haver base.
   exigeBackupAnterior?: boolean
+  /// O oposto: travas que só disparam num ciclo AINDA SEM full. Depois que o
+  /// ciclo tem full confirmado, um fragmento passa a ser legítimo e a API aceita
+  /// — corretamente. Sem esta marca a trava acusaria falha do servidor quando na
+  /// verdade quem está fora de contexto é o teste.
+  exigeCicloSemFull?: boolean
 }
 
 /// Ciclo válido para os testes que precisam passar da validação de schema e
@@ -526,10 +531,11 @@ const TRAVAS: Trava[] = [
     corpo:     h => ({ hwid: h, tipo: 'full', ciclo: '2026-08', tamanhoBytes: 65536, codigoConteudo: CODIGO_FALSO }),
   },
   {
-    nome:      'Fragmento antes do full',
-    descricao: 'Fragmento sem full é elo solto: ocupa espaço e não restaura nada.',
-    esperado:  '409 · BACKUP_FULL_OBRIGATORIO',
-    corpo:     h => ({ hwid: h, tipo: 'fragmento', ciclo: CICLO_TESTE, tamanhoBytes: 65536, codigoConteudo: CODIGO_FALSO }),
+    nome:              'Fragmento antes do full',
+    descricao:         'Fragmento sem full é elo solto: ocupa espaço e não restaura nada.',
+    esperado:          '409 · BACKUP_FULL_OBRIGATORIO',
+    corpo:             h => ({ hwid: h, tipo: 'fragmento', ciclo: CICLO_TESTE, tamanhoBytes: 65536, codigoConteudo: CODIGO_FALSO }),
+    exigeCicloSemFull: true,
   },
   {
     nome:                'Segundo full no mesmo ciclo',
@@ -554,29 +560,52 @@ function SecaoTravas({ token }: { token: string }) {
   const testar = async (t: Trava) => {
     setRodando(t.nome)
 
-    // Antes de tentar uma trava comparativa, confere se existe base de comparação.
-    // Sem ela a API aceitaria o pedido — e aceitar grava linha e queima cota, o
-    // que transformaria um teste de leitura num efeito colateral silencioso.
-    if (t.exigeBackupAnterior) {
+    const naoAplicavel = (msg: string) => {
+      setSaidas(s => ({ ...s, [t.nome]: { status: 0, codigo: 'NÃO APLICÁVEL', naoAplicavel: true, msg } }))
+      setRodando(null)
+    }
+
+    // Várias travas só fazem sentido num estado específico do ciclo. Testar fora
+    // dele acusaria falha do servidor quando quem está fora de contexto é o
+    // teste — e, pior, o pedido seria ACEITO, gravando linha e segurando o lock.
+    if (t.exigeBackupAnterior || t.exigeCicloSemFull) {
       const st = await api(`${API}/erp/backup/status`, token)
       const jaTemFull = (st.payload as { fullDoCicloConfirmado?: boolean })?.fullDoCicloConfirmado
-      if (!jaTemFull) {
-        setSaidas(s => ({
-          ...s,
-          [t.nome]: {
-            status: 0, codigo: 'AGUARDANDO BASE', naoAplicavel: true,
-            msg: 'O ciclo ainda não tem full. Rode o Ciclo Completo primeiro e teste de novo.',
-          },
-        }))
-        setRodando(null); return
-      }
+
+      if (t.exigeBackupAnterior && !jaTemFull)
+        return naoAplicavel('O ciclo ainda não tem full. Rode o Ciclo Completo primeiro e teste de novo.')
+
+      if (t.exigeCicloSemFull && jaTemFull)
+        return naoAplicavel(
+          'O ciclo já tem full confirmado, então fragmento é legítimo e a API aceita — corretamente. ' +
+          'Esta trava só dá para exercitar num ciclo virgem, na próxima segunda.',
+        )
     }
 
     const r = await api(`${API}/erp/backup/url-upload`, token, {
       method: 'POST',
       body:   JSON.stringify(t.corpo(hwidDoToken(token))),
     })
-    const p = r.payload as { codigo?: string; message?: string; acao?: string }
+    const p = r.payload as { codigo?: string; message?: string; acao?: string; uploadId?: string }
+
+    // Lock de outro envio não é resultado da trava: é impedimento para testá-la.
+    // Sem esta distinção, qualquer envio pendurado faria TODAS as travas
+    // seguintes se reportarem como quebradas.
+    if (r.ok && p?.acao === 'AGUARDANDO_OUTRO_TERMINAL')
+      return naoAplicavel('Outro envio segura o lock. Espere ele confirmar (ou a URL vencer) e teste de novo.')
+
+    // Trava que não pegou devolve ENVIAR — e com ele uma linha EMITIDO que
+    // segura o lock até a URL vencer, envenenando todo teste seguinte. Solta na
+    // hora, exatamente como o contrato manda o ERP fazer quando o envio falha.
+    if (r.ok && p?.acao === 'ENVIAR' && p.uploadId)
+      await api(`${API}/erp/backup/confirmar`, token, {
+        method: 'POST',
+        body:   JSON.stringify({
+          uploadId: p.uploadId, hwid: hwidDoToken(token), ok: false,
+          erro: 'Autorização emitida por teste de trava — descartada sem upload.',
+        }),
+      })
+
     setSaidas(s => ({
       ...s,
       [t.nome]: {
