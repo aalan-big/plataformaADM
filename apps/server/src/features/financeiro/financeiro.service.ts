@@ -630,7 +630,7 @@ export class FinanceiroService {
     if (await findPagamentoByTransacaoId(params.gatewayCobrancaId))
       return { msg: 'Pagamento já lançado' }
 
-    const licenca = await findLicencaById(cobranca.licencaId)
+    let licenca = await findLicencaById(cobranca.licencaId)
     if (!licenca) {
       await this.alarmarDescarte({
         evento:     `asaas:${params.origem}`,
@@ -654,6 +654,33 @@ export class FinanceiroService {
         valor:      params.valorPago,
       })
       return { msg: 'Valor pago menor que o cobrado — renovação não aplicada' }
+    }
+
+    // Troca de plano paga por PIX: a cobrança guarda o plano de DESTINO, e é
+    // AQUI — com o dinheiro confirmado — que a licença se move. Antes disso ela
+    // não muda em lugar nenhum, então cliente que não paga não sobe de plano.
+    // Mesma regra que o checkout do Stripe já seguia.
+    if (cobranca.planoId && cobranca.planoId !== licenca.planoId) {
+      const destino = await findPlanoById(cobranca.planoId)
+      if (destino) {
+        await updateLicenca(licenca.id, { planoId: cobranca.planoId, planoPendenteId: null })
+        await registrarEventoLicenca(licenca.id, {
+          tipo:          'TROCA_PLANO',
+          chaveAtivacao: licenca.chaveAtivacao,
+          observacao:    `Plano alterado para "${destino.nome}" após confirmação do PIX.`,
+        })
+        licenca = { ...licenca, planoId: cobranca.planoId, plano: destino } as typeof licenca
+      } else {
+        // Plano apagado entre a geração da cobrança e o pagamento. Renovar no
+        // plano atual é melhor que travar: o cliente pagou, e o dinheiro está
+        // registrado — a divergência de plano um humano resolve.
+        await this.alarmarDescarte({
+          evento:     `asaas:${params.origem}`,
+          motivo:     `Plano de destino ${cobranca.planoId} não existe mais — licença renovada NO PLANO ATUAL`,
+          referencia: params.gatewayCobrancaId,
+          valor:      params.valorPago,
+        })
+      }
     }
 
     // O valor lançado é o que ENTROU, não o que foi cobrado: o financeiro tem

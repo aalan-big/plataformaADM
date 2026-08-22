@@ -55,12 +55,20 @@ export async function findCobrancaPendente(dados: {
   licencaId: string
   meses:     number
   metodo:    string
+  /**
+   * O plano sendo pago entra na chave porque uma renovação e uma troca de plano
+   * podem coexistir para a mesma licença e período, com valores diferentes.
+   * Sem isto, gerar a cobrança da troca devolveria o PIX da renovação — e o
+   * cliente pagaria o valor errado achando que estava mudando de plano.
+   */
+  planoId?:  string
 }) {
   return prisma.cobrancaRenovacao.findFirst({
     where: {
       licencaId: dados.licencaId,
       meses:     dados.meses,
       metodo:    dados.metodo,
+      ...(dados.planoId ? { planoId: dados.planoId } : {}),
       status:    'PENDENTE',
       OR: [
         { expiraEm: null },

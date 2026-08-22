@@ -14,13 +14,14 @@
  */
 import { Module } from '@nestjs/common'
 import { RenovacaoController } from './renovacao.controller'
+import { RenovacaoAdminController } from './renovacao-admin.controller'
 import { RenovacaoService } from './renovacao.service'
 import { RenovacaoCredencialService } from './renovacao-credencial.service'
 import { FinanceiroModule } from '../financeiro/financeiro.module'
 
 @Module({
   imports:     [FinanceiroModule],
-  controllers: [RenovacaoController],
+  controllers: [RenovacaoController, RenovacaoAdminController],
   providers:   [RenovacaoService, RenovacaoCredencialService],
   exports:     [RenovacaoCredencialService],
 })

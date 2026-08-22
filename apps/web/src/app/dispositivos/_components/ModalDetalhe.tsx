@@ -154,11 +154,20 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
   const [modalRenovar, setModalRenovar] = useState(false)
   const [acao, setAcao] = useState<string | null>(null)
   const [mostrarAdmin, setMostrarAdmin] = useState(false)
-  // Stripe link
+  // Link de pagamento
   const [mesesStripe, setMesesStripe] = useState(1)
   const [linkStripe, setLinkStripe] = useState('')
   const [linkCopiado, setLinkCopiado] = useState(false)
   const [gerandoLink, setGerandoLink] = useState(false)
+  /**
+   * Cartão gera uma URL de checkout; PIX gera um copia-e-cola e um QR. São
+   * saídas diferentes, então a tela precisa saber qual está mostrando — senão
+   * o operador copia um campo vazio achando que copiou o link.
+   */
+  const [metodoPag, setMetodoPag]   = useState<'CARTAO' | 'PIX'>('CARTAO')
+  const [pixCodigo, setPixCodigo]   = useState('')
+  const [pixQr, setPixQr]           = useState('')
+  const [pixCopiado, setPixCopiado] = useState(false)
   // Trocar plano
   const [planos, setPlanos] = useState<PlanoPreco[]>([])
   const [planoSel, setPlanoSel] = useState('')
@@ -224,28 +233,54 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
   async function gerarLinkStripe() {
     if (!licenca) return
     setGerandoLink(true)
-    setErroLink('')
+    setErroLink(''); setLinkStripe(''); setPixCodigo(''); setPixQr('')
     try {
-      // Plano selecionado diferente do atual = troca paga: o checkout é gerado
+      // Plano selecionado diferente do atual = troca paga: a cobrança é gerada
       // para o plano de destino e a licença só muda quando o pagamento cair.
+      // Vale para os dois métodos — o PIX guarda o destino na própria cobrança.
       const trocaPaga = planoSel && planoSel !== licenca.plano?.id
-      const res = await fetch('/api/financeiro/gerar-cobranca', {
-        method: 'POST',
+      const corpo = {
+        licencaId: licenca.id,
+        meses:     mesesStripe,
+        ...(trocaPaga ? { planoId: planoSel } : {}),
+      }
+
+      const rota = metodoPag === 'PIX'
+        ? '/api/financeiro/gerar-cobranca-pix'
+        : '/api/financeiro/gerar-cobranca'
+
+      const res = await fetch(rota, {
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          licencaId: licenca.id,
-          meses:     mesesStripe,
-          ...(trocaPaga ? { planoId: planoSel } : {}),
-        }),
+        body:    JSON.stringify(corpo),
       })
       const j = await res.json()
-      if (!res.ok) { setErroLink(j.message ?? j.erro ?? 'Erro ao gerar link.'); return }
-      setLinkStripe(j.url)
+      if (!res.ok) { setErroLink(j.message ?? j.erro ?? 'Erro ao gerar cobrança.'); return }
+
+      if (metodoPag === 'PIX') {
+        // Copia-e-cola ausente não é erro: o gateway pode ter demorado além do
+        // teto de espera. A cobrança existe e o código chega no polling — mas o
+        // operador precisa saber disso em vez de copiar um campo vazio.
+        if (!j.pixCopiaECola) {
+          setErroLink('A cobrança foi criada, mas o código ainda não veio do gateway. Gere de novo em alguns segundos.')
+          return
+        }
+        setPixCodigo(j.pixCopiaECola)
+        setPixQr(j.qrCodeBase64 ?? '')
+      } else {
+        setLinkStripe(j.url)
+      }
     } catch {
-      setErroLink('Falha de conexão ao gerar link.')
+      setErroLink('Falha de conexão ao gerar cobrança.')
     } finally {
       setGerandoLink(false)
     }
+  }
+
+  async function copiarPix() {
+    await navigator.clipboard.writeText(pixCodigo)
+    setPixCopiado(true)
+    setTimeout(() => setPixCopiado(false), 2000)
   }
 
   async function copiarLink() {
@@ -688,31 +723,82 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
                     <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Link de Pagamento</p>
                   </div>
                   <div className="px-5 py-4 space-y-3">
-                    {/* Campo de link */}
+                    {/* Método — troca a saída inteira, então vem antes de tudo */}
                     <div className="flex items-center gap-2">
-                      <div className="relative flex-1">
-                        <Link2 size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
-                        <input
-                          readOnly
-                          value={linkStripe}
-                          placeholder="O link aparecerá aqui após gerar..."
-                          onClick={e => linkStripe && (e.target as HTMLInputElement).select()}
-                          className="w-full bg-slate-950 border border-slate-700/60 text-blue-400 placeholder-slate-700 text-[11px] font-mono rounded-lg pl-8 pr-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500/30"
-                        />
-                      </div>
-                      {linkStripe && (
-                        <>
-                          <button onClick={copiarLink} title="Copiar link"
-                            className="shrink-0 p-2.5 bg-slate-800 border border-slate-700 hover:border-emerald-600/40 hover:bg-emerald-600/10 rounded-lg text-slate-400 hover:text-emerald-400 transition-colors">
-                            {linkCopiado ? <CheckCheck size={13} className="text-emerald-400" /> : <Copy size={13} />}
-                          </button>
-                          <a href={linkStripe} target="_blank" rel="noreferrer" title="Abrir link"
-                            className="shrink-0 p-2.5 bg-slate-800 border border-slate-700 hover:border-blue-600/40 hover:bg-blue-600/10 rounded-lg text-slate-400 hover:text-blue-400 transition-colors">
-                            <ExternalLink size={13} />
-                          </a>
-                        </>
-                      )}
+                      {([['CARTAO', 'Cartão'], ['PIX', 'PIX']] as const).map(([id, label]) => (
+                        <button key={id}
+                          onClick={() => { setMetodoPag(id); setLinkStripe(''); setPixCodigo(''); setPixQr(''); setErroLink('') }}
+                          className={`flex-1 py-2 rounded-lg text-[11px] font-bold border transition-all ${
+                            metodoPag === id
+                              ? id === 'PIX'
+                                ? 'bg-cyan-600 border-cyan-500 text-white'
+                                : 'bg-blue-600 border-blue-500 text-white'
+                              : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-600 hover:text-slate-300'
+                          }`}>
+                          {label}
+                        </button>
+                      ))}
                     </div>
+
+                    {/* Cartão: campo de link */}
+                    {metodoPag === 'CARTAO' && (
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <Link2 size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
+                          <input
+                            readOnly
+                            value={linkStripe}
+                            placeholder="O link aparecerá aqui após gerar..."
+                            onClick={e => linkStripe && (e.target as HTMLInputElement).select()}
+                            className="w-full bg-slate-950 border border-slate-700/60 text-blue-400 placeholder-slate-700 text-[11px] font-mono rounded-lg pl-8 pr-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500/30"
+                          />
+                        </div>
+                        {linkStripe && (
+                          <>
+                            <button onClick={copiarLink} title="Copiar link"
+                              className="shrink-0 p-2.5 bg-slate-800 border border-slate-700 hover:border-emerald-600/40 hover:bg-emerald-600/10 rounded-lg text-slate-400 hover:text-emerald-400 transition-colors">
+                              {linkCopiado ? <CheckCheck size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                            </button>
+                            <a href={linkStripe} target="_blank" rel="noreferrer" title="Abrir link"
+                              className="shrink-0 p-2.5 bg-slate-800 border border-slate-700 hover:border-blue-600/40 hover:bg-blue-600/10 rounded-lg text-slate-400 hover:text-blue-400 transition-colors">
+                              <ExternalLink size={13} />
+                            </a>
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {/* PIX: copia-e-cola + QR */}
+                    {metodoPag === 'PIX' && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <input
+                            readOnly
+                            value={pixCodigo}
+                            placeholder="O código PIX aparecerá aqui após gerar..."
+                            onClick={e => pixCodigo && (e.target as HTMLInputElement).select()}
+                            className="flex-1 bg-slate-950 border border-slate-700/60 text-cyan-400 placeholder-slate-700 text-[11px] font-mono rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-cyan-500/30"
+                          />
+                          {pixCodigo && (
+                            <button onClick={copiarPix} title="Copiar código PIX"
+                              className="shrink-0 p-2.5 bg-slate-800 border border-slate-700 hover:border-emerald-600/40 hover:bg-emerald-600/10 rounded-lg text-slate-400 hover:text-emerald-400 transition-colors">
+                              {pixCopiado ? <CheckCheck size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                            </button>
+                          )}
+                        </div>
+                        {pixQr && (
+                          <div className="flex items-center gap-3 bg-white rounded-lg p-3">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={`data:image/png;base64,${pixQr}`} alt="QR Code PIX" className="w-28 h-28" />
+                            <p className="text-[11px] text-slate-600 leading-relaxed">
+                              Mande o <strong>código</strong> por mensagem, ou mostre este QR se o cliente
+                              estiver na sua frente.<br />
+                              A licença renova sozinha assim que o pagamento cair.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {/* Período + botão */}
                     {(() => {
                       // Os cards mostram o preço do que o link VAI cobrar, e com
@@ -749,7 +835,7 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
                         <div className="flex flex-wrap items-end gap-2">
                           {opcoes.map(({ m, label, total, desc }) => (
                             <button key={m}
-                              onClick={() => { setMesesStripe(m); setLinkStripe(''); setLinkCopiado(false) }}
+                              onClick={() => { setMesesStripe(m); setLinkStripe(''); setLinkCopiado(false); setPixCodigo(''); setPixQr('') }}
                               className={`flex-1 flex flex-col items-center py-2.5 rounded-lg border transition-all ${
                                 mesesStripe === m
                                   ? 'bg-blue-600 border-blue-500 text-white'

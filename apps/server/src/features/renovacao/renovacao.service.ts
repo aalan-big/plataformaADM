@@ -14,6 +14,7 @@
 import { Injectable, HttpStatus, Logger } from '@nestjs/common'
 import {
   findPlanoById,
+  findLicencaById,
   criarCobrancaRenovacao,
   findCobrancaPendente,
   findCobrancaRenovacaoById,
@@ -143,7 +144,75 @@ export class RenovacaoService {
 
     if (dados.metodo === 'CARTAO') return this.checkoutCartao(licenca, meses)
 
-    return this.cobrancaPix({ licenca, plano, meses, valor: opcao.total, rotulo: opcao.label })
+    return this.cobrancaPix({ licenca, plano, meses, valor: opcao.total, rotulo: opcao.label, planoId: licenca.planoId })
+  }
+
+  // ── PIX gerado pelo painel (admin) ────────────────────────────────────────
+
+  /**
+   * Cobrança PIX criada por quem opera o painel, para mandar ao cliente.
+   *
+   * Difere do caminho do ERP em dois pontos: a credencial é a sessão de admin
+   * (o operador já sabe qual licença é, não precisa de chave+hwid), e ela
+   * aceita um plano de DESTINO — é o que permite vender uma troca de plano por
+   * PIX, coisa que só o cartão fazia.
+   *
+   * A licença NÃO muda aqui. Ela muda quando o pagamento cair, no webhook —
+   * mesma regra que o checkout do Stripe já seguia. Cliente que não paga não
+   * sobe de plano.
+   */
+  async cobrancaPixAdmin(entrada: { licencaId?: string; meses?: number; planoId?: string }) {
+    const licencaId = entrada?.licencaId
+    const meses     = Number(entrada?.meses)
+
+    if (!licencaId || ![1, 3, 12].includes(meses))
+      throw this.credencial.erro(HttpStatus.BAD_REQUEST, 'DADOS_INVALIDOS', 'Informe a licença e um período de 1, 3 ou 12 meses.')
+
+    const licenca = await findLicencaById(licencaId)
+    if (!licenca)
+      throw this.credencial.erro(HttpStatus.NOT_FOUND, 'LICENCA_NAO_ENCONTRADA', 'Licença não encontrada.')
+
+    // Mesma trava do fluxo do ERP e do Stripe: assinatura viva no cartão + PIX
+    // por cima é o cliente pagando duas vezes no mesmo mês.
+    if (licenca.stripeSubscriptionId && await this.stripe.assinaturaAtiva(licenca.stripeSubscriptionId)) {
+      throw this.credencial.erro(
+        HttpStatus.CONFLICT,
+        'ASSINATURA_ATIVA',
+        'Esta licença tem assinatura ativa no cartão. Cancele antes de cobrar por PIX, ou o cliente pagará duas vezes.',
+      )
+    }
+
+    // O preço vem do plano de DESTINO quando há troca — nunca do plano atual.
+    // Cobrar pelo plano velho e entregar o novo seria prejuízo silencioso.
+    const trocaDePlano = !!entrada.planoId && entrada.planoId !== licenca.planoId
+    const planoAlvo    = trocaDePlano ? await findPlanoById(entrada.planoId!) : licenca.plano
+
+    if (!planoAlvo)
+      throw this.credencial.erro(HttpStatus.NOT_FOUND, 'PLANO_INVALIDO', 'Plano de destino não encontrado.')
+    if ((planoAlvo as { status?: string }).status && (planoAlvo as { status?: string }).status !== 'ATIVO')
+      throw this.credencial.erro(HttpStatus.BAD_REQUEST, 'PLANO_INVALIDO', `O plano "${planoAlvo.nome}" está inativo.`)
+
+    const opcao = montarOpcoesComMetodos(planoAlvo as never, { pixDisponivel: this.asaas.disponivel() })
+      .find(o => o.meses === meses)
+
+    if (!opcao || !opcao.metodos.includes('PIX'))
+      throw this.credencial.erro(
+        HttpStatus.BAD_REQUEST,
+        'METODO_INDISPONIVEL',
+        `O plano "${planoAlvo.nome}" não tem preço próprio cadastrado para ${meses} mês(es), então não pode ser vendido por PIX nesse período.`,
+      )
+
+    const resposta = await this.cobrancaPix({
+      licenca,
+      plano:   planoAlvo,
+      meses,
+      valor:   opcao.total,
+      rotulo:  opcao.label,
+      planoId: trocaDePlano ? entrada.planoId! : licenca.planoId,
+    })
+
+    // O painel precisa saber que é troca para avisar o operador na tela.
+    return { ...resposta, trocaDePlano, plano: planoAlvo.nome }
   }
 
   // ── PIX ───────────────────────────────────────────────────────────────────
@@ -154,8 +223,16 @@ export class RenovacaoService {
     meses:   number
     valor:   number
     rotulo:  string
+    /**
+     * O plano que está sendo PAGO — nem sempre o plano atual da licença.
+     *
+     * Numa troca de plano vendida pelo admin, é o plano de DESTINO: a licença
+     * só se move quando o pagamento cair, nunca antes. Guardar aqui é o que
+     * permite ao webhook saber para onde mover sem consultar nada mais.
+     */
+    planoId: string
   }) {
-    const { licenca, plano, meses, valor, rotulo } = params
+    const { licenca, plano, meses, valor, rotulo, planoId } = params
 
     if (!this.asaas.disponivel())
       throw this.credencial.erro(HttpStatus.SERVICE_UNAVAILABLE, 'METODO_INDISPONIVEL', 'PIX ainda não está habilitado.')
@@ -177,7 +254,7 @@ export class RenovacaoService {
     // I3 — dois cliques, ou a tela reaberta, devolvem a MESMA cobrança. Sem
     // isto, cada clique abriria um PIX novo no Asaas e o cliente escolheria
     // qual pagar, com os outros virando cobrança fantasma no painel.
-    const pendente = await findCobrancaPendente({ licencaId: licenca.id, meses, metodo: 'PIX' })
+    const pendente = await findCobrancaPendente({ licencaId: licenca.id, meses, metodo: 'PIX', planoId })
 
     if (pendente?.gatewayCobrancaId) {
       const completa = await this.garantirQrCode(pendente)
@@ -199,7 +276,7 @@ export class RenovacaoService {
     const cobranca = await criarCobrancaRenovacao({
       licencaId: licenca.id,
       clienteId: licenca.clienteId,
-      planoId:   licenca.planoId,
+      planoId,
       meses,
       valor,
       gateway:   'ASAAS',
