@@ -394,6 +394,21 @@ O conteúdo (payload) do token contém: `licencaId`, `hwid`, `plano`, `limite`, 
 
 ## 11. Cobrança e renovação (pagamento recorrente via Stripe)
 
+> ### ⚠️ Existe um caminho mais novo — e é o recomendado
+>
+> As rotas desta seção continuam funcionando e **não vão mudar**. Mas elas têm
+> duas limitações que o fluxo novo resolve:
+>
+> 1. **Só cartão.** Não oferecem PIX.
+> 2. **Exigem `licencaId`** — que o `/erp/validar` *não devolve* quando a licença
+>    está vencida. Ou seja: pelo caminho antigo, o cliente vencido não consegue
+>    pagar, que é exatamente quem precisa.
+>
+> O fluxo novo (`/licenca/renovacao/*`) usa `chave` + `hwid` como credencial,
+> funciona com a licença vencida, e oferece PIX e cartão lado a lado.
+>
+> **Documentação:** [`renovacao-contrato-resposta.md`](./renovacao-contrato-resposta.md)
+
 Quando a licença está vencida (ou o trial acabou), o ERP pode oferecer a assinatura direto pela plataforma. O pagamento é uma **assinatura recorrente** no Stripe: o cliente paga uma vez e, a cada ciclo (mensal/trimestral/anual), o Stripe cobra o cartão automaticamente e a plataforma **renova a licença sozinha** — o ERP não precisa fazer nada na renovação, só continuar chamando `/erp/validar` normalmente (a `dataVencimento` já vem atualizada).
 
 ### 11.1 Consultar preços — `GET /erp/plano/:licencaId`

@@ -14,9 +14,9 @@
  * - Comunicação com bibliotecas externas (ex: Stripe, Envio de E-mails).
  * ============================================================================
  */
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common'
+import { Injectable, BadRequestException, NotFoundException, UnauthorizedException, Logger } from '@nestjs/common'
 import { ZodError } from 'zod'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHash, timingSafeEqual } from 'crypto'
 import {
   findLicencaById,
   findLicencaByStripeSubscriptionId,
@@ -34,6 +34,11 @@ import {
   findLicencasExpirandoOuVencidas,
   updateLicenca,
   registrarEventoLicenca,
+  findCobrancaByGatewayId,
+  marcarCobrancaPaga,
+  marcarCobrancaStatus,
+  findCobrancasRenovacao,
+  contarCobrancasPorStatus,
 } from '@startbig/database'
 import { confirmarPagamentoSchema, gerarCobrancaSchema } from '@startbig/schemas'
 import { EmailService } from '../../core/email/email.service'
@@ -41,8 +46,17 @@ import { StripeService } from '../../common/stripe/stripe.service'
 import { ParceiroService } from '../parceiro/parceiro.service'
 import { montarOpcoes } from '../plano/plano.precos'
 
+/**
+ * Dias que a licenca continua valendo depois do vencimento quando o CARTAO
+ * falhou. Cobre a janela de retentativas do Stripe (dunning) sem virar mes
+ * gratis. Vale so para cartao — ver o comentario em invoice.payment_failed.
+ */
+const CARENCIA_CARTAO_DIAS = 7
+
 @Injectable()
 export class FinanceiroService {
+  private readonly logger = new Logger(FinanceiroService.name)
+
   constructor(
     private readonly stripeService:   StripeService,
     private readonly emailService:    EmailService,
@@ -85,6 +99,24 @@ export class FinanceiroService {
 
   async inadimplentes(dias = 30) {
     return findLicencasExpirandoOuVencidas(dias)
+  }
+
+  /**
+   * Cobranças de renovação para o painel — inclusive as que NÃO viraram dinheiro.
+   *
+   * A lista de pagamentos só mostra o que entrou. Um PIX gerado e abandonado não
+   * aparece em lugar nenhum lá, e é justamente o dado que revela cliente tentando
+   * renovar e desistindo — ou, pior, tentando e falhando por um defeito nosso.
+   */
+  async cobrancas(filtro: { status?: string; limite?: string }) {
+    const [lista, resumo] = await Promise.all([
+      findCobrancasRenovacao({
+        status: filtro.status || undefined,
+        limite: filtro.limite ? Number(filtro.limite) : undefined,
+      }),
+      contarCobrancasPorStatus(),
+    ])
+    return { lista, resumo }
   }
 
   async receitaMes(ano: number, mes: number) {
@@ -445,6 +477,27 @@ export class FinanceiroService {
         ? (licenca.cliente.pf?.nomeCompleto ?? licenca.cliente.email)
         : (licenca.cliente.pj?.razaoSocial  ?? licenca.cliente.email)
 
+      // Abre a carência: a licença continua valendo enquanto o Stripe re-tenta.
+      //
+      // Só o CARTÃO ganha isso, e o motivo é o meio de pagamento, não o cliente:
+      // quem paga no cartão pode ficar inadimplente sem querer (cartão vencido,
+      // limite, banco recusando) e sem nem saber. Quem paga por PIX escolhe pagar
+      // — não existe PIX que falha sozinho — então trava no vencimento.
+      //
+      // Gravada UMA vez: cada retentativa do Stripe dispara este evento de novo,
+      // e reescrever a data a cada uma empurraria o prazo para frente sem fim,
+      // transformando sete dias de tolerância em acesso grátis permanente.
+      if (!licenca.carenciaAte) {
+        const ate = new Date()
+        ate.setDate(ate.getDate() + CARENCIA_CARTAO_DIAS)
+        await updateLicenca(licenca.id, { carenciaAte: ate })
+        await registrarEventoLicenca(licenca.id, {
+          tipo:          'CARENCIA_ABERTA',
+          chaveAtivacao: licenca.chaveAtivacao,
+          observacao:    `Cartão recusado — acesso mantido até ${ate.toLocaleDateString('pt-BR')} enquanto o Stripe tenta cobrar novamente.`,
+        })
+      }
+
       try {
         await this.emailService.enviarFalhaPagamento({ email: licenca.cliente.email, nomeCliente, dataVencimento: licenca.dataVencimento })
       } catch (err) {
@@ -453,7 +506,7 @@ export class FinanceiroService {
 
       // Não bloqueia: o Stripe re-tenta a cobrança nos próximos dias (dunning). Se todas
       // as tentativas falharem, ele dispara customer.subscription.deleted (tratado abaixo).
-      return { msg: 'Falha de pagamento — cliente notificado' }
+      return { msg: 'Falha de pagamento — cliente notificado, carência aberta' }
     }
 
     // ── 3. Assinatura encerrada (cancelada ou após esgotar as tentativas) ─────
@@ -472,7 +525,11 @@ export class FinanceiroService {
 
       // Para as renovações futuras, mas mantém o acesso até o fim do período já pago
       // (a licença expira naturalmente pela dataVencimento, via cron/validar).
-      await updateLicenca(licenca.id, { stripeSubscriptionId: null })
+      //
+      // A carência morre junto: ela existia para cobrir as retentativas do Stripe,
+      // e a assinatura encerrada significa que elas acabaram. Deixá-la de pé daria
+      // ao cliente mais dias depois de já não haver ninguém tentando cobrar.
+      await updateLicenca(licenca.id, { stripeSubscriptionId: null, carenciaAte: null })
       await registrarEventoLicenca(licenca.id, { tipo: 'ASSINATURA_CANCELADA', chaveAtivacao: licenca.chaveAtivacao, observacao: 'Assinatura Stripe encerrada — sem renovação automática. Acesso mantido até o vencimento.' })
       return { msg: 'Assinatura encerrada — acesso mantido até o vencimento' }
     }
@@ -480,60 +537,186 @@ export class FinanceiroService {
     return { msg: `Evento ${evento.tipo} ignorado` }
   }
 
-  async webhookAsaas(body: any) {
-    // Exemplo de payload Asaas:
-    // { event: 'PAYMENT_RECEIVED', payment: { id: '...', externalReference: 'licencaId', value: 100 } }
-    
-    if (!body || !body.event || !body.payment) {
-      throw new BadRequestException('Formato de webhook Asaas inválido.')
+  /**
+   * Autentica o webhook do Asaas.
+   *
+   * O Asaas não assina o corpo como o Stripe faz: a autenticação dele é um token
+   * fixo, definido por nós ao cadastrar o webhook no painel e devolvido a cada
+   * entrega no header `asaas-access-token`. Sem esta conferência a rota é uma
+   * porta destrancada — quem descobrir a URL manda um PAYMENT_RECEIVED apontando
+   * para a licença que quiser e renova de graça, com o dinheiro nunca existindo.
+   *
+   * Falha FECHADA de propósito: sem ASAAS_WEBHOOK_TOKEN no ambiente, ninguém
+   * entra. O contrário — aceitar tudo enquanto o token não estiver configurado —
+   * é exatamente o estado que este método corrige, e é o pior padrão possível,
+   * porque funciona em silêncio até o dia em que alguém abusa.
+   *
+   * Por isso o Asaas também NÃO entra em `validarSegredosProducao`: faltando a
+   * variável, só o PIX fica indisponível. Torná-la obrigatória derrubaria o boot
+   * da API inteira — e junto com ela o Stripe e a validação de todas as licenças
+   * em operação — por causa de um meio de pagamento que ainda nem é o principal.
+   */
+  private conferirTokenAsaas(tokenRecebido?: string): void {
+    const esperado = process.env.ASAAS_WEBHOOK_TOKEN
+    if (!esperado) {
+      console.error('[asaas] webhook recebido mas ASAAS_WEBHOOK_TOKEN não está configurada — recusado')
+      throw new UnauthorizedException('Webhook Asaas não configurado neste ambiente.')
     }
+    if (!tokenRecebido) throw new UnauthorizedException('Token do webhook ausente.')
 
-    if (body.event === 'PAYMENT_RECEIVED' || body.event === 'PAYMENT_CONFIRMED') {
-      const { id: transacaoId, externalReference, value, description } = body.payment
-      
-      const licencaId = externalReference
-      if (!licencaId) {
-        await this.alarmarDescarte({
-          evento:     `asaas:${body.event}`,
-          motivo:     'Pagamento Asaas sem externalReference (licencaId)',
-          referencia: transacaoId,
-          valor:      value ?? null,
-        })
-        return { msg: 'externalReference (licencaId) ausente no pagamento Asaas — ignorado' }
-      }
+    // Compara os hashes, não os textos: `timingSafeEqual` exige buffers do mesmo
+    // tamanho e estouraria com token de comprimento diferente — e esse estouro,
+    // por si só, já entregaria o tamanho do segredo a quem estivesse tentando.
+    const recebido = createHash('sha256').update(tokenRecebido).digest()
+    const correto  = createHash('sha256').update(esperado).digest()
+    if (!timingSafeEqual(recebido, correto)) {
+      console.error('[asaas] webhook recusado — token inválido')
+      throw new UnauthorizedException('Token do webhook inválido.')
+    }
+  }
 
-      const licenca = await findLicencaById(licencaId)
-      if (!licenca) {
-        await this.alarmarDescarte({
-          evento:     `asaas:${body.event}`,
-          motivo:     `Licença ${licencaId} do externalReference não existe no banco`,
-          referencia: transacaoId,
-          valor:      value ?? null,
-        })
-        return { msg: `Licença não encontrada para externalReference ${licencaId} — ignorado` }
-      }
-
-      const jaProcessado = await findPagamentoByTransacaoId(transacaoId)
-      if (jaProcessado) return { msg: 'Pagamento Asaas já processado' }
-
-      // Como o Asaas não diz diretamente a quantidade de meses neste payload simplificado,
-      // assumimos 1 mês como padrão (mensalidade), mas pode ser ajustado conforme a regra de negócio.
-      const meses = 1
-
-      const resultado = await this.processarRenovacao({
-        licenca,
-        meses,
-        valor: value,
-        transacaoId,
-        gateway: 'ASAAS',
-        origem: 'ASAAS',
-        descricao: description || `Pagamento Asaas (${body.payment.billingType})`,
+  /**
+   * Um pagamento Asaas confirmado vira renovação.
+   *
+   * Ponto único onde "o dinheiro do PIX entrou" tem consequência — chamado pelo
+   * webhook (caminho normal) e pela conciliação do polling (webhook perdido).
+   * Duas implementações disso seria garantir que um dia uma renovasse e a outra
+   * não, dependendo de qual chegasse primeiro.
+   *
+   * Nada aqui acredita no gateway além de "a cobrança X foi paga": meses e
+   * licença saem da nossa CobrancaRenovacao.
+   */
+  async confirmarCobrancaAsaas(params: {
+    gatewayCobrancaId: string
+    valorPago:         number
+    origem:            string
+  }) {
+    const cobranca = await findCobrancaByGatewayId(params.gatewayCobrancaId)
+    if (!cobranca) {
+      await this.alarmarDescarte({
+        evento:     `asaas:${params.origem}`,
+        motivo:     'Pagamento sem CobrancaRenovacao correspondente — cobrança criada fora do fluxo da plataforma, ou apagada depois',
+        referencia: params.gatewayCobrancaId,
+        valor:      params.valorPago,
       })
-
-      return { msg: 'Pagamento Asaas processado com sucesso', data: resultado }
+      return { msg: 'Cobrança não encontrada — ignorado' }
     }
 
-    return { msg: `Evento Asaas ${body.event} ignorado` }
+    // Idempotência em dois níveis: o status da própria cobrança e o id da
+    // transação no financeiro. O Asaas entrega "pelo menos uma vez", e a
+    // conciliação pode correr junto com o webhook — sem isto, a mesma entrega
+    // repetida renovaria de novo e lançaria receita duas vezes.
+    if (cobranca.status === 'PAGA') return { msg: 'Cobrança já processada' }
+    if (await findPagamentoByTransacaoId(params.gatewayCobrancaId))
+      return { msg: 'Pagamento já lançado' }
+
+    const licenca = await findLicencaById(cobranca.licencaId)
+    if (!licenca) {
+      await this.alarmarDescarte({
+        evento:     `asaas:${params.origem}`,
+        motivo:     `Licença ${cobranca.licencaId} da cobrança não existe mais no banco`,
+        referencia: params.gatewayCobrancaId,
+        valor:      params.valorPago,
+      })
+      return { msg: 'Licença não encontrada — ignorado' }
+    }
+
+    // Pagou MENOS do que foi cobrado: não renova sozinho. Pagar a mais é
+    // normal (juros/multa de atraso do próprio gateway) e passa direto; pagar
+    // a menos é anomalia, e estender a licença mesmo assim seria dar mês de
+    // graça em silêncio. Vira alarme para alguém decidir na mão.
+    const esperado = Number(cobranca.valor)
+    if (params.valorPago + 0.01 < esperado) {
+      await this.alarmarDescarte({
+        evento:     `asaas:${params.origem}`,
+        motivo:     `Valor pago (R$ ${params.valorPago.toFixed(2)}) menor que o cobrado (R$ ${esperado.toFixed(2)}) — licença NÃO renovada`,
+        referencia: params.gatewayCobrancaId,
+        valor:      params.valorPago,
+      })
+      return { msg: 'Valor pago menor que o cobrado — renovação não aplicada' }
+    }
+
+    // O valor lançado é o que ENTROU, não o que foi cobrado: o financeiro tem
+    // que refletir o extrato, e a comissão do parceiro sai sobre o real.
+    const resultado = await this.processarRenovacao({
+      licenca,
+      meses:       cobranca.meses,
+      valor:       params.valorPago,
+      transacaoId: params.gatewayCobrancaId,
+      gateway:     'ASAAS',
+      origem:      'ASAAS',
+      descricao:   `PIX Asaas — ${cobranca.meses} mês(es)`,
+    })
+
+    // SÓ AGORA a cobrança vira PAGA (invariante I2 do contrato do ERP). O app
+    // trata PAGA como "pode revalidar": na ordem inversa ele revalidaria,
+    // receberia a data velha, e quem acabou de pagar veria o sistema travado.
+    await marcarCobrancaPaga(cobranca.id, { pagamentoId: resultado.pagamentoId, pagoEm: new Date() })
+
+    return { msg: 'Pagamento Asaas processado', data: resultado }
+  }
+
+  /**
+   * Webhook do Asaas.
+   *
+   * Devolve 2xx para TUDO que não seja falha de autenticação — inclusive para
+   * evento que ignoramos. O Asaas interrompe a fila após 15 falhas seguidas, e
+   * uma fila interrompida significa cliente pagando sem a licença renovar. Erro
+   * nosso de processamento vira alarme, nunca status de erro na resposta.
+   */
+  async webhookAsaas(body: any, tokenRecebido?: string) {
+    this.conferirTokenAsaas(tokenRecebido)
+
+    if (!body || typeof body !== 'object' || !body.event)
+      throw new BadRequestException('Formato de webhook Asaas inválido.')
+
+    const evento    = String(body.event)
+    const pagamento = body.payment ?? {}
+    const idGateway = pagamento.id ? String(pagamento.id) : null
+
+    if (!idGateway) {
+      // 200 de propósito: repetir uma entrega sem id não vai melhorar nada, e
+      // insistir só derrubaria a fila de quem depende dela.
+      this.logger.warn(`[asaas] evento ${evento} sem payment.id — ignorado`)
+      return { msg: `Evento ${evento} sem identificação de cobrança — ignorado` }
+    }
+
+    if (evento === 'PAYMENT_RECEIVED' || evento === 'PAYMENT_CONFIRMED') {
+      return this.confirmarCobrancaAsaas({
+        gatewayCobrancaId: idGateway,
+        valorPago:         Number(pagamento.value ?? 0),
+        origem:            'webhook',
+      })
+    }
+
+    // Cobrança vencida sem pagamento: fecha a linha para o próximo pedido do
+    // cliente gerar um PIX novo em vez de reaproveitar um código morto.
+    if (evento === 'PAYMENT_OVERDUE') {
+      const cobranca = await findCobrancaByGatewayId(idGateway)
+      if (cobranca && cobranca.status === 'PENDENTE') {
+        await marcarCobrancaStatus(cobranca.id, 'EXPIRADA')
+        return { msg: 'Cobrança marcada como expirada' }
+      }
+      return { msg: 'Cobrança vencida sem correspondência pendente — ignorado' }
+    }
+
+    // Dinheiro SAINDO depois de já ter entrado. Não desfazemos a renovação
+    // automaticamente: a licença pode estar em uso há semanas e revogar sozinho
+    // é pior do que avisar. Mas silêncio aqui seria prejuízo invisível.
+    if (evento === 'PAYMENT_REFUNDED' || evento === 'PAYMENT_CHARGEBACK_REQUESTED' || evento === 'PAYMENT_DELETED') {
+      const cobranca = await findCobrancaByGatewayId(idGateway)
+      await this.alarmarDescarte({
+        evento:     `asaas:${evento}`,
+        motivo:     cobranca
+          ? `Pagamento revertido de uma cobrança ${cobranca.status} — a licença ${cobranca.licencaId} segue renovada e precisa de decisão manual`
+          : 'Pagamento revertido sem cobrança correspondente no banco',
+        referencia: idGateway,
+        valor:      Number(pagamento.value ?? 0) || null,
+      })
+      return { msg: `Evento ${evento} registrado para conferência manual` }
+    }
+
+    return { msg: `Evento Asaas ${evento} ignorado` }
   }
 
   // ── Helper: alarme de descarte ─────────────────────────────────────────────
@@ -633,6 +816,9 @@ export class FinanceiroService {
       console.warn('[email] falha ao enviar confirmação de renovação:', err instanceof Error ? err.message : err)
     }
 
-    return { chaveAtivacao, dataVencimento }
+    // O pagamentoId sai junto para a cobrança PIX conseguir se ligar ao
+    // lançamento que ela virou. Campo a mais na resposta; quem já consumia
+    // (webhook do Stripe) ignora sem saber que existe.
+    return { chaveAtivacao, dataVencimento, pagamentoId: pagamento.id }
   }
 }

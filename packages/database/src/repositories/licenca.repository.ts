@@ -80,6 +80,7 @@ export async function updateLicenca(id: string, dados: Partial<{
   ultimaSincronizacao:  Date
   stripeSubscriptionId: string | null
   planoPendenteId:      string | null
+  carenciaAte:          Date | null
 }>) {
   // No Prisma 7, a relação obrigatória `plano` não aceita o escalar `planoId`
   // direto no update — precisa ser via `plano: { connect }`. Convertemos aqui
@@ -122,6 +123,12 @@ export async function renovarLicencaComHistorico(id: string, dados: {
       isTrial:         false,
       ultimoPagamento: dados.ultimoPagamento,
       dataVencimento:  dados.dataVencimento,
+      // Renovar encerra a carencia, sempre. Ela e a janela em que o Stripe
+      // re-tenta um cartao que falhou; com a licenca paga, nao ha mais o que
+      // tolerar. Fica AQUI, e nao em cada chamador, porque todos os caminhos
+      // de renovacao (checkout, ciclo do Stripe, PIX e manual) passam por esta
+      // funcao — e um deles esquecer daria carencia perpetua ao cliente.
+      carenciaAte:     null,
     },
   })
 

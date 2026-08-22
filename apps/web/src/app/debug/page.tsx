@@ -11,6 +11,7 @@ import { TemaParceiros } from './_temas/TemaParceiros'
 import { TemaErpAuth } from './_temas/TemaErpAuth'
 import { TemaErpUsuario } from './_temas/TemaErpUsuario'
 import { TemaBackup } from './_temas/TemaBackup'
+import { TemaRenovacao } from './_temas/TemaRenovacao'
 
 interface UsuarioLogado {
   id:    string
@@ -53,6 +54,7 @@ const ROTAS = [
   { modulo: 'ERP — Auth',      cor: 'text-cyan-400',    rotas: ['POST /erp/auth/login', 'POST /erp/auth/primeiro-acesso'] },
   { modulo: 'ERP — Usuário',   cor: 'text-teal-400',    rotas: ['GET /erp/usuario/dados', 'POST /erp/usuario/alterar-senha', 'POST /erp/usuario/solicitar-novo-email', 'GET /erp/usuario/confirmar-email'] },
   { modulo: 'ERP — Cobrança',  cor: 'text-orange-400',  rotas: ['POST /erp/cobranca', 'GET /erp/plano/:licencaId'] },
+  { modulo: 'ERP — Renovação', cor: 'text-lime-400',    rotas: ['POST /licenca/renovacao/planos', 'POST /licenca/renovacao/cobranca', 'POST /licenca/renovacao/checkout', 'GET /licenca/renovacao/cobranca/:id'] },
   { modulo: 'ERP — Backup',    cor: 'text-emerald-400', rotas: ['GET /erp/backup/status', 'POST /erp/backup/url-upload', 'POST /erp/backup/confirmar', 'POST /erp/backup/url-download'] },
   { modulo: 'Financeiro',      cor: 'text-yellow-400',  rotas: ['POST /api/financeiro/confirmar', 'GET /api/financeiro/historico/cliente/:id', 'GET /api/financeiro/historico/licenca/:id', 'GET /api/financeiro/receita', 'POST /api/financeiro/webhook/stripe', 'POST /api/financeiro/webhook/asaas'] },
   { modulo: 'Planos',          cor: 'text-purple-400',  rotas: ['GET /api/plano', 'POST /api/plano', 'GET /api/plano/:id', 'PUT /api/plano/:id', 'PATCH /api/plano/:id/desativar', 'PATCH /api/plano/:id/reativar', 'POST /api/plano/:id/sincronizar-stripe'] },
@@ -240,6 +242,12 @@ export default function DebugPage() {
           {usuario
             ? <TemaBackup token={erpToken} />
             : <Bloqueado modulo="ERP Backup" />}
+        </Tema>
+
+        <Tema titulo={`09 — ERP Renovação · PIX e Cartão${usuario ? '' : ' · faça login primeiro'}`}>
+          {usuario
+            ? <TemaRenovacao />
+            : <Bloqueado modulo="ERP Renovação" />}
         </Tema>
 
       </div>

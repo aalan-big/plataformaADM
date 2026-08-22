@@ -134,22 +134,39 @@ function SecaoTransacoes() {
   )
 }
 
+/**
+ * O simulador de webhook Asaas foi aposentado, e o motivo é o ponto principal.
+ *
+ * Antes, esta caixa mandava `{ externalReference: licencaId }` e a rota aceitava
+ * sem autenticação nenhuma: bastava um licencaId — que todo ERP conhece, porque
+ * o /erp/validar devolve — para renovar uma licença de graça.
+ *
+ * Hoje o webhook exige o header `asaas-access-token`, que vive só no ambiente do
+ * servidor. Colocá-lo no navegador para "fazer o botão voltar a funcionar" seria
+ * reabrir exatamente o buraco que ele fechou. E o payload também mudou: a
+ * cobrança é identificada por `payment.id`, e meses e valor saem do nosso banco,
+ * nunca do corpo da requisição.
+ *
+ * Para testar renovação de verdade, use a seção 09 — ERP Renovação.
+ */
 function SecaoWebhook() {
-  const [licencaId, setLicencaId] = useState('')
-  const [valor, setValor]         = useState('')
-  const [res, setRes]             = useState<ApiResponse | null>(null)
-
   return (
-    <Secao titulo="POST /api/financeiro/webhook/asaas">
-      {inp('externalReference (licencaId)', licencaId, e => setLicencaId(e.target.value))}
-      {inp('value (valor pago)', valor, e => setValor(e.target.value))}
-      <button onClick={async () => setRes(await post('/api/financeiro/webhook/asaas', {
-        event: 'PAYMENT_RECEIVED', payment: { externalReference: licencaId, value: Number(valor), status: 'RECEIVED' }
-      }))}
-        className="w-full py-2 bg-orange-700 hover:bg-orange-600 text-white text-xs font-bold rounded-lg transition-colors">
-        Simular Webhook
-      </button>
-      <Console response={res} />
+    <Secao titulo="POST /api/financeiro/webhook/asaas — aposentado">
+      <div className="rounded-xl border border-amber-700/40 bg-amber-950/20 p-4 space-y-2">
+        <p className="text-[11px] text-amber-300 font-bold">Simulador removido de propósito</p>
+        <p className="text-[10px] text-slate-400 leading-relaxed">
+          O webhook agora exige o header <code className="text-slate-300">asaas-access-token</code>,
+          que só existe no servidor. Antes desta trava, qualquer um com um{' '}
+          <code className="text-slate-300">licencaId</code> renovava uma licença sem pagar —
+          e o ERP conhece o próprio licencaId.
+        </p>
+        <p className="text-[10px] text-slate-400 leading-relaxed">
+          Recriar o botão exigiria expor o token no navegador, ou seja, reabrir o buraco.
+          Para testar renovação ponta a ponta, use a seção{' '}
+          <strong className="text-slate-300">09 — ERP Renovação · PIX e Cartão</strong>:
+          ela gera cobrança real e a confirmação vem do gateway, como em produção.
+        </p>
+      </div>
     </Secao>
   )
 }

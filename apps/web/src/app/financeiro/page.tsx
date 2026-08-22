@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   TrendingUp, TrendingDown, DollarSign, CreditCard,
   AlertTriangle, Search, CheckCircle2, Loader2,
-  AlertCircle, RefreshCw, X, Calendar, ChevronDown,
+  AlertCircle, RefreshCw, X, Calendar, ChevronDown, QrCode,
 } from 'lucide-react'
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────────
@@ -47,6 +47,37 @@ type Inadimplente = {
     pj:    { razaoSocial: string }  | null
   }
   plano: { nome: string; precoMensal: number | string } | null
+}
+
+/**
+ * Cobrança de renovação — a INTENÇÃO de pagar, que pode nunca virar dinheiro.
+ * Por isso ela não aparece na aba de pagamentos: lá só entra o que entrou.
+ */
+type Cobranca = {
+  id:                string
+  status:            string
+  metodo:            string
+  gateway:           string
+  valor:             number | string
+  meses:             number
+  gatewayCobrancaId: string | null
+  expiraEm:          string | null
+  pagoEm:            string | null
+  criadoEm:          string
+  cliente: {
+    email: string
+    pf:    { nomeCompleto: string } | null
+    pj:    { razaoSocial: string }  | null
+  }
+  licenca: { nomeDispositivo: string | null; chaveAtivacao: string; status: string } | null
+  plano:   { nome: string } | null
+}
+
+const CORES_STATUS_COBRANCA: Record<string, string> = {
+  PAGA:      'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+  PENDENTE:  'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  EXPIRADA:  'bg-slate-500/10 text-slate-400 border-slate-500/20',
+  CANCELADA: 'bg-red-500/10 text-red-400 border-red-500/20',
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -233,7 +264,9 @@ function ModalConfirmarPagamento({ onClose, onSuccess }: { onClose: () => void; 
 
 export default function FinanceiroPage() {
   const agora = new Date()
-  const [aba,          setAba]          = useState<'pagamentos' | 'inadimplentes'>('pagamentos')
+  const [aba,          setAba]          = useState<'pagamentos' | 'inadimplentes' | 'cobrancas'>('pagamentos')
+  const [cobrancas,    setCobrancas]    = useState<Cobranca[]>([])
+  const [resumoCob,    setResumoCob]    = useState<Record<string, number>>({})
   const [resumo,       setResumo]       = useState<Resumo | null>(null)
   const [pagamentos,   setPagamentos]   = useState<Pagamento[]>([])
   const [inadimplentes, setInadimplentes] = useState<Inadimplente[]>([])
@@ -271,12 +304,22 @@ export default function FinanceiroPage() {
     setCarregando(false)
   }, [])
 
+  const carregarCobrancas = useCallback(async () => {
+    setCarregando(true)
+    const res  = await fetch('/api/financeiro/cobrancas')
+    const json = await res.json()
+    setCobrancas(json.data?.lista ?? [])
+    setResumoCob(json.data?.resumo ?? {})
+    setCarregando(false)
+  }, [])
+
   useEffect(() => { carregarResumo() }, [carregarResumo])
 
   useEffect(() => {
     if (aba === 'pagamentos')    carregarPagamentos()
     if (aba === 'inadimplentes') carregarInadimplentes()
-  }, [aba, carregarPagamentos, carregarInadimplentes])
+    if (aba === 'cobrancas')     carregarCobrancas()
+  }, [aba, carregarPagamentos, carregarInadimplentes, carregarCobrancas])
 
   useEffect(() => {
     if (aba !== 'pagamentos') return
@@ -343,7 +386,7 @@ export default function FinanceiroPage() {
 
       {/* ABAS */}
       <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-xl p-1 w-fit">
-        {([['pagamentos', 'Pagamentos', CreditCard], ['inadimplentes', 'Em Risco', AlertTriangle]] as const).map(([id, label, Icon]) => (
+        {([['pagamentos', 'Pagamentos', CreditCard], ['inadimplentes', 'Em Risco', AlertTriangle], ['cobrancas', 'Cobranças PIX', QrCode]] as const).map(([id, label, Icon]) => (
           <button key={id} onClick={() => setAba(id)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
               aba === id ? 'bg-slate-800 text-white shadow' : 'text-slate-400 hover:text-slate-200'
@@ -550,6 +593,99 @@ export default function FinanceiroPage() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ABA COBRANÇAS PIX */}
+      {aba === 'cobrancas' && (
+        <div className="space-y-4">
+          {/* Resumo por status — a taxa de conversão do PIX em uma olhada */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {(['PAGA', 'PENDENTE', 'EXPIRADA', 'CANCELADA'] as const).map(s => (
+              <div key={s} className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-3">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">{s}</p>
+                <p className="text-xl font-bold text-slate-200 mt-1">{resumoCob[s] ?? 0}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+            <div className="px-5 py-3 border-b border-slate-800 flex items-center gap-2">
+              <QrCode size={13} className="text-cyan-400" />
+              <p className="text-xs font-semibold text-slate-300">
+                Cobranças geradas pelo ERP — inclusive as que <span className="text-slate-400">não</span> viraram pagamento
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-800 text-[11px] text-slate-400 uppercase tracking-wider">
+                    <th className="text-left px-5 py-3 font-semibold">Cliente</th>
+                    <th className="text-left px-5 py-3 font-semibold">Plano / Período</th>
+                    <th className="text-left px-5 py-3 font-semibold">Valor</th>
+                    <th className="text-left px-5 py-3 font-semibold">Método</th>
+                    <th className="text-left px-5 py-3 font-semibold">Status</th>
+                    <th className="text-left px-5 py-3 font-semibold">Gerada em</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/70">
+                  {carregando && (
+                    <tr><td colSpan={6} className="text-center py-14">
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="w-6 h-6 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"/>
+                        <span className="text-slate-500 text-xs">Carregando...</span>
+                      </div>
+                    </td></tr>
+                  )}
+                  {!carregando && cobrancas.length === 0 && (
+                    <tr><td colSpan={6} className="text-center py-14">
+                      <QrCode size={28} className="text-slate-600 mx-auto mb-2"/>
+                      <p className="text-slate-500 text-sm">Nenhuma cobrança gerada ainda.</p>
+                      <p className="text-slate-600 text-xs mt-1">Aparecem aqui assim que um ERP pedir renovação.</p>
+                    </td></tr>
+                  )}
+                  {!carregando && cobrancas.map(c => (
+                    <tr key={c.id} className="hover:bg-slate-800/30 transition-colors">
+                      <td className="px-5 py-4">
+                        <p className="font-medium text-slate-200 text-[13px]">{nomeCliente(c.cliente)}</p>
+                        <p className="text-[11px] text-slate-500">{c.licenca?.nomeDispositivo ?? c.cliente.email}</p>
+                      </td>
+                      <td className="px-5 py-4">
+                        <p className="text-slate-300 text-[13px]">{c.plano?.nome ?? '—'}</p>
+                        <p className="text-[11px] text-slate-500">{c.meses} {c.meses === 1 ? 'mês' : 'meses'}</p>
+                      </td>
+                      <td className="px-5 py-4">
+                        <p className="text-slate-200 text-[13px] font-medium">{formatarReais(c.valor)}</p>
+                      </td>
+                      <td className="px-5 py-4">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                          c.metodo === 'PIX'
+                            ? 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20'
+                            : 'text-violet-400 bg-violet-500/10 border-violet-500/20'
+                        }`}>
+                          {c.metodo}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                          CORES_STATUS_COBRANCA[c.status] ?? 'bg-slate-500/10 text-slate-400 border-slate-500/20'
+                        }`}>
+                          {c.status}
+                        </span>
+                        {c.pagoEm && <p className="text-[11px] text-slate-500 mt-1">{formatarData(c.pagoEm)}</p>}
+                      </td>
+                      <td className="px-5 py-4">
+                        <p className="text-slate-400 text-[13px]">{formatarData(c.criadoEm)}</p>
+                        {c.status === 'PENDENTE' && c.expiraEm && (
+                          <p className="text-[11px] text-slate-500">expira {formatarData(c.expiraEm)}</p>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 

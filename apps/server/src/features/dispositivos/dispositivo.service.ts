@@ -147,31 +147,68 @@ export class DispositivoService {
     }
   }
 
+  /**
+   * A licença venceu, mas o cartão está em retentativa e o acesso continua?
+   *
+   * `carenciaAte` só é preenchido quando o Stripe avisa que a cobrança falhou.
+   * Quem paga por PIX nunca tem esse campo — PIX não falha sozinho, então
+   * trava no vencimento. A janela é escrita uma única vez por falha e some na
+   * renovação ou no cancelamento da assinatura.
+   */
+  private carenciaVigente(licenca: { carenciaAte?: Date | null }): boolean {
+    return !!licenca.carenciaAte && licenca.carenciaAte > new Date()
+  }
+
   private assinarToken(params: {
     licencaId:       string
     hwid:            string | null
     plano?:          string | null
     limite:          number
     dataVencimento?: Date | null
-  }): { token: string; ultimaSincronizacao: Date; gracePeriodDias: number; proximaValidacaoEm: Date } {
+    carenciaAte?:    Date | null
+  }): {
+    token: string
+    ultimaSincronizacao: Date
+    gracePeriodDias: number
+    proximaValidacaoEm: Date
+    emCarencia: boolean
+    dataLimiteCarencia: Date | null
+    diasRestantesCarencia: number | null
+  } {
     const agora = new Date()
 
-    // expiresIn = min(7 dias, segundos restantes até vencimento)
+    const emCarencia = !!params.carenciaAte && params.carenciaAte > agora
+
+    /**
+     * Até quando este token pode valer.
+     *
+     * Na carência é ela que manda, e não o vencimento — que já passou. Sem esta
+     * troca o cálculo abaixo cairia no piso de 60 segundos (restantes negativos)
+     * e o ERP revalidaria de minuto em minuto durante a semana inteira,
+     * martelando a API justamente no cliente com problema de pagamento.
+     */
+    const horizonte = emCarencia ? params.carenciaAte! : (params.dataVencimento ?? null)
+
+    // expiresIn = min(7 dias, segundos restantes até o horizonte)
     const maxExpS = GRACE_PERIOD_DIAS * 24 * 60 * 60
     let expiresIn = maxExpS
-    if (params.dataVencimento) {
-      const restantesS = Math.floor((params.dataVencimento.getTime() - agora.getTime()) / 1000)
+    if (horizonte) {
+      const restantesS = Math.floor((horizonte.getTime() - agora.getTime()) / 1000)
       expiresIn = Math.min(maxExpS, Math.max(60, restantesS))
     }
 
-    // ERP deve revalidar em: min(24h, 1h antes do vencimento da licença)
+    // ERP deve revalidar em: min(24h, 1h antes do horizonte)
     // Isso garante que o JWT nunca expira enquanto o ERP está rodando
     let proximaValidacaoEm = new Date(agora.getTime() + 24 * 60 * 60 * 1000)
-    if (params.dataVencimento) {
-      const umHoraAntes = new Date(params.dataVencimento.getTime() - 60 * 60 * 1000)
+    if (horizonte) {
+      const umHoraAntes = new Date(horizonte.getTime() - 60 * 60 * 1000)
       if (umHoraAntes < proximaValidacaoEm) proximaValidacaoEm = umHoraAntes
     }
     if (proximaValidacaoEm <= agora) proximaValidacaoEm = new Date(agora.getTime() + 60_000)
+
+    const diasRestantesCarencia = emCarencia
+      ? Math.max(0, Math.ceil((params.carenciaAte!.getTime() - agora.getTime()) / 86_400_000))
+      : null
 
     const token = jwt.sign(
       {
@@ -179,16 +216,32 @@ export class DispositivoService {
         hwid:                params.hwid,
         plano:               params.plano,
         limite:              params.limite,
+        // O vencimento REAL continua aqui, não o limite da carência: o cliente
+        // precisa saber desde quando está devendo, e o ERP não pode confundir
+        // "tolerado até" com "pago até".
         dataVencimento:      params.dataVencimento?.toISOString(),
         ultimaSincronizacao: agora.toISOString(),
         gracePeriodDias:     GRACE_PERIOD_DIAS,
         proximaValidacaoEm:  proximaValidacaoEm.toISOString(),
+        // Dentro do token assinado, e não só no corpo da resposta: é um campo
+        // que LIBERA acesso, e todo campo que libera acesso viaja assinado —
+        // senão ele seria o único elo da corrente que dá para forjar no caminho.
+        emCarencia,
+        dataLimiteCarencia:  emCarencia ? params.carenciaAte!.toISOString() : null,
       },
       RSA_PRIVATE_KEY,
       { algorithm: 'RS256', expiresIn },
     )
 
-    return { token, ultimaSincronizacao: agora, gracePeriodDias: GRACE_PERIOD_DIAS, proximaValidacaoEm }
+    return {
+      token,
+      ultimaSincronizacao: agora,
+      gracePeriodDias:     GRACE_PERIOD_DIAS,
+      proximaValidacaoEm,
+      emCarencia,
+      dataLimiteCarencia:  emCarencia ? params.carenciaAte! : null,
+      diasRestantesCarencia,
+    }
   }
 
   getPublicKey(): string {
@@ -479,10 +532,16 @@ export class DispositivoService {
     const licenca = await findLicencaByChave(dados.chave)
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
 
-    if (licenca.status !== 'ATIVA')
+    // A carência precisa valer AQUI também, não só no /validar. São portas
+    // diferentes para a mesma casa: liberar a validação e barrar a conexão
+    // deixaria o cliente com um token válido e o sistema sem abrir — o pior
+    // dos dois mundos, e difícil de diagnosticar do lado dele.
+    const emCarencia = this.carenciaVigente(licenca)
+
+    if (licenca.status !== 'ATIVA' && !(licenca.status === 'VENCIDA' && emCarencia))
       throw new BadRequestException(`Licença ${licenca.status.toLowerCase()}. Acesso negado.`)
 
-    if (licenca.dataVencimento && licenca.dataVencimento < new Date()) {
+    if (licenca.dataVencimento && licenca.dataVencimento < new Date() && !emCarencia) {
       await updateLicenca(licenca.id, { status: 'VENCIDA' })
       throw new BadRequestException('Licença vencida.')
     }
@@ -495,6 +554,7 @@ export class DispositivoService {
       plano:          licenca.plano?.nome,
       limite,
       dataVencimento: licenca.dataVencimento,
+      carenciaAte:    licenca.carenciaAte,
     })
 
     // Sem HWID: só valida a licença e devolve o JWT com o limite.
@@ -591,7 +651,11 @@ export class DispositivoService {
     // Validação em Tempo Real: checa se a licença mãe foi bloqueada/suspensa
     const licenca = await findLicencaById(dados.licencaId)
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
-    if (licenca.status !== 'ATIVA') {
+
+    // Terceira porta. Sem a carência aqui, o cliente com cartão recusado
+    // conectaria e seria derrubado no primeiro heartbeat — o sistema caindo
+    // sozinho no meio do expediente, sem explicação na tela.
+    if (licenca.status !== 'ATIVA' && !(licenca.status === 'VENCIDA' && this.carenciaVigente(licenca))) {
       throw new BadRequestException(`Licença ${licenca.status.toLowerCase()}. Conexão encerrada pelo servidor.`)
     }
 
@@ -620,10 +684,28 @@ export class DispositivoService {
     if (motivoRejeicao) return { valida: false, motivo: motivoRejeicao, status: licenca.status as string }
 
     // Verificar vencimento
-    const vencida = licenca.status === 'VENCIDA' || (licenca.dataVencimento && licenca.dataVencimento < new Date())
+    const vencida    = licenca.status === 'VENCIDA' || (licenca.dataVencimento && licenca.dataVencimento < new Date())
+    const emCarencia = this.carenciaVigente(licenca)
+
     if (vencida) {
       if (licenca.status !== 'VENCIDA') await updateLicenca(licenca.id, { status: 'VENCIDA' })
-      return { valida: false, motivo: 'Licença vencida.', status: 'VENCIDA', dataVencimento: licenca.dataVencimento }
+
+      // Sem carência, trava aqui — é o caso de quem paga por PIX e de quem
+      // nunca teve cartão. Com carência, segue adiante como válida: o Stripe
+      // ainda está tentando cobrar, e derrubar a loja de quem tem um cartão
+      // recusado (e talvez nem saiba) seria punir antes de avisar.
+      if (!emCarencia) {
+        return {
+          valida:         false,
+          motivo:         'Licença vencida.',
+          status:         'VENCIDA',
+          dataVencimento: licenca.dataVencimento,
+          // Campos novos, aditivos: o ERP vencido precisa saber que é trial e
+          // qual é a licença para conseguir abrir a tela de renovação.
+          licencaId:      licenca.id,
+          isTrial:        licenca.isTrial,
+        }
+      }
     }
 
     // Primeira ativação: AGUARDANDO → ATIVA
@@ -642,13 +724,16 @@ export class DispositivoService {
       plano:          licenca.plano?.nome,
       limite,
       dataVencimento: licenca.dataVencimento,
+      carenciaAte:    licenca.carenciaAte,
     })
 
+    // `assinado` já traz emCarencia, dataLimiteCarencia e diasRestantesCarencia.
     return {
       valida:         true,
       licencaId:      licenca.id,
       status:         statusFinal,
       dataVencimento: licenca.dataVencimento,
+      isTrial:        licenca.isTrial,
       ...assinado,
     }
   }

@@ -50,3 +50,17 @@ export async function findClienteByEmail(email: string, excluirId?: string) {
     },
   })
 }
+
+/**
+ * Guarda o id do cliente dentro do Asaas depois da primeira cobrança PIX.
+ *
+ * Sem isto, cada PIX criaria um cadastro novo lá: o mesmo cliente apareceria
+ * várias vezes no painel do gateway e o histórico de pagamentos dele nasceria
+ * partido, com uma parte em cada cadastro.
+ */
+export async function salvarAsaasCustomerId(clienteId: string, asaasCustomerId: string) {
+  return prisma.cliente.update({
+    where: { id: clienteId },
+    data:  { asaasCustomerId },
+  })
+}

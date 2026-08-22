@@ -47,6 +47,12 @@ export class FinanceiroController {
     return { data: await this.financeiroService.pagamentos({ ano, mes, gateway, q }) }
   }
 
+  /** Cobranças de renovação — inclui PIX gerado e não pago. */
+  @Get('cobrancas')
+  async cobrancas(@Query('status') status?: string, @Query('limite') limite?: string) {
+    return { data: await this.financeiroService.cobrancas({ status, limite }) }
+  }
+
   // ── Receita ───────────────────────────────────────────────────────────────
 
   @Get('receita')
@@ -114,7 +120,10 @@ export class FinanceiroController {
 
   @Public()
   @Post('webhook/asaas')
-  async webhookAsaas(@Body() body: unknown) {
-    return this.financeiroService.webhookAsaas(body)
+  async webhookAsaas(
+    @Body() body: unknown,
+    @Headers('asaas-access-token') token?: string,
+  ) {
+    return this.financeiroService.webhookAsaas(body, token)
   }
 }

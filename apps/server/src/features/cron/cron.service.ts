@@ -33,6 +33,7 @@ import {
   marcarBackupFalhou,
   podarEventosDeBackup,
   contarEventosAntigosDeBackup,
+  expirarCobrancasVencidas,
 } from '@startbig/database'
 import { EmailService } from '../../core/email/email.service'
 import { StorageService, TTL_UPLOAD_SEGUNDOS } from '../../common/storage/storage.service'
@@ -108,6 +109,21 @@ export class CronService {
       }
     } catch (err) {
       this.logger.error('Erro ao marcar licenças vencidas:', err)
+    }
+
+    // 1b. Fechar cobranças PIX que passaram do prazo
+    //
+    // Higiene, não regra: quem decide se uma cobrança serve é o `expiraEm`, e a
+    // busca de idempotência já ignora as vencidas. Sem esta varredura, porém, o
+    // painel ficaria cheio de PENDENTE eterno e "PIX gerado e não pago" deixaria
+    // de ser um número confiável — que é justamente o dado de venda perdida.
+    try {
+      const fechadas = await expirarCobrancasVencidas()
+      if (fechadas.count > 0) {
+        this.logger.log(`[Cobrança] ${fechadas.count} cobrança(s) PIX marcadas como EXPIRADA.`)
+      }
+    } catch (err) {
+      this.logger.error('Erro ao expirar cobranças vencidas:', err)
     }
 
     // 2. Enviar alertas de inadimplência

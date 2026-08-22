@@ -80,6 +80,7 @@ model Plano {
   criadoEm                 DateTime  @default(now())
 
   licencas                 Licenca[]
+  cobrancas                CobrancaRenovacao[]
 
   @@map("planos")
 }
@@ -189,6 +190,10 @@ model Cliente {
   emailPendente      String?
   tokenEmail         String?
   tokenEmailExpiraEm DateTime?
+  /// Id deste cliente dentro do Asaas, criado na primeira cobranca PIX e
+  /// reaproveitado nas seguintes. Sem guardar, cada PIX criaria um cadastro novo
+  /// la e o historico do cliente ficaria espalhado em N clientes soltos.
+  asaasCustomerId    String?   @unique
 
   pf              ClientePF?
   pj              ClientePJ?
@@ -198,6 +203,7 @@ model Cliente {
   transacoes      TransacaoHistorico[]
   comissoes       ComissaoParceiro[]
   backups         Backup[]
+  cobrancas       CobrancaRenovacao[]
 
   usuario         Usuario   @relation(fields: [usuarioId],  references: [id])
   parceiroObj     Parceiro? @relation(fields: [parceiroId], references: [id])
@@ -279,6 +285,11 @@ model Licenca {
   ultimoHeartbeat     DateTime?
   ultimaSincronizacao DateTime?
   stripeSubscriptionId String?
+  /// Ate quando a licenca continua valendo mesmo vencida. Preenchido SO quando o
+  /// cartao falha (invoice.payment_failed), enquanto o Stripe re-tenta a cobranca.
+  /// Quem paga por PIX nunca tem isto preenchido e trava no vencimento — a
+  /// carencia e da falha do meio de pagamento, nao um favor ao cliente.
+  carenciaAte         DateTime?
   planoPendenteId     String?       // plano agendado p/ valer no fim do ciclo (downgrade)
   criadoEm            DateTime      @default(now())
   dataAtivacao        DateTime?
@@ -293,6 +304,7 @@ model Licenca {
   sessoes             LicencaSessao[]
   comissoes           ComissaoParceiro[]
   backups             Backup[]
+  cobrancas           CobrancaRenovacao[]
 
   @@index([clienteId])
   @@index([status])
@@ -334,6 +346,7 @@ model Pagamento {
   cliente      Cliente               @relation(fields: [clienteId], references: [id])
   transacoes   TransacaoHistorico[]
   comissao     ComissaoParceiro?
+  cobranca     CobrancaRenovacao?
 
   @@index([licencaId])
   @@index([clienteId])
@@ -475,4 +488,57 @@ model Backup {
   @@index([clienteId])
   @@index([status, emitidoEm])
   @@map("backups")
+}
+
+// ── CobrancaRenovacao ─────────────────────────────────────────────────────────
+/// Cobrança de renovação criada por nós ANTES de o cliente pagar.
+///
+/// Existe para que o webhook do gateway nunca precise acreditar no payload. O
+/// `externalReference` mandado ao Asaas é o id desta linha; quando o pagamento
+/// cai, meses e valor são lidos DAQUI — do nosso banco — e não do corpo da
+/// requisição. Sem isso, quem forjasse um webhook escolheria também quantos
+/// meses ganhar, e a assinatura do webhook viraria a única defesa.
+///
+/// Serve ainda como trava de idempotência: dois cliques no botão de pagar
+/// reaproveitam a mesma linha PENDENTE em vez de abrir dois PIX para a mesma
+/// licença — e como registro de PIX gerado e não pago, que é dado de venda.
+model CobrancaRenovacao {
+  id                String    @id @default(uuid())
+  licencaId         String
+  clienteId         String
+  /// Plano vigente no momento da cobrança, guardado explicitamente: a licença
+  /// pode trocar de plano depois, e o valor cobrado precisa continuar
+  /// explicável meses mais tarde, sem depender do estado atual.
+  planoId           String
+  meses             Int
+  /// Em reais, como todo o resto do sistema (Decimal 10,2). A conversão para os
+  /// centavos que o ERP espera acontece só na borda do endpoint.
+  valor             Decimal   @db.Decimal(10, 2)
+  gateway           String                          // ASAAS | STRIPE
+  metodo            String                          // PIX | CARTAO
+  status            String    @default("PENDENTE")  // PENDENTE | PAGA | EXPIRADA | CANCELADA
+  /// Id da cobrança no gateway (`pay_...` no Asaas). Único de propósito: é a
+  /// chave de idempotência do webhook — a mesma entrega, reprocessada, não pode
+  /// renovar duas vezes.
+  gatewayCobrancaId String?   @unique
+  copiaECola        String?
+  qrCodeBase64      String?
+  urlCheckout       String?
+  expiraEm          DateTime?
+  pagoEm            DateTime?
+  /// Preenchido quando a cobrança vira dinheiro no financeiro. Une a intenção
+  /// de pagar ao pagamento de fato — sem isso não dá para auditar quanto do que
+  /// foi gerado realmente converteu.
+  pagamentoId       String?   @unique
+  criadoEm          DateTime  @default(now())
+  atualizadoEm      DateTime  @updatedAt
+
+  licenca           Licenca    @relation(fields: [licencaId],   references: [id], onDelete: Cascade)
+  cliente           Cliente    @relation(fields: [clienteId],   references: [id], onDelete: Cascade)
+  plano             Plano      @relation(fields: [planoId],     references: [id])
+  pagamento         Pagamento? @relation(fields: [pagamentoId], references: [id])
+
+  @@index([licencaId, status])
+  @@index([status, expiraEm])
+  @@map("cobrancas_renovacao")
 }
