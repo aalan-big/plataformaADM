@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { AtivarNotificacoes } from '@/components/notificacao/AtivarNotificacoes'
 import {
   TrendingUp, TrendingDown, DollarSign, CreditCard,
   AlertTriangle, Search, CheckCircle2, Loader2,
@@ -383,6 +384,9 @@ export default function FinanceiroPage() {
           </div>
         </div>
       </div>
+
+      {/* Avisos de pagamento no celular — some sozinho quando não há o que oferecer */}
+      <AtivarNotificacoes />
 
       {/* ABAS */}
       <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-xl p-1 w-fit">

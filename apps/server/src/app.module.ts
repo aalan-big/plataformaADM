@@ -31,6 +31,7 @@ import { BackupModule } from './features/backup/backup.module'
 import { RenovacaoModule } from './features/renovacao/renovacao.module'
 import { StripeModule } from './common/stripe/stripe.module'
 import { AsaasModule } from './common/asaas/asaas.module'
+import { NotificacaoModule } from './common/notificacao/notificacao.module'
 import { StorageModule } from './common/storage/storage.module'
 import { EmailModule } from './core/email/email.module'
 import { AuthGuard } from './core/guards/auth.guard'
@@ -45,6 +46,7 @@ import { RolesGuard } from './core/guards/roles.guard'
     }]),
     StripeModule,
     AsaasModule,
+    NotificacaoModule,
     StorageModule,
     EmailModule,
     AuthModule,

@@ -48,6 +48,20 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    /**
+     * Além dos estáticos do Next, ficam de fora os arquivos do PWA.
+     *
+     * Eles NÃO são páginas e não podem cair no redirecionamento para /login:
+     *  - `sw.js` é buscado pelo navegador, não pela aba. Redirecionado, o
+     *    service worker não registra e não existe notificação nenhuma.
+     *  - `manifest.webmanifest` é lido antes de haver sessão; sem ele o iPhone
+     *    não oferece "Adicionar à Tela de Início", e sem instalar não há push.
+     *  - `apple-icon` e `icon` são pedidos pelo navegador em contextos onde
+     *    cookie nenhum acompanha.
+     *
+     * O sintoma de esquecer qualquer um deles é cruel: nada quebra visivelmente,
+     * a notificação simplesmente nunca chega.
+     */
+    '/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw\\.js|apple-icon|icon|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

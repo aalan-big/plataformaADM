@@ -26,6 +26,7 @@
     "resend": "^6.12.4",
     "rxjs": "*",
     "stripe": "*",
+    "web-push": "^3.6.7",
     "zod": "*"
   },
   "devDependencies": {
@@ -35,6 +36,7 @@
     "@types/jsonwebtoken": "*",
     "@types/node": "*",
     "@types/nodemailer": "*",
+    "@types/web-push": "^3.6.4",
     "nodemon": "^3.0.0",
     "ts-node": "^10.9.2",
     "tsx": "^4.0.0",

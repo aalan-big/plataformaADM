@@ -44,6 +44,7 @@ import { confirmarPagamentoSchema, gerarCobrancaSchema } from '@startbig/schemas
 import { EmailService } from '../../core/email/email.service'
 import { StripeService } from '../../common/stripe/stripe.service'
 import { ParceiroService } from '../parceiro/parceiro.service'
+import { NotificacaoService } from '../../common/notificacao/notificacao.service'
 import { montarOpcoes } from '../plano/plano.precos'
 
 /**
@@ -53,6 +54,18 @@ import { montarOpcoes } from '../plano/plano.precos'
  */
 const CARENCIA_CARTAO_DIAS = 7
 
+/**
+ * Como cada gateway aparece na notificação do celular.
+ *
+ * O nome interno (STRIPE, ASAAS) não diz nada para quem lê a tela de bloqueio;
+ * o que a pessoa reconhece é o MEIO de pagamento, não o fornecedor.
+ */
+const NOME_DO_GATEWAY: Record<string, string> = {
+  STRIPE: 'Cartão',
+  ASAAS:  'PIX',
+  MANUAL: 'Manual',
+}
+
 @Injectable()
 export class FinanceiroService {
   private readonly logger = new Logger(FinanceiroService.name)
@@ -61,6 +74,7 @@ export class FinanceiroService {
     private readonly stripeService:   StripeService,
     private readonly emailService:    EmailService,
     private readonly parceiroService: ParceiroService,
+    private readonly notificacao:     NotificacaoService,
   ) {}
 
   // ── Dashboard ─────────────────────────────────────────────────────────────
@@ -282,6 +296,12 @@ export class FinanceiroService {
       id: pagamento.id, clienteId: licenca.clienteId, licencaId: dados.licencaId,
       valor: dados.valor, meses: dados.meses,
     })
+
+    // Pagamento manual também notifica: para quem olha o celular, dinheiro que
+    // entrou é dinheiro que entrou — a origem não muda o fato. Sem isto ele
+    // seria o único caminho de pagamento silencioso, e a ausência de aviso
+    // pareceria falha do sistema em vez de decisão.
+    await this.notificacao.notificarPagamento({ valor: dados.valor, metodo: NOME_DO_GATEWAY.MANUAL })
 
     let emailEnviado = false
     try {
@@ -815,6 +835,14 @@ export class FinanceiroService {
     } catch (err) {
       console.warn('[email] falha ao enviar confirmação de renovação:', err instanceof Error ? err.message : err)
     }
+
+    // Avisa o celular do admin. Vem DEPOIS de tudo que importa já estar
+    // gravado, e o serviço nunca propaga erro: notificação que falha não pode
+    // desfazer uma renovação que já aconteceu e um cliente que já foi liberado.
+    await this.notificacao.notificarPagamento({
+      valor,
+      metodo: NOME_DO_GATEWAY[gateway] ?? gateway,
+    })
 
     // O pagamentoId sai junto para a cobrança PIX conseguir se ligar ao
     // lançamento que ela virou. Campo a mais na resposta; quem já consumia

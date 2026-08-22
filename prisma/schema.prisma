@@ -173,6 +173,7 @@ model Usuario {
 
   clientes     Cliente[]
   logs         Log[]
+  inscricoesPush InscricaoPush[]
 
   @@map("usuarios")
 }
@@ -541,4 +542,42 @@ model CobrancaRenovacao {
   @@index([licencaId, status])
   @@index([status, expiraEm])
   @@map("cobrancas_renovacao")
+}
+
+// ── InscricaoPush ─────────────────────────────────────────────────────────────
+/// Um aparelho autorizado a receber notificação push do painel.
+///
+/// Uma linha por DISPOSITIVO, não por pessoa: o mesmo admin pode ter o celular
+/// e o desktop inscritos, e cada um tem seu próprio endpoint no serviço de push
+/// do fabricante (Apple, Google). Desinscrever o celular não pode calar o resto.
+///
+/// Guardar no banco, e não em memória, é o que faz a inscrição sobreviver a um
+/// `pm2 restart` — sem isso, todo deploy silenciaria as notificações até alguém
+/// reabrir o painel em cada aparelho, e ninguém perceberia que parou.
+model InscricaoPush {
+  id             String    @id @default(uuid())
+  /// URL que o navegador nos deu para entregar a mensagem. Única: é a
+  /// identidade do aparelho, e reinscrever o mesmo device tem que atualizar
+  /// a linha existente em vez de criar uma segunda que duplicaria o aviso.
+  endpoint       String    @unique
+  /// Chaves de criptografia do aparelho. A mensagem viaja cifrada de ponta a
+  /// ponta — nem a Apple nem o Google conseguem ler o valor do pagamento.
+  p256dh         String
+  auth           String
+  usuarioId      String?
+  /// Rótulo legível para a tela de gerenciamento ("iPhone", "Chrome no
+  /// Windows"). Sem isto, revogar um aparelho perdido vira adivinhação.
+  descricao      String?
+  criadoEm       DateTime  @default(now())
+  ultimoEnvioEm  DateTime?
+  /// Entregas seguidas recusadas. O serviço de push responde 404/410 quando o
+  /// aparelho desinstalou o app ou revogou a permissão; nesse caso a linha é
+  /// apagada na hora. Este contador cobre a falha intermitente, que não deve
+  /// apagar nada mas também não pode ficar sendo tentada para sempre.
+  falhasSeguidas Int       @default(0)
+
+  usuario        Usuario?  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([usuarioId])
+  @@map("inscricoes_push")
 }
