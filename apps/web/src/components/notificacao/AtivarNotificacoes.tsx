@@ -64,7 +64,33 @@ export function AtivarNotificacoes() {
     try {
       const registro = await navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' })
       const atual    = await registro.pushManager.getSubscription()
-      setEstado(atual ? 'ligado' : 'desligado')
+
+      if (!atual) { setEstado('desligado'); return }
+
+      /**
+       * Ter inscrição no navegador NÃO significa que o servidor a conhece.
+       *
+       * O navegador cria a inscrição antes de a gente conseguir gravá-la, então
+       * qualquer falha na gravação deixa os dois lados discordando — e o lado
+       * que o usuário vê é o otimista. O resultado é um card verde dizendo
+       * "ligado" e nenhuma notificação chegando nunca, sem erro em lugar nenhum.
+       *
+       * Reenviar aqui resolve os dois casos de uma vez: a gravação é um upsert,
+       * então é inofensiva quando o servidor já tem, e conserta sozinha quando
+       * não tem. O estado só fica "ligado" depois que o servidor confirma.
+       */
+      const res = await fetch('/api/notificacao/inscrever', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(atual.toJSON()),
+      })
+
+      if (res.ok) {
+        setEstado('ligado')
+      } else {
+        setEstado('desligado')
+        setAviso('Este aparelho tinha uma inscrição que o servidor não reconhece. Ative novamente.')
+      }
     } catch {
       setEstado('indisponivel')
     }
@@ -123,12 +149,32 @@ export function AtivarNotificacoes() {
     }
   }
 
+  /**
+   * Dispara uma notificação de teste.
+   *
+   * O resultado precisa distinguir três desfechos, porque eles têm causas
+   * completamente diferentes: o servidor recusou, o servidor enviou para
+   * ninguém, ou enviou de verdade. Uma mensagem única de "enviado" esconderia
+   * as duas primeiras — e o teste existe justamente para revelar falha, não
+   * para dizer que está tudo bem.
+   */
   async function testar() {
     setOcupado(true); setAviso('')
     try {
       const res  = await fetch('/api/notificacao/teste', { method: 'POST' })
-      const json = await res.json()
-      setAviso(json.msg ?? 'Teste enviado.')
+      const json = await res.json().catch(() => null)
+
+      if (!res.ok) {
+        setAviso(`O servidor recusou o teste (${res.status}): ${json?.message ?? 'sem detalhe'}`)
+        return
+      }
+
+      const enviados = json?.data?.enviados ?? 0
+      setAviso(enviados > 0
+        ? `Enviada para ${enviados} aparelho(s). Se não apareceu, o sistema bloqueou — confira o "Não perturbe" e as notificações do navegador.`
+        : 'Nenhum aparelho recebeu. A inscrição deste dispositivo pode ter expirado — desative e ative de novo.')
+    } catch {
+      setAviso('Não foi possível falar com o servidor.')
     } finally {
       setOcupado(false)
     }
