@@ -4,6 +4,7 @@ const includeAll = {
   pf: true,
   pj: true,
   enderecos: true,
+  configuracaoFiscal: true,
 }
 
 export async function findAllClientes() {

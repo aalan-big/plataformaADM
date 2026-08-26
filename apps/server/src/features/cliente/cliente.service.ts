@@ -319,4 +319,33 @@ export class ClienteService {
       })
     }
   }
+
+  async salvarConfiguracaoFiscal(clienteId: string, body: any) {
+    const { cnpj, razaoSocial, inscricaoEstadual, ambiente, focusEmpresaToken } = body
+    if (!cnpj || !razaoSocial) {
+      throw new BadRequestException('CNPJ e Razão Social são obrigatórios.')
+    }
+
+    const cnpjLimpo = cnpj.replace(/\D/g, '')
+
+    return prisma.empresaFiscalConfig.upsert({
+      where: { clienteId },
+      update: {
+        cnpj: cnpjLimpo,
+        razaoSocial,
+        inscricaoEstadual: inscricaoEstadual || null,
+        ambiente: Number(ambiente) || 2,
+        focusEmpresaToken: focusEmpresaToken || null,
+      },
+      create: {
+        clienteId,
+        cnpj: cnpjLimpo,
+        razaoSocial,
+        inscricaoEstadual: inscricaoEstadual || null,
+        ambiente: Number(ambiente) || 2,
+        focusEmpresaToken: focusEmpresaToken || null,
+        certificadoStatus: 'AUSENTE'
+      }
+    })
+  }
 }

@@ -205,6 +205,7 @@ model Cliente {
   comissoes       ComissaoParceiro[]
   backups         Backup[]
   cobrancas       CobrancaRenovacao[]
+  configuracaoFiscal EmpresaFiscalConfig?
 
   usuario         Usuario   @relation(fields: [usuarioId],  references: [id])
   parceiroObj     Parceiro? @relation(fields: [parceiroId], references: [id])
@@ -581,3 +582,28 @@ model InscricaoPush {
   @@index([usuarioId])
   @@map("inscricoes_push")
 }
+
+// ── EmpresaFiscalConfig ──────────────────────────────────────────────────────
+model EmpresaFiscalConfig {
+  id                    String    @id @default(uuid())
+  clienteId             String    @unique
+  cnpj                  String    @unique
+  razaoSocial           String
+  inscricaoEstadual     String?
+  ambiente              Int       @default(2) // 1 = Produção, 2 = Homologação
+  
+  certificadoNome       String?
+  certificadoVencimento DateTime?
+  certificadoStatus     String    @default("ATIVO") // ATIVO | VENCIDO | AUSENTE
+
+  focusEmpresaId        String?   // ID ou código identificador da empresa na Focus NFe
+  focusEmpresaToken     String?   // Token gerado pela Focus exclusivo para este emitente
+  
+  criadoEm              DateTime  @default(now())
+  atualizadoEm          DateTime  @updatedAt
+
+  cliente               Cliente   @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@map("empresas_fiscal_config")
+}
+

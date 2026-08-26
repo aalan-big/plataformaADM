@@ -59,6 +59,11 @@ export class ClienteController {
     return this.clienteService.definirSenha(id, body)
   }
 
+  @Patch(':id/configuracao-fiscal')
+  async configurarFiscal(@Param('id') id: string, @Body() body: any) {
+    return this.clienteService.salvarConfiguracaoFiscal(id, body)
+  }
+
   @Delete('remover-debug')
   async removerDebug(@Body() body: { ids?: string[] }) {
     return this.clienteService.removerClientesDebug(body?.ids ?? [])

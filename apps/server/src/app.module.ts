@@ -33,6 +33,8 @@ import { StripeModule } from './common/stripe/stripe.module'
 import { AsaasModule } from './common/asaas/asaas.module'
 import { NotificacaoModule } from './common/notificacao/notificacao.module'
 import { StorageModule } from './common/storage/storage.module'
+import { FocusNfeModule } from './common/focus-nfe/focus-nfe.module'
+import { FiscalModule } from './features/fiscal/fiscal.module'
 import { EmailModule } from './core/email/email.module'
 import { AuthGuard } from './core/guards/auth.guard'
 import { RolesGuard } from './core/guards/roles.guard'
@@ -48,6 +50,7 @@ import { RolesGuard } from './core/guards/roles.guard'
     AsaasModule,
     NotificacaoModule,
     StorageModule,
+    FocusNfeModule,
     EmailModule,
     AuthModule,
     ClienteModule,
@@ -61,6 +64,7 @@ import { RolesGuard } from './core/guards/roles.guard'
     ErpModule,
     BackupModule,
     RenovacaoModule,
+    FiscalModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

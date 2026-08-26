@@ -196,7 +196,7 @@ No painel Asaas de **produção** → Integrações → Webhooks → novo webhoo
 | URL | `https://api.startbig.com.br/financeiro/webhook/asaas` |
 | E-mail para erros | um e-mail que você lê |
 | Token de autenticação | **exatamente** o mesmo do `.env` |
-| Eventos | os de cobrança (`PAYMENT_RECEIVED`, `PAYMENT_CONFIRMED`, `PAYMENT_OVERDUE`, `PAYMENT_REFUNDED`) |
+| Eventos | os de cobrança tratados em `webhookAsaas`: `PAYMENT_RECEIVED`, `PAYMENT_CONFIRMED` (renovam), `PAYMENT_OVERDUE`, `PAYMENT_REFUNDED`, `PAYMENT_CHARGEBACK_REQUESTED`, `PAYMENT_DELETED` (só alarmam). Os demais a API ignora — marcar é entrega à toa. |
 
 Se as duas senhas não baterem caractere por caractere, o sintoma é 401 em toda
 entrega — e a fila morre em 15 tentativas.

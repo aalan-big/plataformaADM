@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   X, Pencil, PowerOff, AlertCircle,
   Monitor, CreditCard, Loader2, Unlock, Lock, Trash2,
-  KeyRound, Copy, ExternalLink, RefreshCw, History, AlertTriangle,
+  KeyRound, Copy, ExternalLink, RefreshCw, History, AlertTriangle, Save
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -48,6 +48,18 @@ export type ClienteCompleto = {
     cidade:      string
     estado:      string
   }[]
+  configuracaoFiscal?: {
+    id:                    string
+    cnpj:                  string
+    razaoSocial:           string
+    inscricaoEstadual?:    string | null
+    ambiente:              number
+    focusEmpresaId?:       string | null
+    focusEmpresaToken?:    string | null
+    certificadoNome?:      string | null
+    certificadoVencimento?:string | null
+    certificadoStatus:     string
+  } | null
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -468,6 +480,59 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
   const [carregando, setCarregando] = useState(true)
   const [erro,       setErro]       = useState('')
 
+  const [editandoFiscal, setEditandoFiscal] = useState(false)
+  const [cnpj, setCnpj] = useState('')
+  const [razaoSocial, setRazaoSocial] = useState('')
+  const [inscricaoEstadual, setInscricaoEstadual] = useState('')
+  const [ambiente, setAmbiente] = useState(2)
+  const [focusToken, setFocusToken] = useState('')
+  const [salvandoFiscal, setSalvandoFiscal] = useState(false)
+  const [erroFiscal, setErroFiscal] = useState('')
+
+  useEffect(() => {
+    if (cliente?.configuracaoFiscal) {
+      setCnpj(cliente.configuracaoFiscal.cnpj || '')
+      setRazaoSocial(cliente.configuracaoFiscal.razaoSocial || '')
+      setInscricaoEstadual(cliente.configuracaoFiscal.inscricaoEstadual || '')
+      setAmbiente(cliente.configuracaoFiscal.ambiente || 2)
+      setFocusToken(cliente.configuracaoFiscal.focusEmpresaToken || '')
+    } else if (cliente?.pj) {
+      setCnpj(cliente.pj.cnpj || '')
+      setRazaoSocial(cliente.pj.razaoSocial || '')
+      setInscricaoEstadual(cliente.pj.inscricaoEstadual || '')
+    }
+  }, [cliente])
+
+  async function salvarFiscal() {
+    setSalvandoFiscal(true)
+    setErroFiscal('')
+    try {
+      const res = await fetch(`/api/cliente/${clienteId}/configuracao-fiscal`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cnpj,
+          razaoSocial,
+          inscricaoEstadual,
+          ambiente,
+          focusEmpresaToken: focusToken
+        })
+      })
+
+      if (!res.ok) {
+        const json = await res.json()
+        throw new Error(json.message || 'Falha ao salvar configuração fiscal.')
+      }
+
+      setEditandoFiscal(false)
+      await carregar()
+    } catch (e: any) {
+      setErroFiscal(e.message || 'Falha ao salvar configuração fiscal.')
+    } finally {
+      setSalvandoFiscal(false)
+    }
+  }
+
   const carregar = useCallback(async () => {
     setCarregando(true)
     setErro('')
@@ -600,6 +665,157 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                     <p className="text-slate-300">{formatData(cliente.criadoEm)}</p>
                   </div>
                 </div>
+              </div>
+
+              {/* Configuração Fiscal */}
+              <div className="bg-slate-800/30 border border-slate-700/50 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Configuração Fiscal (Focus NFe)</p>
+                  {!editandoFiscal && (
+                    <button
+                      onClick={() => setEditandoFiscal(true)}
+                      className="text-xs font-semibold text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors"
+                    >
+                      <Pencil size={11} />
+                      {cliente.configuracaoFiscal ? 'Editar' : 'Configurar'}
+                    </button>
+                  )}
+                </div>
+
+                {editandoFiscal ? (
+                  <div className="space-y-3 text-xs">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-slate-500 uppercase tracking-wide block mb-1">Razão Social</label>
+                        <input
+                          type="text"
+                          value={razaoSocial}
+                          onChange={e => setRazaoSocial(e.target.value)}
+                          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500/40 text-xs"
+                          placeholder="Ex: Minha Empresa LTDA"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-500 uppercase tracking-wide block mb-1">CNPJ</label>
+                        <input
+                          type="text"
+                          value={cnpj}
+                          onChange={e => setCnpj(e.target.value)}
+                          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500/40 text-xs font-mono"
+                          placeholder="Ex: 00.000.000/0000-00"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-slate-500 uppercase tracking-wide block mb-1">Inscrição Estadual</label>
+                        <input
+                          type="text"
+                          value={inscricaoEstadual}
+                          onChange={e => setInscricaoEstadual(e.target.value)}
+                          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500/40 text-xs"
+                          placeholder="Isento ou Número"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-500 uppercase tracking-wide block mb-1">Ambiente</label>
+                        <select
+                          value={ambiente}
+                          onChange={e => setAmbiente(Number(e.target.value))}
+                          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500/40 text-xs"
+                        >
+                          <option value={2}>Homologação (Testes)</option>
+                          <option value={1}>Produção (Real)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] text-slate-500 uppercase tracking-wide block mb-1">Token de Empresa (Focus NFe)</label>
+                      <input
+                        type="password"
+                        value={focusToken}
+                        onChange={e => setFocusToken(e.target.value)}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500/40 text-xs font-mono"
+                        placeholder="Token obtido no painel da Focus"
+                      />
+                    </div>
+
+                    {erroFiscal && (
+                      <div className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2 flex items-center gap-1.5">
+                        <AlertCircle size={12} />
+                        <span>{erroFiscal}</span>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2 pt-1.5">
+                      <button
+                        onClick={() => setEditandoFiscal(false)}
+                        className="flex-1 py-1.5 border border-slate-700 text-slate-300 hover:bg-slate-800 rounded-lg transition-colors text-xs font-semibold"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={salvarFiscal}
+                        disabled={salvandoFiscal}
+                        className="flex-1 py-1.5 text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-60 rounded-lg transition-colors text-xs font-semibold flex items-center justify-center gap-1.5"
+                      >
+                        {salvandoFiscal ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                        Salvar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 text-xs">
+                    {cliente.configuracaoFiscal ? (
+                      <>
+                        <div>
+                          <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Razão Social Emitente</p>
+                          <p className="text-slate-300 font-medium">{cliente.configuracaoFiscal.razaoSocial}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">CNPJ Emitente</p>
+                          <p className="text-slate-300 font-mono">{formatCnpj(cliente.configuracaoFiscal.cnpj)}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Inscrição Estadual</p>
+                          <p className="text-slate-300">{cliente.configuracaoFiscal.inscricaoEstadual || '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Ambiente SEFAZ</p>
+                          <span className={`inline-block font-semibold px-1.5 py-0.5 rounded text-[10px] ${
+                            cliente.configuracaoFiscal.ambiente === 1 ? 'bg-amber-500/15 text-amber-400' : 'bg-blue-500/15 text-blue-400'
+                          }`}>
+                            {cliente.configuracaoFiscal.ambiente === 1 ? 'PRODUÇÃO' : 'HOMOLOGAÇÃO'}
+                          </span>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Token Focus NFe</p>
+                          <p className="text-slate-300 font-mono">
+                            {cliente.configuracaoFiscal.focusEmpresaToken ? '••••••••••••••••' : 'Não configurado'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Certificado Digital</p>
+                          <span className={`inline-block font-semibold px-1.5 py-0.5 rounded text-[10px] ${
+                            cliente.configuracaoFiscal.certificadoStatus === 'ATIVO' ? 'bg-emerald-500/15 text-emerald-400'
+                            : cliente.configuracaoFiscal.certificadoStatus === 'VENCIDO' ? 'bg-red-500/15 text-red-400'
+                            : 'bg-slate-500/15 text-slate-400'
+                          }`}>
+                            {cliente.configuracaoFiscal.certificadoStatus === 'ATIVO' ? 'CONFIGURADO'
+                             : cliente.configuracaoFiscal.certificadoStatus === 'VENCIDO' ? 'EXPIRADO'
+                             : 'NÃO ENVIADO'}
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="col-span-2 text-center py-2 text-slate-500 text-xs">
+                        Nenhuma configuração fiscal vinculada a este cliente.
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Licenças */}
