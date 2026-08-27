@@ -40,7 +40,8 @@ import {
   upsertLicencaSessao,
   countSessoesAtivas,
   deletarSessao,
-  deletarTodasSessoesDaLicenca
+  deletarTodasSessoesDaLicenca,
+  modulosDaLicenca
 } from '@startbig/database'
 import {
   renovarLicencaSchema,
@@ -95,6 +96,16 @@ const HEARTBEAT_TIMEOUT_MS = 35 * 60 * 1000   // sessão morta se sem heartbeat 
 const CLEANUP_INTERVAL_MS  = 10 * 60 * 1000   // verifica sessões inativas a cada 10 min
 const FLUSH_INTERVAL_MS    = 30 * 1000         // flush do buffer no banco a cada 30s
 const GRACE_PERIOD_DIAS    = 7
+
+/**
+ * Módulos do plano, no formato que `modulosDaLicenca` espera.
+ *
+ * Só o auto-cadastro precisa disto: ali a licença acaba de nascer e o plano vem
+ * de uma busca própria, fora do `findLicencaByChave` que já traz tudo incluído.
+ */
+const INCLUDE_MODULOS_DO_PLANO = {
+  modulos: { select: { cotaMensal: true, modulo: { select: { identificador: true, ativo: true } } } },
+} as const
 
 // ── Carrega ou gera par de chaves RSA ────────────────────────────────────────
 function carregarChaves(): { privateKey: string; publicKey: string } {
@@ -166,6 +177,13 @@ export class DispositivoService {
     limite:          number
     dataVencimento?: Date | null
     carenciaAte?:    Date | null
+    /**
+     * Módulos liberados. Chega pronto porque este método é síncrono e precisa
+     * continuar sendo: torná-lo async por causa de uma consulta espalharia
+     * `await` pelos três chamadores sem ganho nenhum — quem chama já tem a
+     * licença carregada com os módulos dentro.
+     */
+    modulos?:        string[]
   }): {
     token: string
     ultimaSincronizacao: Date
@@ -228,6 +246,18 @@ export class DispositivoService {
         // senão ele seria o único elo da corrente que dá para forjar no caminho.
         emCarencia,
         dataLimiteCarencia:  emCarencia ? params.carenciaAte!.toISOString() : null,
+        /**
+         * Módulos liberados, dentro do token assinado pelo mesmo motivo do
+         * `emCarencia`: é campo que LIBERA acesso, e campo que libera acesso
+         * viaja assinado — senão seria o elo da corrente que dá para forjar no
+         * caminho entre a API e o ERP.
+         *
+         * Claim ADITIVA: ERP que não a conhece ignora e continua funcionando
+         * igual. É o que permite subir isto sem nenhuma coordenação com o ERP
+         * em campo, e é o que torna a trava da próxima fase segura — quando ela
+         * ligar, todo token no ar já vai carregar a lista.
+         */
+        modulos:             params.modulos ?? [],
       },
       RSA_PRIVATE_KEY,
       { algorithm: 'RS256', expiresIn },
@@ -555,6 +585,7 @@ export class DispositivoService {
       limite,
       dataVencimento: licenca.dataVencimento,
       carenciaAte:    licenca.carenciaAte,
+      modulos:        modulosDaLicenca(licenca),
     })
 
     // Sem HWID: só valida a licença e devolve o JWT com o limite.
@@ -725,6 +756,7 @@ export class DispositivoService {
       limite,
       dataVencimento: licenca.dataVencimento,
       carenciaAte:    licenca.carenciaAte,
+      modulos:        modulosDaLicenca(licenca),
     })
 
     // `assinado` já traz emCarencia, dataLimiteCarencia e diasRestantesCarencia.
@@ -777,7 +809,7 @@ export class DispositivoService {
     const planoFixado = process.env.PLANO_AUTOCADASTRO_ID?.trim()
 
     let plano = planoFixado
-      ? await prisma.plano.findFirst({ where: { id: planoFixado } })
+      ? await prisma.plano.findFirst({ where: { id: planoFixado }, include: INCLUDE_MODULOS_DO_PLANO })
       : null
 
     if (planoFixado && !plano)
@@ -787,6 +819,7 @@ export class DispositivoService {
       plano = await prisma.plano.findFirst({
         where:   { status: 'ATIVO' },
         orderBy: [{ precoMensal: 'asc' }, { criadoEm: 'asc' }],
+        include: INCLUDE_MODULOS_DO_PLANO,
       })
 
     if (!plano) throw new BadRequestException('Nenhum plano ATIVO cadastrado no sistema para vincular a licença.')
@@ -898,6 +931,8 @@ export class DispositivoService {
       plano:          plano.nome,
       limite:         plano.limiteUsuario,
       dataVencimento: vencimento,
+      // Licença recém-criada não tem extra contratado — só o que o plano inclui.
+      modulos:        modulosDaLicenca({ plano }),
     })
 
     // 9. Enviar e-mail de boas-vindas com a chave de ativação

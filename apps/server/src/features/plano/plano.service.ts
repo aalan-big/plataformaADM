@@ -24,6 +24,8 @@ import {
   countLicencasAtivasByPlano,
   criarPlano,
   updatePlano,
+  listarModulos,
+  definirModulosDoPlano,
 } from '@startbig/database'
 import { criarPlanoSchema, editarPlanoSchema } from '@startbig/schemas'
 import { StripeService } from '../../common/stripe/stripe.service'
@@ -104,13 +106,40 @@ export class PlanoService {
    * 2. Garante unicidade do nome — dois planos não podem ter o mesmo nome.
    */
   async criar(body: unknown) {
-    const dados = this.parseBody(criarPlanoSchema, body)
+    const { modulos, ...dados } = this.parseBody(criarPlanoSchema, body)
 
     // Impede duplicatas: o nome do plano deve ser único no banco
     const existente = await findPlanoByNome(dados.nome)
     if (existente) throw new BadRequestException('Já existe um plano com esse nome.')
 
-    return criarPlano(dados)
+    const plano = await criarPlano(dados)
+    if (modulos) await this.aplicarModulos(plano.id, modulos)
+    return plano
+  }
+
+  /**
+   * Grava o conjunto de módulos do plano.
+   *
+   * Traduz identificador → id aqui, e não no repositório, porque a API fala em
+   * identificador ("FISCAL") de propósito: é estável, legível no corpo da
+   * requisição e não muda se o catálogo for recriado. Identificador desconhecido
+   * é erro explícito, e não linha ignorada em silêncio — senão um typo no
+   * formulário viraria um módulo que o admin acha que marcou e não foi salvo.
+   */
+  private async aplicarModulos(
+    planoId: string,
+    modulos: { identificador: string; cotaMensal?: number | null }[],
+  ) {
+    const catalogo = await listarModulos(true)
+    const porIdentificador = new Map(catalogo.map(m => [m.identificador, m.id]))
+
+    const vinculos = modulos.map(m => {
+      const moduloId = porIdentificador.get(m.identificador)
+      if (!moduloId) throw new BadRequestException(`Módulo desconhecido: ${m.identificador}.`)
+      return { moduloId, cotaMensal: m.cotaMensal ?? null }
+    })
+
+    await definirModulosDoPlano(planoId, vinculos)
   }
 
   /**
@@ -121,7 +150,7 @@ export class PlanoService {
    * 3. Se o nome estiver sendo alterado, verifica se o novo nome já pertence a outro plano.
    */
   async editar(id: string, body: unknown) {
-    const dados = this.parseBody(editarPlanoSchema, body)
+    const { modulos, ...dados } = this.parseBody(editarPlanoSchema, body)
 
     const plano = await findPlanoById(id)
     if (!plano) throw new NotFoundException('Plano não encontrado.')
@@ -131,6 +160,10 @@ export class PlanoService {
       const existente = await findPlanoByNome(dados.nome)
       if (existente) throw new BadRequestException('Já existe um plano com esse nome.')
     }
+
+    // `undefined` = o formulário não mandou módulos, mantém como está.
+    // Array vazio = o admin desmarcou tudo, e aí zera mesmo.
+    if (modulos) await this.aplicarModulos(id, modulos)
 
     return updatePlano(id, dados)
   }

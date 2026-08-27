@@ -34,6 +34,7 @@ import {
   podarEventosDeBackup,
   contarEventosAntigosDeBackup,
   expirarCobrancasVencidas,
+  podarEmissaoLog,
 } from '@startbig/database'
 import { EmailService } from '../../core/email/email.service'
 import { StorageService, TTL_UPLOAD_SEGUNDOS } from '../../common/storage/storage.service'
@@ -49,6 +50,17 @@ export class CronService {
   private readonly RETENCAO_BACKUP_DIAS = 90
   /// Poda do diário de eventos (as linhas, não os arquivos).
   private readonly RETENCAO_EVENTOS_DIAS = 180
+
+  /// Retenção da trilha de emissão fiscal.
+  ///
+  /// Bem mais curta que a dos backups porque a finalidade é outra: serve para
+  /// investigar um chamado ("não saiu nota terça"), e chamado de dois meses atrás
+  /// já não é investigado. É também o único lugar do sistema que guarda `ref` de
+  /// nota de terceiro, então quanto menos tempo, melhor.
+  ///
+  /// O contador (`consumo_fiscal`) NÃO é podado — aquilo é base de cobrança e
+  /// tem que durar.
+  private readonly RETENCAO_EMISSAO_LOG_DIAS = 90
   /// Dias de backup parado em que se avisa o cliente — 15 e 7 dias antes de
   /// apagar. Mesmo padrão dos alertas de vencimento: casa por dia exato, então
   /// não precisa guardar "já avisei" em lugar nenhum.
@@ -124,6 +136,16 @@ export class CronService {
       }
     } catch (err) {
       this.logger.error('Erro ao expirar cobranças vencidas:', err)
+    }
+
+    // 1c. Podar a trilha de emissão fiscal
+    try {
+      const podados = await podarEmissaoLog(this.RETENCAO_EMISSAO_LOG_DIAS)
+      if (podados.count > 0) {
+        this.logger.log(`[fiscal] ${podados.count} registro(s) de emissão podado(s) (> ${this.RETENCAO_EMISSAO_LOG_DIAS} dias).`)
+      }
+    } catch (err) {
+      this.logger.error('Erro ao podar trilha de emissão fiscal:', err)
     }
 
     // 2. Enviar alertas de inadimplência
