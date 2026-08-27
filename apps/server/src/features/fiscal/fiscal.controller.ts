@@ -2,13 +2,17 @@ import { Controller, Get, Post, Body, Req, Query, UseGuards, BadRequestException
 import { Request } from 'express'
 import { FiscalService } from './fiscal.service'
 import { ErpLicencaGuard } from '../../core/guards/erp-licenca.guard'
+import { ModuloGuard } from '../../core/guards/modulo.guard'
 import { Public } from '../../core/decorators/public.decorator'
+import { RequerModulo } from '../../core/decorators/requer-modulo.decorator'
+import { MODULO_NFE } from '@startbig/database'
+import { refNotaSchema } from '@startbig/schemas'
 import { z, ZodError } from 'zod'
 
 type ReqErp = Request & { erp: { licencaId: string } }
 
 export const emitirNfeSchema = z.object({
-  ref: z.string().min(1, 'A referência (ref) é obrigatória.'),
+  ref: refNotaSchema,
   payload: z.object({
     natureza_operacao: z.string().min(1, 'Natureza de operação é obrigatória.'),
     tipo_documento: z.number().int(),
@@ -50,8 +54,25 @@ export const emitirNfeSchema = z.object({
   })
 })
 
+export const cancelarNfeSchema = z.object({
+  ref: refNotaSchema,
+  // 15 caracteres é exigência da SEFAZ, não escolha nossa.
+  justificativa: z.string().trim().min(15, 'A justificativa de cancelamento deve conter no mínimo 15 caracteres.'),
+})
+
+/**
+ * A ordem dos guards importa: `ErpLicencaGuard` valida o JWT e preenche
+ * `request.erp`, e só então o `ModuloGuard` tem o que ler. Invertidos, o
+ * segundo não acharia licença nenhuma.
+ *
+ * O `RequerModulo` fica AQUI, no controller do fiscal, e não no
+ * `ErpLicencaGuard`: aquele protege todas as rotas `/erp/*`, e mexer nele
+ * colocaria uma trava de módulo no caminho de conectar, validar e heartbeat de
+ * toda a base.
+ */
 @Public()
-@UseGuards(ErpLicencaGuard)
+@UseGuards(ErpLicencaGuard, ModuloGuard)
+@RequerModulo(MODULO_NFE)
 @Controller('erp/fiscal/nfe')
 export class FiscalController {
   constructor(private readonly fiscalService: FiscalService) {}
@@ -85,16 +106,30 @@ export class FiscalController {
   @Get('consultar')
   consultar(
     @Req() req: ReqErp,
-    @Query('ref') ref: string
+    @Query('ref') ref: unknown
   ) {
-    return this.fiscalService.consultar(req.erp.licencaId, ref)
+    const refValida = this.parseBody(refNotaSchema, ref)
+    return this.fiscalService.consultar(req.erp.licencaId, refValida)
   }
 
   @Post('cancelar')
   cancelar(
     @Req() req: ReqErp,
-    @Body() body: { ref: string; justificativa: string }
+    @Body() body: unknown
   ) {
-    return this.fiscalService.cancelar(req.erp.licencaId, body.ref, body.justificativa)
+    const dados = this.parseBody(cancelarNfeSchema, body)
+    return this.fiscalService.cancelar(req.erp.licencaId, dados.ref, dados.justificativa)
+  }
+
+  /**
+   * Quanto desta licença já foi usado no mês.
+   *
+   * Existe para o ERP conseguir avisar o operador ANTES de ele montar a nota
+   * inteira e levar um 402 no envio. Não é trava: quem barra de verdade é o
+   * `emitir`, no servidor, porque toda emissão passa por aqui de qualquer jeito.
+   */
+  @Get('consumo')
+  consumo(@Req() req: ReqErp) {
+    return this.fiscalService.consumoMensal(req.erp.licencaId)
   }
 }

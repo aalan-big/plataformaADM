@@ -33,6 +33,7 @@ import {
   editarClientePFSchema,
   editarClientePJSchema,
   editarEnderecoSchema,
+  configuracaoFiscalSchema,
   type CriarClientePFInput,
   type CriarClientePJInput,
 } from '@startbig/schemas'
@@ -320,32 +321,65 @@ export class ClienteService {
     }
   }
 
-  async salvarConfiguracaoFiscal(clienteId: string, body: any) {
-    const { cnpj, razaoSocial, inscricaoEstadual, ambiente, focusEmpresaToken } = body
-    if (!cnpj || !razaoSocial) {
-      throw new BadRequestException('CNPJ e Razão Social são obrigatórios.')
+  async salvarConfiguracaoFiscal(clienteId: string, body: unknown) {
+    let dados: ReturnType<typeof configuracaoFiscalSchema.parse>
+    try {
+      dados = configuracaoFiscalSchema.parse(body)
+    } catch (e) {
+      if (e instanceof ZodError) {
+        throw new BadRequestException({
+          erro: 'Dados inválidos',
+          detalhes: e.issues.map(i => ({ campo: i.path.join('.'), mensagem: i.message })),
+        })
+      }
+      throw e
     }
 
-    const cnpjLimpo = cnpj.replace(/\D/g, '')
+    const cliente = await prisma.cliente.findUnique({ where: { id: clienteId }, select: { id: true } })
+    if (!cliente) throw new NotFoundException('Cliente não encontrado.')
 
-    return prisma.empresaFiscalConfig.upsert({
-      where: { clienteId },
-      update: {
-        cnpj: cnpjLimpo,
-        razaoSocial,
-        inscricaoEstadual: inscricaoEstadual || null,
-        ambiente: Number(ambiente) || 2,
-        focusEmpresaToken: focusEmpresaToken || null,
-      },
-      create: {
-        clienteId,
-        cnpj: cnpjLimpo,
-        razaoSocial,
-        inscricaoEstadual: inscricaoEstadual || null,
-        ambiente: Number(ambiente) || 2,
-        focusEmpresaToken: focusEmpresaToken || null,
-        certificadoStatus: 'AUSENTE'
+    /**
+     * Token ausente no corpo = "não mexe no que já está lá".
+     *
+     * O painel não recebe mais o token ao abrir o perfil, então salvar uma
+     * edição de razão social manda este campo vazio. Gravar null aqui desligaria
+     * a emissão de notas do cliente calado, e o sintoma só apareceria na próxima
+     * NF-e. Para tirar o token existe uma intenção explícita: `removerToken`.
+     */
+    const tokenPatch =
+      dados.removerToken           ? { focusEmpresaToken: null }
+      : dados.focusEmpresaToken    ? { focusEmpresaToken: dados.focusEmpresaToken }
+      : {}
+
+    const comuns = {
+      cnpj:              dados.cnpj,
+      razaoSocial:       dados.razaoSocial,
+      inscricaoEstadual: dados.inscricaoEstadual,
+      ambiente:          dados.ambiente,
+    }
+
+    try {
+      const config = await prisma.empresaFiscalConfig.upsert({
+        where:  { clienteId },
+        update: { ...comuns, ...tokenPatch },
+        create: {
+          clienteId,
+          ...comuns,
+          ...tokenPatch,
+          certificadoStatus: 'AUSENTE',
+        },
+      })
+
+      // O token não volta na resposta — ele entra por aqui, mas nunca sai.
+      const { focusEmpresaToken, ...seguro } = config
+      return { ...seguro, tokenConfigurado: !!focusEmpresaToken }
+    } catch (err) {
+      // `cnpj` é único global: dois clientes com o mesmo CNPJ estouram P2002 e
+      // virariam um 500 sem explicação na tela do admin.
+      if (typeof err === 'object' && err !== null && (err as { code?: string }).code === 'P2002') {
+        throw new BadRequestException('Este CNPJ já está configurado para outro cliente.')
       }
-    })
+      throw err
+    }
   }
 }
