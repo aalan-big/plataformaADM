@@ -57,60 +57,61 @@ enum StatusBackup {
 
 // ── Plano ─────────────────────────────────────────────────────────────────────
 model Plano {
-  id                       String    @id @default(uuid())
-  nome                     String    @unique
+  id                      String   @id @default(uuid())
+  nome                    String   @unique
   /// Texto exibido ao cliente na tela de pagamento do Stripe, abaixo do preço.
   /// Nada de informação comercial interna aqui (margem, canal, custo) — é público.
-  descricaoCheckout        String?
-  limiteUsuario            Int       @default(1)
-  precoMensal              Decimal   @db.Decimal(10, 2)
-  precoTrimestral          Decimal?  @db.Decimal(10, 2)
-  precoAnual               Decimal?  @db.Decimal(10, 2)
-  valorLicencaAdicional    Decimal?  @db.Decimal(10, 2)
-  descontoTrimestral       Decimal?  @db.Decimal(5, 2)
-  descontoAnual            Decimal?  @db.Decimal(5, 2)
-  stripePriceIdMensal      String?
-  stripePriceIdTrimestral  String?
-  stripePriceIdAnual       String?
-  status                   String    @default("ATIVO")
+  descricaoCheckout       String?
+  limiteUsuario           Int      @default(1)
+  precoMensal             Decimal  @db.Decimal(10, 2)
+  precoTrimestral         Decimal? @db.Decimal(10, 2)
+  precoAnual              Decimal? @db.Decimal(10, 2)
+  valorLicencaAdicional   Decimal? @db.Decimal(10, 2)
+  descontoTrimestral      Decimal? @db.Decimal(5, 2)
+  descontoAnual           Decimal? @db.Decimal(5, 2)
+  stripePriceIdMensal     String?
+  stripePriceIdTrimestral String?
+  stripePriceIdAnual      String?
+  status                  String   @default("ATIVO")
   /// Exibe este plano na página pública de contratação (assine.startbig.com.br).
   /// Padrão false de propósito: plano de canal ou de uso interno não pode virar
   /// vitrine por descuido — quem entra no site só vê o que foi marcado aqui.
-  publico                  Boolean   @default(false)
-  criadoEm                 DateTime  @default(now())
+  publico                 Boolean  @default(false)
+  criadoEm                DateTime @default(now())
 
-  licencas                 Licenca[]
-  cobrancas                CobrancaRenovacao[]
+  licencas  Licenca[]
+  cobrancas CobrancaRenovacao[]
+  modulos   PlanoModulo[]
 
   @@map("planos")
 }
 
 // ── Parceiro ──────────────────────────────────────────────────────────────────
 model Parceiro {
-  id                 String    @id @default(uuid())
+  id             String  @id @default(uuid())
   /// Código público de indicação (ex.: "OTIK22"). É o que o parceiro divulga e o
   /// que o cliente digita — UUID não serve porque ninguém digita UUID.
-  codigo             String    @unique
-  nomeParceiro       String
-  documento          String?
-  email              String?
-  contatoCelular     String?
-  cidadeBase         String?
-  status             String    @default("ATIVO")   // ATIVO | INATIVO
+  codigo         String  @unique
+  nomeParceiro   String
+  documento      String?
+  email          String?
+  contatoCelular String?
+  cidadeBase     String?
+  status         String  @default("ATIVO") // ATIVO | INATIVO
 
   /// Regra de comissão VIGENTE. Cada comissão gerada guarda uma cópia destes
   /// valores — mudar a regra aqui nunca reescreve o que já foi apurado.
-  tipoComissao       String    @default("FIXO_MENSAL")  // FIXO_MENSAL | PERCENTUAL
+  tipoComissao       String   @default("FIXO_MENSAL") // FIXO_MENSAL | PERCENTUAL
   /// Usado quando tipoComissao = FIXO_MENSAL: R$ por mês coberto pelo pagamento.
-  valorComissaoFixa  Decimal?  @db.Decimal(10, 2)
+  valorComissaoFixa  Decimal? @db.Decimal(10, 2)
   /// Usado quando tipoComissao = PERCENTUAL: % sobre o valor pago.
-  comissaoPercentual Decimal?  @db.Decimal(5, 2)
+  comissaoPercentual Decimal? @db.Decimal(5, 2)
 
-  observacoes        String?
-  criadoEm           DateTime  @default(now())
+  observacoes String?
+  criadoEm    DateTime @default(now())
 
-  clientes           Cliente[]
-  comissoes          ComissaoParceiro[]
+  clientes  Cliente[]
+  comissoes ComissaoParceiro[]
 
   @@index([status])
   @@map("parceiros")
@@ -124,37 +125,37 @@ model Parceiro {
 /// É isso que permite reajustar a comissão de um parceiro sem reescrever o
 /// histórico dele, e é a diferença entre um sistema de repasse e uma planilha.
 model ComissaoParceiro {
-  id            String    @id @default(uuid())
-  parceiroId    String
-  clienteId     String
-  licencaId     String?
+  id          String  @id @default(uuid())
+  parceiroId  String
+  clienteId   String
+  licencaId   String?
   /// Um pagamento gera no máximo uma comissão. O índice único é a trava de
   /// idempotência: webhook reentregue não paga o parceiro duas vezes.
-  pagamentoId   String    @unique
+  pagamentoId String  @unique
 
   /// Competência no formato "2026-07" — é por ela que o repasse é agrupado.
-  competencia   String
+  competencia String
   /// Valor que o cliente pagou, para conferência e para o cálculo percentual.
-  valorBase     Decimal   @db.Decimal(10, 2)
+  valorBase   Decimal @db.Decimal(10, 2)
   /// Meses cobertos pelo pagamento (1, 3 ou 12): comissão fixa é por mês.
-  meses         Int
+  meses       Int
 
   /// Cópia da regra no momento da apuração — nunca ler do parceiro para exibir.
-  tipoComissao  String
-  parametro     Decimal   @db.Decimal(10, 2)
+  tipoComissao String
+  parametro    Decimal @db.Decimal(10, 2)
   /// Valor devido ao parceiro por este pagamento.
-  valor         Decimal   @db.Decimal(10, 2)
+  valor        Decimal @db.Decimal(10, 2)
 
-  status              String    @default("PENDENTE")  // PENDENTE | PAGA | CANCELADA
+  status              String    @default("PENDENTE") // PENDENTE | PAGA | CANCELADA
   pagoEm              DateTime?
   referenciaPagamento String?
   observacao          String?
   criadoEm            DateTime  @default(now())
 
-  parceiro   Parceiro  @relation(fields: [parceiroId],  references: [id], onDelete: Restrict)
-  cliente    Cliente   @relation(fields: [clienteId],   references: [id], onDelete: Cascade)
-  licenca    Licenca?  @relation(fields: [licencaId],   references: [id], onDelete: SetNull)
-  pagamento  Pagamento @relation(fields: [pagamentoId], references: [id], onDelete: Cascade)
+  parceiro  Parceiro  @relation(fields: [parceiroId], references: [id], onDelete: Restrict)
+  cliente   Cliente   @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  licenca   Licenca?  @relation(fields: [licencaId], references: [id], onDelete: SetNull)
+  pagamento Pagamento @relation(fields: [pagamentoId], references: [id], onDelete: Cascade)
 
   @@index([parceiroId, status])
   @@index([competencia])
@@ -163,16 +164,16 @@ model ComissaoParceiro {
 
 // ── Usuario ───────────────────────────────────────────────────────────────────
 model Usuario {
-  id           String    @id @default(uuid())
-  nome         String
-  email        String    @unique
-  senha        String
-  tipoUsuario  String    @default("ADMIN")
-  ativo        Boolean   @default(true)
-  criadoEm     DateTime  @default(now())
+  id          String   @id @default(uuid())
+  nome        String
+  email       String   @unique
+  senha       String
+  tipoUsuario String   @default("ADMIN")
+  ativo       Boolean  @default(true)
+  criadoEm    DateTime @default(now())
 
-  clientes     Cliente[]
-  logs         Log[]
+  clientes       Cliente[]
+  logs           Log[]
   inscricoesPush InscricaoPush[]
 
   @@map("usuarios")
@@ -196,19 +197,19 @@ model Cliente {
   /// la e o historico do cliente ficaria espalhado em N clientes soltos.
   asaasCustomerId    String?   @unique
 
-  pf              ClientePF?
-  pj              ClientePJ?
-  enderecos       Endereco[]
-  dispositivos    Licenca[]
-  pagamentos      Pagamento[]
-  transacoes      TransacaoHistorico[]
-  comissoes       ComissaoParceiro[]
-  backups         Backup[]
-  cobrancas       CobrancaRenovacao[]
+  pf                 ClientePF?
+  pj                 ClientePJ?
+  enderecos          Endereco[]
+  dispositivos       Licenca[]
+  pagamentos         Pagamento[]
+  transacoes         TransacaoHistorico[]
+  comissoes          ComissaoParceiro[]
+  backups            Backup[]
+  cobrancas          CobrancaRenovacao[]
   configuracaoFiscal EmpresaFiscalConfig?
 
-  usuario         Usuario   @relation(fields: [usuarioId],  references: [id])
-  parceiroObj     Parceiro? @relation(fields: [parceiroId], references: [id])
+  usuario     Usuario   @relation(fields: [usuarioId], references: [id])
+  parceiroObj Parceiro? @relation(fields: [parceiroId], references: [id])
 
   @@index([email])
   @@index([usuarioId])
@@ -225,7 +226,7 @@ model ClientePF {
   rg             String?
   dataNascimento DateTime?
 
-  cliente        Cliente   @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  cliente Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
 
   @@map("clientes_pf")
 }
@@ -246,7 +247,7 @@ model ClientePJ {
   setorAtividade     String?
   logo               String?
 
-  cliente            Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  cliente Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
 
   @@map("clientes_pj")
 }
@@ -265,48 +266,51 @@ model Endereco {
   tipo        String   @default("PRINCIPAL")
   criadoEm    DateTime @default(now())
 
-  cliente     Cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  cliente Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
 
   @@map("enderecos")
 }
 
 // ── Licenca ───────────────────────────────────────────────────────────────────
 model Licenca {
-  id                  String        @id @default(uuid())
-  clienteId           String
-  planoId             String
-  chaveAtivacao       String        @unique
-  nomeDispositivo     String?
-  status              StatusLicenca @default(AGUARDANDO)
-  totalUsuarios       Int           @default(0)
-  usuariosExtras      Int           @default(0)
-  isTrial             Boolean       @default(false)
-  diasCortesia        Int           @default(0)
-  ultimoPagamento     DateTime?
-  dataVencimento      DateTime?
-  ultimoHeartbeat     DateTime?
-  ultimaSincronizacao DateTime?
+  id                   String        @id @default(uuid())
+  clienteId            String
+  planoId              String
+  chaveAtivacao        String        @unique
+  nomeDispositivo      String?
+  status               StatusLicenca @default(AGUARDANDO)
+  totalUsuarios        Int           @default(0)
+  usuariosExtras       Int           @default(0)
+  isTrial              Boolean       @default(false)
+  diasCortesia         Int           @default(0)
+  ultimoPagamento      DateTime?
+  dataVencimento       DateTime?
+  ultimoHeartbeat      DateTime?
+  ultimaSincronizacao  DateTime?
   stripeSubscriptionId String?
   /// Ate quando a licenca continua valendo mesmo vencida. Preenchido SO quando o
   /// cartao falha (invoice.payment_failed), enquanto o Stripe re-tenta a cobranca.
   /// Quem paga por PIX nunca tem isto preenchido e trava no vencimento — a
   /// carencia e da falha do meio de pagamento, nao um favor ao cliente.
-  carenciaAte         DateTime?
-  planoPendenteId     String?       // plano agendado p/ valer no fim do ciclo (downgrade)
-  criadoEm            DateTime      @default(now())
-  dataAtivacao        DateTime?
-  chaveOrigem         String        @default("MANUAL")
-  atualizadoEm        DateTime      @updatedAt
+  carenciaAte          DateTime?
+  planoPendenteId      String? // plano agendado p/ valer no fim do ciclo (downgrade)
+  criadoEm             DateTime      @default(now())
+  dataAtivacao         DateTime?
+  chaveOrigem          String        @default("MANUAL")
+  atualizadoEm         DateTime      @updatedAt
 
-  cliente             Cliente       @relation(fields: [clienteId], references: [id], onDelete: Cascade)
-  plano               Plano         @relation(fields: [planoId],   references: [id])
-  historico           LicencaHistorico[]
-  pagamentos          Pagamento[]
-  transacoes          TransacaoHistorico[]
-  sessoes             LicencaSessao[]
-  comissoes           ComissaoParceiro[]
-  backups             Backup[]
-  cobrancas           CobrancaRenovacao[]
+  cliente       Cliente              @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  plano         Plano                @relation(fields: [planoId], references: [id])
+  historico     LicencaHistorico[]
+  pagamentos    Pagamento[]
+  transacoes    TransacaoHistorico[]
+  sessoes       LicencaSessao[]
+  comissoes     ComissaoParceiro[]
+  backups       Backup[]
+  cobrancas     CobrancaRenovacao[]
+  consumoFiscal ConsumoFiscal[]
+  emissaoLogs   EmissaoLog[]
+  modulosExtras LicencaModuloExtra[]
 
   @@index([clienteId])
   @@index([status])
@@ -317,14 +321,14 @@ model Licenca {
 model LicencaHistorico {
   id             String    @id @default(uuid())
   licencaId      String
-  tipo           String    // TRIAL | RENOVACAO | BLOQUEIO | DESBLOQUEIO
+  tipo           String // TRIAL | RENOVACAO | BLOQUEIO | DESBLOQUEIO
   chaveAtivacao  String
   meses          Int?
   dataVencimento DateTime?
   observacao     String?
   criadoEm       DateTime  @default(now())
 
-  licenca        Licenca   @relation(fields: [licencaId], references: [id], onDelete: Cascade)
+  licenca Licenca @relation(fields: [licencaId], references: [id], onDelete: Cascade)
 
   @@index([licencaId])
   @@index([criadoEm])
@@ -333,22 +337,22 @@ model LicencaHistorico {
 
 // ── Pagamento ─────────────────────────────────────────────────────────────────
 model Pagamento {
-  id           String   @id @default(uuid())
-  licencaId    String
-  clienteId    String
-  valor        Decimal  @db.Decimal(10, 2)
-  meses        Int      @default(1)
-  status       String   @default("PAGO")
-  gateway      String   @default("MANUAL")
-  transacaoId  String?  @unique
-  observacao   String?
-  criadoEm     DateTime @default(now())
+  id          String   @id @default(uuid())
+  licencaId   String
+  clienteId   String
+  valor       Decimal  @db.Decimal(10, 2)
+  meses       Int      @default(1)
+  status      String   @default("PAGO")
+  gateway     String   @default("MANUAL")
+  transacaoId String?  @unique
+  observacao  String?
+  criadoEm    DateTime @default(now())
 
-  licenca      Licenca               @relation(fields: [licencaId], references: [id])
-  cliente      Cliente               @relation(fields: [clienteId], references: [id])
-  transacoes   TransacaoHistorico[]
-  comissao     ComissaoParceiro?
-  cobranca     CobrancaRenovacao?
+  licenca    Licenca              @relation(fields: [licencaId], references: [id])
+  cliente    Cliente              @relation(fields: [clienteId], references: [id])
+  transacoes TransacaoHistorico[]
+  comissao   ComissaoParceiro?
+  cobranca   CobrancaRenovacao?
 
   @@index([licencaId])
   @@index([clienteId])
@@ -368,9 +372,9 @@ model TransacaoHistorico {
   descricao   String?
   criadoEm    DateTime      @default(now())
 
-  cliente     Cliente       @relation(fields: [clienteId], references: [id])
-  licenca     Licenca?      @relation(fields: [licencaId], references: [id])
-  pagamento   Pagamento?    @relation(fields: [pagamentoId], references: [id])
+  cliente   Cliente    @relation(fields: [clienteId], references: [id])
+  licenca   Licenca?   @relation(fields: [licencaId], references: [id])
+  pagamento Pagamento? @relation(fields: [pagamentoId], references: [id])
 
   @@index([clienteId])
   @@index([licencaId])
@@ -390,7 +394,7 @@ model Log {
   descricao    String?
   ipAddress    String?
 
-  usuario      Usuario? @relation(fields: [usuarioId], references: [id])
+  usuario Usuario? @relation(fields: [usuarioId], references: [id])
 
   @@index([usuarioId])
   @@index([entidadeNome, entidadeId])
@@ -405,7 +409,7 @@ model LicencaSessao {
   hwid            String
   ultimoHeartbeat DateTime @default(now())
 
-  licenca         Licenca  @relation(fields: [licencaId], references: [id], onDelete: Cascade)
+  licenca Licenca @relation(fields: [licencaId], references: [id], onDelete: Cascade)
 
   @@unique([licencaId, hwid])
   @@index([ultimoHeartbeat])
@@ -458,7 +462,7 @@ model Backup {
   sequencia        Int          @default(0)
   chaveS3          String
   status           StatusBackup @default(EMITIDO)
-  origem           String       @default("AUTOMATICO")  // AUTOMATICO | MANUAL
+  origem           String       @default("AUTOMATICO") // AUTOMATICO | MANUAL
   /// Tamanho que o ERP declarou ao pedir a URL — é ele que vai assinado no
   /// Content-Length, então o upload só é aceito se casar exatamente.
   tamanhoBytes     Int
@@ -480,8 +484,8 @@ model Backup {
   emitidoEm        DateTime     @default(now())
   confirmadoEm     DateTime?
 
-  cliente          Cliente      @relation(fields: [clienteId], references: [id], onDelete: Cascade)
-  licenca          Licenca      @relation(fields: [licencaId], references: [id], onDelete: Cascade)
+  cliente Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  licenca Licenca @relation(fields: [licencaId], references: [id], onDelete: Cascade)
 
   @@index([licencaId, tipo, emitidoEm])
   /// Sustenta as duas perguntas mais frequentes do fluxo: "este ciclo já tem full
@@ -516,9 +520,9 @@ model CobrancaRenovacao {
   /// Em reais, como todo o resto do sistema (Decimal 10,2). A conversão para os
   /// centavos que o ERP espera acontece só na borda do endpoint.
   valor             Decimal   @db.Decimal(10, 2)
-  gateway           String                          // ASAAS | STRIPE
-  metodo            String                          // PIX | CARTAO
-  status            String    @default("PENDENTE")  // PENDENTE | PAGA | EXPIRADA | CANCELADA
+  gateway           String // ASAAS | STRIPE
+  metodo            String // PIX | CARTAO
+  status            String    @default("PENDENTE") // PENDENTE | PAGA | EXPIRADA | CANCELADA
   /// Id da cobrança no gateway (`pay_...` no Asaas). Único de propósito: é a
   /// chave de idempotência do webhook — a mesma entrega, reprocessada, não pode
   /// renovar duas vezes.
@@ -535,10 +539,10 @@ model CobrancaRenovacao {
   criadoEm          DateTime  @default(now())
   atualizadoEm      DateTime  @updatedAt
 
-  licenca           Licenca    @relation(fields: [licencaId],   references: [id], onDelete: Cascade)
-  cliente           Cliente    @relation(fields: [clienteId],   references: [id], onDelete: Cascade)
-  plano             Plano      @relation(fields: [planoId],     references: [id])
-  pagamento         Pagamento? @relation(fields: [pagamentoId], references: [id])
+  licenca   Licenca    @relation(fields: [licencaId], references: [id], onDelete: Cascade)
+  cliente   Cliente    @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  plano     Plano      @relation(fields: [planoId], references: [id])
+  pagamento Pagamento? @relation(fields: [pagamentoId], references: [id])
 
   @@index([licencaId, status])
   @@index([status, expiraEm])
@@ -577,7 +581,7 @@ model InscricaoPush {
   /// apagar nada mas também não pode ficar sendo tentada para sempre.
   falhasSeguidas Int       @default(0)
 
-  usuario        Usuario?  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  usuario Usuario? @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
 
   @@index([usuarioId])
   @@map("inscricoes_push")
@@ -585,25 +589,207 @@ model InscricaoPush {
 
 // ── EmpresaFiscalConfig ──────────────────────────────────────────────────────
 model EmpresaFiscalConfig {
-  id                    String    @id @default(uuid())
-  clienteId             String    @unique
-  cnpj                  String    @unique
-  razaoSocial           String
-  inscricaoEstadual     String?
-  ambiente              Int       @default(2) // 1 = Produção, 2 = Homologação
-  
+  id                String  @id @default(uuid())
+  clienteId         String  @unique
+  cnpj              String  @unique
+  razaoSocial       String
+  inscricaoEstadual String?
+  ambiente          Int     @default(2) // 1 = Produção, 2 = Homologação
+
   certificadoNome       String?
   certificadoVencimento DateTime?
   certificadoStatus     String    @default("ATIVO") // ATIVO | VENCIDO | AUSENTE
 
-  focusEmpresaId        String?   // ID ou código identificador da empresa na Focus NFe
-  focusEmpresaToken     String?   // Token gerado pela Focus exclusivo para este emitente
-  
-  criadoEm              DateTime  @default(now())
-  atualizadoEm          DateTime  @updatedAt
+  focusEmpresaId    String? // ID ou código identificador da empresa na Focus NFe
+  focusEmpresaToken String? // Token gerado pela Focus exclusivo para este emitente
 
-  cliente               Cliente   @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  cliente Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
 
   @@map("empresas_fiscal_config")
 }
 
+// ── ConsumoFiscal ─────────────────────────────────────────────────────────────
+/// Quantas notas cada licença emitiu, por mês e por ambiente.
+///
+/// É um contador de EVENTOS, não um espelho de estado: registra o que aconteceu
+/// no instante em que aconteceu. Por isso não desanda — ao contrário de uma
+/// cópia da nota, que envelhece assim que a Focus muda o status dela e ninguém
+/// vem avisar.
+///
+/// Homologação conta em linha separada e NUNCA consome cota: o cliente testando
+/// a integração dele não pode gastar o pacote que pagou.
+model ConsumoFiscal {
+  id          String @id @default(uuid())
+  licencaId   String
+  /// Mês de competência no formato "2026-08", fechado no fuso de São Paulo —
+  /// senão a virada do mês para o cliente aconteceria às 21h do dia anterior.
+  competencia String
+  /// 1 = Produção, 2 = Homologação.
+  ambiente    Int
+
+  /// Qual documento: NFE | NFCE | NFSE.
+  ///
+  /// Usa o MESMO valor do `identificador` do módulo correspondente, e isso não é
+  /// coincidência: cada tipo de documento é vendido como um módulo próprio, com
+  /// cota própria. Um contador único para todos faria uma NFC-e comer a cota da
+  /// NF-e — erro de conta, não de arredondamento, e num número que vira fatura.
+  tipoDocumento String @default("NFE")
+
+  /// Emissões aceitas pela Focus. É este número que a cota compara.
+  emitidas   Int @default(0)
+  /// Cancelamentos NÃO devolvem cota: a nota chegou a existir na SEFAZ. Fica em
+  /// coluna própria para o painel conseguir explicar a diferença ao cliente.
+  canceladas Int @default(0)
+
+  /// Notas avulsas concedidas para ESTE mês, somadas ao teto do plano.
+  ///
+  /// Vive na linha da competência de propósito: o saldo morre na virada do mês,
+  /// junto com a linha. Se ficasse na licença, um pacote comprado em agosto
+  /// viraria crédito permanente e a cota mensal deixaria de ser mensal.
+  cotaExtra Int @default(0)
+
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  licenca Licenca @relation(fields: [licencaId], references: [id], onDelete: Cascade)
+
+  @@unique([licencaId, competencia, ambiente, tipoDocumento])
+  @@index([competencia])
+  @@map("consumo_fiscal")
+}
+
+// ── EmissaoLog ────────────────────────────────────────────────────────────────
+/// Trilha de suporte: o que foi pedido e o que a Focus respondeu.
+///
+/// Guarda o mínimo para responder "o cliente diz que não saiu nota ontem" e nada
+/// além disso. Sem valor da nota — o faturamento do cliente não é assunto desta
+/// plataforma — e sem dados do destinatário, que são de terceiros e não temos
+/// motivo para custodiar. Quem tem o documento é a Focus; quem tem o registro
+/// comercial é o ERP do próprio cliente.
+///
+/// Linha append-only, feita para ter retenção curta.
+model EmissaoLog {
+  id            String   @id @default(uuid())
+  licencaId     String
+  ref           String
+  ambiente      Int
+  /// NFE | NFCE | NFSE. Sem isto, investigar "não saiu nota na terça" obrigaria
+  /// a adivinhar de qual documento o cliente está falando.
+  tipoDocumento String   @default("NFE")
+  /// EMISSAO | CANCELAMENTO
+  acao          String
+  /// Status normalizado devolvido ao ERP, ou "falha" quando nem chegou lá.
+  resultado     String
+  /// Status HTTP da Focus, quando houve resposta.
+  httpStatus    Int?
+  /// Mensagem da SEFAZ/Focus, truncada. Nunca o corpo da nota.
+  mensagem      String?
+  criadoEm      DateTime @default(now())
+
+  licenca Licenca @relation(fields: [licencaId], references: [id], onDelete: Cascade)
+
+  @@index([licencaId, criadoEm])
+  @@index([ref])
+  @@map("emissao_log")
+}
+
+// ── Modulo ────────────────────────────────────────────────────────────────────
+/// Catálogo de módulos vendáveis (FISCAL, CRM, ESTOQUE...).
+///
+/// Tabela e não enum: o painel precisa cadastrar módulo novo sem deploy, e um
+/// enum obrigaria migração a cada produto novo.
+model Modulo {
+  id String @id @default(uuid())
+
+  /// Chave técnica que viaja no JWT e que o ERP compara. IMUTÁVEL depois de
+  /// criada: renomear aqui invalidaria silenciosamente todo token já emitido em
+  /// campo, que continuaria carregando o identificador antigo por até 7 dias.
+  identificador String @unique
+
+  /// Nome legível — é por ele que o admin escolhe na tela. Este pode mudar à
+  /// vontade, justamente porque nada depende dele para autorizar.
+  nome      String
+  descricao String?
+  /// Nome do ícone lucide usado no painel (ex.: "FileText").
+  icone     String?
+  ativo     Boolean @default(true)
+  /// Ordem de exibição na lista do painel.
+  ordem     Int     @default(0)
+
+  /// Preço de venda avulsa por mês, para quem contrata fora do plano.
+  ///
+  /// NULO = não vendido à parte: o módulo existe, mas só chega ao cliente vindo
+  /// de um plano ou de uma concessão manual. É o padrão, e é o que impede um
+  /// módulo recém-cadastrado de aparecer à venda por descuido.
+  ///
+  /// Guardado como valor, não como id de gateway: o preço é a decisão comercial
+  /// e não muda se você trocar de meio de pagamento. O identificador do gateway,
+  /// quando existir, é consequência disto e não o contrário.
+  precoMensal Decimal? @db.Decimal(10, 2)
+
+  criadoEm DateTime @default(now())
+
+  planos PlanoModulo[]
+  extras LicencaModuloExtra[]
+
+  @@map("modulos")
+}
+
+// ── PlanoModulo ───────────────────────────────────────────────────────────────
+/// Quais módulos já vêm inclusos em cada plano, e com que teto.
+model PlanoModulo {
+  planoId  String
+  moduloId String
+
+  /// Teto mensal deste módulo neste plano. NULO = sem teto.
+  ///
+  /// A cota mora aqui e não no plano porque ela é uma propriedade do módulo
+  /// DENTRO do plano: "o Plano Start inclui fiscal com 100 notas". No plano, um
+  /// segundo módulo medido exigiria uma segunda coluna, e uma terceira depois.
+  ///
+  /// Vínculo ausente também significa sem teto — é o que mantém o comportamento
+  /// de hoje para todo plano que ainda não foi configurado.
+  cotaMensal Int?
+
+  plano  Plano  @relation(fields: [planoId], references: [id], onDelete: Cascade)
+  modulo Modulo @relation(fields: [moduloId], references: [id], onDelete: Cascade)
+
+  @@id([planoId, moduloId])
+  @@map("plano_modulos")
+}
+
+// ── LicencaModuloExtra ────────────────────────────────────────────────────────
+/// Módulo contratado à parte por uma licença, fora do que o plano dela inclui.
+///
+/// Também é onde mora a cortesia: liberar um módulo para teste ou suporte não
+/// pode exigir trocar o plano do cliente, que mexeria no preço e no que todo
+/// mundo daquele plano recebe.
+model LicencaModuloExtra {
+  licencaId String
+  moduloId  String
+
+  dataContratacao DateTime  @default(now())
+  /// Até quando vale. NULO = acompanha o ciclo da licença.
+  ///
+  /// Obrigatório na prática para cortesia: cortesia sem prazo não é cortesia, é
+  /// gratuidade permanente concedida por esquecimento.
+  dataVencimento  DateTime?
+
+  /// Nulo quando é cortesia — não houve cobrança para registrar.
+  valorCobrado Decimal? @db.Decimal(10, 2)
+  cortesia     Boolean  @default(false)
+  observacao   String?
+
+  /// Teto próprio deste extra. NULO = sem teto.
+  cotaMensal Int?
+
+  licenca Licenca @relation(fields: [licencaId], references: [id], onDelete: Cascade)
+  modulo  Modulo  @relation(fields: [moduloId], references: [id], onDelete: Cascade)
+
+  @@id([licencaId, moduloId])
+  @@index([dataVencimento])
+  @@map("licencas_modulos_extras")
+}

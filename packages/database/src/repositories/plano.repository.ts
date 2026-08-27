@@ -13,14 +13,14 @@ export async function findAllPlanos() {
 export async function findAllPlanosAdmin() {
   return prisma.plano.findMany({
     orderBy: { criadoEm: 'asc' },
-    include: { _count: { select: { licencas: true } } },
+    include: { _count: { select: { licencas: true } }, modulos: { include: { modulo: true } } },
   })
 }
 
 export async function findPlanoById(id: string) {
   return prisma.plano.findUnique({
     where:   { id },
-    include: { _count: { select: { licencas: true } } },
+    include: { _count: { select: { licencas: true } }, modulos: { include: { modulo: true } } },
   })
 }
 

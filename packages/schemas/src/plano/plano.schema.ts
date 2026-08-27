@@ -18,6 +18,18 @@ export const criarPlanoSchema = z.object({
   stripePriceIdMensal:    z.string().optional(),
   stripePriceIdTrimestral: z.string().optional(),
   stripePriceIdAnual:     z.string().optional(),
+  /**
+   * Módulos inclusos neste plano, pelo identificador do catálogo.
+   *
+   * O formulário manda sempre o conjunto COMPLETO, e omitir o campo significa
+   * "não mexe nos módulos" — é o que permite salvar preço sem tocar no que o
+   * plano libera. Lista vazia, ao contrário, significa "nenhum módulo".
+   */
+  modulos: z.array(z.object({
+    identificador: z.string().min(1),
+    // Teto mensal deste módulo neste plano. `null` = sem teto.
+    cotaMensal:    z.number().int().min(0).nullable().optional(),
+  })).optional(),
 })
 
 export const editarPlanoSchema = criarPlanoSchema.partial()

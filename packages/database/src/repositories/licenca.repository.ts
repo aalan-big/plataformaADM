@@ -1,9 +1,49 @@
 import { randomUUID } from 'crypto'
 import { prisma } from '../client'
 
+/**
+ * Os módulos vêm JUNTO com a licença, e não numa consulta à parte.
+ *
+ * Este include serve o caminho de validação, que todo ERP no ar percorre a cada
+ * 24h. Resolver os módulos depois custaria duas idas ao banco por revalidação,
+ * multiplicadas por toda a base — aqui elas viajam de carona numa query que já
+ * estava acontecendo.
+ */
 const includeCompleto = {
   cliente: { include: { pf: true, pj: true } },
-  plano:   { select: { nome: true, precoMensal: true, precoTrimestral: true, precoAnual: true, limiteUsuario: true, descontoTrimestral: true, descontoAnual: true, stripePriceIdMensal: true, stripePriceIdTrimestral: true, stripePriceIdAnual: true } },
+  plano:   { select: { nome: true, precoMensal: true, precoTrimestral: true, precoAnual: true, limiteUsuario: true, descontoTrimestral: true, descontoAnual: true, stripePriceIdMensal: true, stripePriceIdTrimestral: true, stripePriceIdAnual: true,
+    modulos: { select: { cotaMensal: true, modulo: { select: { identificador: true, ativo: true } } } },
+  } },
+  modulosExtras: { select: { dataVencimento: true, cotaMensal: true, modulo: { select: { identificador: true, ativo: true } } } },
+}
+
+/** Formato mínimo que `modulosDaLicenca` precisa enxergar. */
+type LicencaComModulos = {
+  plano?:         { modulos?: { modulo: { identificador: string; ativo: boolean } }[] } | null
+  modulosExtras?: { dataVencimento: Date | null; modulo: { identificador: string; ativo: boolean } }[]
+}
+
+/**
+ * Lista consolidada de módulos que uma licença pode usar.
+ *
+ * União de "o que o plano inclui" com "o que foi contratado à parte", sem
+ * duplicata. Extra vencido fica de fora, e módulo desativado no catálogo também
+ * — desativar no catálogo é a forma de tirar um produto de circulação sem
+ * precisar caçar todos os planos que o referenciam.
+ *
+ * Função pura, sobre dados já carregados: é ela que roda dentro da assinatura do
+ * token, onde não pode haver await.
+ */
+export function modulosDaLicenca(licenca: LicencaComModulos, agora: Date = new Date()): string[] {
+  const doPlano = (licenca.plano?.modulos ?? [])
+    .filter(pm => pm.modulo.ativo)
+    .map(pm => pm.modulo.identificador)
+
+  const extras = (licenca.modulosExtras ?? [])
+    .filter(e => e.modulo.ativo && (!e.dataVencimento || e.dataVencimento > agora))
+    .map(e => e.modulo.identificador)
+
+  return Array.from(new Set([...doPlano, ...extras])).sort()
 }
 
 export async function findLicencaById(id: string) {
