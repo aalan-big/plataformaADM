@@ -314,13 +314,19 @@ export class RenovacaoService {
 
       this.logger.warn(`[renovacao] cobrança ${pendente.id} (${pendente.gatewayCobrancaId}) não é mais pagável no gateway — cancelada e refeita`)
       await marcarCobrancaStatus(pendente.id, 'CANCELADA')
-    }
-
-    // Linha órfã: criada aqui, mas o Asaas nunca chegou a receber a cobrança
-    // (queda de rede, chave errada, timeout). Do lado de fora não existe nada
-    // para pagar. Reaproveitá-la seria devolver "gerando PIX" para sempre até
-    // ela expirar — então é encerrada e uma nova nasce logo abaixo.
-    if (pendente) {
+    } else if (pendente) {
+      /**
+       * Linha órfã: criada aqui, mas o Asaas nunca chegou a receber a cobrança
+       * (queda de rede, chave errada, timeout). Do lado de fora não existe nada
+       * para pagar. Reaproveitá-la seria devolver "gerando PIX" para sempre até
+       * ela expirar — então é encerrada e uma nova nasce logo abaixo.
+       *
+       * `else if` e não `if`: sem isso, a cobrança que o ramo acima acabou de
+       * cancelar caía aqui também e ganhava um segundo aviso dizendo que não
+       * tinha correspondente no gateway — o que era falso, ela tinha. Log que
+       * mente é pior que log ausente: manda investigar falha de comunicação
+       * onde houve cobrança deletada.
+       */
       this.logger.warn(`[renovacao] cobrança ${pendente.id} sem correspondente no gateway — cancelada e refeita`)
       await marcarCobrancaStatus(pendente.id, 'CANCELADA')
     }
