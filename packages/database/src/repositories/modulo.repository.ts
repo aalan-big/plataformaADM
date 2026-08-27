@@ -267,3 +267,63 @@ export async function listarModulosDetalhado() {
     licencasAvulsas: porModulo.get(m.id) ?? 0,
   }))
 }
+
+/**
+ * Módulos avulsos que devem ser COBRADOS na renovação desta licença.
+ *
+ * Três filtros, cada um por um motivo diferente:
+ * - `cortesia: false` — cortesia é presente; cobrar seria contradizer a própria
+ *   concessão, e o cliente veria na fatura algo que você disse ser grátis.
+ * - `valorCobrado != null` — extra sem valor registrado não tem quanto cobrar.
+ *   Chutar um número aqui seria inventar dívida.
+ * - Vencimento no futuro ou nulo — extra já vencido não renova junto; ele
+ *   acabou, e ressuscitá-lo pela fatura seria vender sem o cliente pedir.
+ */
+export async function modulosCobraveisDaLicenca(licencaId: string, agora: Date = new Date()) {
+  const extras = await prisma.licencaModuloExtra.findMany({
+    where: {
+      licencaId,
+      cortesia:     false,
+      valorCobrado: { not: null },
+      OR: [{ dataVencimento: null }, { dataVencimento: { gt: agora } }],
+    },
+    include: { modulo: { select: { identificador: true, nome: true } } },
+  })
+
+  return extras.map(e => ({
+    identificador: e.modulo.identificador,
+    nome:          e.modulo.nome,
+    // Valor MENSAL. Quem multiplica pelo período é quem monta a cobrança.
+    valorMensal:   Number(e.valorCobrado),
+  }))
+}
+
+/**
+ * Empurra o vencimento dos módulos avulsos junto com a renovação da licença.
+ *
+ * Sem isto o cliente paga 3 meses de módulo numa renovação trimestral e perde o
+ * acesso depois de 1 — teria comprado algo que expira antes de ser usado.
+ *
+ * Só mexe em quem tem `dataVencimento`: extra com data nula já acompanha o ciclo
+ * da licença por definição, e escrever uma data nele o transformaria em algo
+ * mais curto do que era.
+ */
+export async function estenderModulosExtras(licencaId: string, meses: number, agora: Date = new Date()) {
+  const extras = await prisma.licencaModuloExtra.findMany({
+    where: { licencaId, cortesia: false, dataVencimento: { not: null } },
+    select: { moduloId: true, dataVencimento: true },
+  })
+
+  for (const e of extras) {
+    // Estende a partir do que sobrava, não de hoje: renovar cedo não pode custar
+    // dias ao cliente.
+    const base = e.dataVencimento! > agora ? new Date(e.dataVencimento!) : new Date(agora)
+    base.setMonth(base.getMonth() + meses)
+    await prisma.licencaModuloExtra.update({
+      where: { licencaId_moduloId: { licencaId, moduloId: e.moduloId } },
+      data:  { dataVencimento: base },
+    })
+  }
+
+  return extras.length
+}

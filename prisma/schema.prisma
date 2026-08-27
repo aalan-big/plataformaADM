@@ -520,6 +520,17 @@ model CobrancaRenovacao {
   /// Em reais, como todo o resto do sistema (Decimal 10,2). A conversão para os
   /// centavos que o ERP espera acontece só na borda do endpoint.
   valor             Decimal   @db.Decimal(10, 2)
+
+  /// Quanto do `valor` é do PLANO, sem os módulos avulsos somados.
+  ///
+  /// Gravado junto com a cobrança pelo mesmo motivo que `meses` e `planoId`: o
+  /// webhook não recalcula nada: o cliente pode ganhar ou perder um módulo entre
+  /// gerar o PIX e pagá-lo, e a comissão tem que sair sobre o que foi cobrado
+  /// naquele dia, não sobre o estado de hoje.
+  ///
+  /// NULO nas linhas antigas, e o consumidor trata nulo como "o total é tudo
+  /// plano" — que é exatamente o que era verdade antes de existir módulo avulso.
+  valorPlano        Decimal?  @db.Decimal(10, 2)
   gateway           String // ASAAS | STRIPE
   metodo            String // PIX | CARTAO
   status            String    @default("PENDENTE") // PENDENTE | PAGA | EXPIRADA | CANCELADA

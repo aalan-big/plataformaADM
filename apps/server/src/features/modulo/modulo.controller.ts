@@ -1,10 +1,11 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, NotFoundException, BadRequestException } from '@nestjs/common'
+import { Controller, Get, Post, Patch, Delete, Body, Param, NotFoundException, BadRequestException, Logger } from '@nestjs/common'
 import {
   listarModulosDetalhado,
   modulosDaLicencaDetalhado,
   concederModuloExtra,
   revogarModuloExtra,
   atualizarModulo,
+  cancelarPixPendentesDaLicenca,
 } from '@startbig/database'
 import { concederModuloExtraSchema, editarModuloSchema } from '@startbig/schemas'
 import { Roles } from '../../core/decorators/roles.decorator'
@@ -22,6 +23,8 @@ import { ZodError } from 'zod'
 @Roles('ADMIN')
 @Controller('modulo')
 export class ModuloController {
+  private readonly logger = new Logger(ModuloController.name)
+
   private parse<T>(schema: { parse: (x: unknown) => T }, body: unknown): T {
     try {
       return schema.parse(body)
@@ -75,6 +78,17 @@ export class ModuloController {
     })
     if (!criado) throw new NotFoundException(`Módulo desconhecido: ${dados.identificador}.`)
 
+    /**
+     * Fecha PIX pendente: o valor da renovação acabou de mudar, e a trava de
+     * idempotência casa por licença/meses/método/plano, sem olhar valor. Sem
+     * isto o cliente pagaria o PIX antigo e levaria o módulo sem ser cobrado —
+     * ou pagaria por um que acabou de perder.
+     */
+    const fechadas = await cancelarPixPendentesDaLicenca(licencaId)
+    if (fechadas.count > 0) {
+      this.logger.log(`[modulo] ${fechadas.count} PIX pendente(s) da licença ${licencaId} cancelado(s) — o valor da renovação mudou.`)
+    }
+
     return { data: await modulosDaLicencaDetalhado(licencaId) }
   }
 
@@ -85,6 +99,17 @@ export class ModuloController {
   ) {
     const r = await revogarModuloExtra(licencaId, identificador)
     if (!r) throw new NotFoundException(`Módulo desconhecido: ${identificador}.`)
+    /**
+     * Fecha PIX pendente: o valor da renovação acabou de mudar, e a trava de
+     * idempotência casa por licença/meses/método/plano, sem olhar valor. Sem
+     * isto o cliente pagaria o PIX antigo e levaria o módulo sem ser cobrado —
+     * ou pagaria por um que acabou de perder.
+     */
+    const fechadas = await cancelarPixPendentesDaLicenca(licencaId)
+    if (fechadas.count > 0) {
+      this.logger.log(`[modulo] ${fechadas.count} PIX pendente(s) da licença ${licencaId} cancelado(s) — o valor da renovação mudou.`)
+    }
+
     return { data: await modulosDaLicencaDetalhado(licencaId) }
   }
 }

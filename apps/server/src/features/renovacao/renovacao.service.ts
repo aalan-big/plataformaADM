@@ -17,6 +17,7 @@ import {
   findLicencaById,
   criarCobrancaRenovacao,
   findCobrancaPendente,
+  modulosCobraveisDaLicenca,
   findCobrancaRenovacaoById,
   anexarDadosDoGateway,
   marcarCobrancaStatus,
@@ -144,7 +145,25 @@ export class RenovacaoService {
 
     if (dados.metodo === 'CARTAO') return this.checkoutCartao(licenca, meses)
 
-    return this.cobrancaPix({ licenca, plano, meses, valor: opcao.total, rotulo: opcao.label, planoId: licenca.planoId })
+    /**
+     * Módulos avulsos entram no valor do PIX.
+     *
+     * A soma é feita AQUI e não dentro de `montarOpcoes`: aquela função também
+     * serve a contratação pública, tela de pagamento e listagem de planos, onde
+     * extras não existem — quem está contratando ainda nem tem licença. Somar
+     * lá vazaria o valor de um cliente para a vitrine de todos.
+     */
+    const extras = await modulosCobraveisDaLicenca(licenca.id)
+    const totalExtras = extras.reduce((s, e) => s + e.valorMensal, 0) * meses
+
+    return this.cobrancaPix({
+      licenca, plano, meses,
+      valor:      opcao.total + totalExtras,
+      valorPlano: opcao.total,
+      extras,
+      rotulo:     opcao.label,
+      planoId:    licenca.planoId,
+    })
   }
 
   // ── PIX gerado pelo painel (admin) ────────────────────────────────────────
@@ -202,13 +221,20 @@ export class RenovacaoService {
         `O plano "${planoAlvo.nome}" não tem preço próprio cadastrado para ${meses} mês(es), então não pode ser vendido por PIX nesse período.`,
       )
 
+    // Módulos avulsos entram aqui também: numa troca de plano o cliente continua
+    // com o que contratou à parte, e a cobrança precisa refletir isso.
+    const extras = await modulosCobraveisDaLicenca(licenca.id)
+    const totalExtras = extras.reduce((s, e) => s + e.valorMensal, 0) * meses
+
     const resposta = await this.cobrancaPix({
       licenca,
-      plano:   planoAlvo,
+      plano:      planoAlvo,
       meses,
-      valor:   opcao.total,
-      rotulo:  opcao.label,
-      planoId: trocaDePlano ? entrada.planoId! : licenca.planoId,
+      valor:      opcao.total + totalExtras,
+      valorPlano: opcao.total,
+      extras,
+      rotulo:     opcao.label,
+      planoId:    trocaDePlano ? entrada.planoId! : licenca.planoId,
     })
 
     // O painel precisa saber que é troca para avisar o operador na tela.
@@ -221,7 +247,19 @@ export class RenovacaoService {
     licenca: Awaited<ReturnType<RenovacaoCredencialService['resolverLicenca']>>
     plano:   { nome: string }
     meses:   number
+    /** Total cobrado: plano + módulos avulsos do período. */
     valor:   number
+    /**
+     * A parte do total que é do PLANO, sem os módulos.
+     *
+     * Viaja separada porque a comissão do parceiro sai sobre ela: ele indicou o
+     * cliente para o plano, não vendeu o módulo. Sem essa separação, um parceiro
+     * percentual passaria a receber sobre um produto que você vendeu sozinho,
+     * todo mês, para sempre.
+     */
+    valorPlano?: number
+    /** Detalhe dos módulos somados, para o ERP exibir a composição. */
+    extras?: { identificador: string; nome: string; valorMensal: number }[]
     rotulo:  string
     /**
      * O plano que está sendo PAGO — nem sempre o plano atual da licença.
@@ -233,6 +271,8 @@ export class RenovacaoService {
     planoId: string
   }) {
     const { licenca, plano, meses, valor, rotulo, planoId } = params
+    const extras     = params.extras ?? []
+    const valorPlano = params.valorPlano ?? valor
 
     if (!this.asaas.disponivel())
       throw this.credencial.erro(HttpStatus.SERVICE_UNAVAILABLE, 'METODO_INDISPONIVEL', 'PIX ainda não está habilitado.')
@@ -279,6 +319,7 @@ export class RenovacaoService {
       planoId,
       meses,
       valor,
+      valorPlano,
       gateway:   'ASAAS',
       metodo:    'PIX',
       // Provisório: substituído pela validade real que o QR devolver.
@@ -368,15 +409,31 @@ export class RenovacaoService {
     c: NonNullable<Awaited<ReturnType<typeof findCobrancaRenovacaoById>>>,
     meses: number,
   ) {
+    const total  = Number(c.valor)
+    const doPlano = c.valorPlano != null ? Number(c.valorPlano) : total
+    const extras = Math.round((total - doPlano) * 100) / 100
+
     return {
       cobrancaId:    c.id,
       metodo:        c.metodo,
       status:        c.status,
       pixCopiaECola: c.copiaECola,
       qrCodeBase64:  c.qrCodeBase64,
-      valorCentavos: emCentavos(Number(c.valor)),
+      valorCentavos: emCentavos(total),
       meses,
       expiraEm:      c.expiraEm,
+
+      /**
+       * Composição do valor, para o ERP conseguir explicar o total na tela.
+       *
+       * Um valor que muda sozinho de R$ 59,90 para R$ 109,90 sem justificativa
+       * visível é chamado de suporte garantido — o cliente não lembra que
+       * contratou um módulo mês passado, e a primeira hipótese dele é erro
+       * nosso. `valorModulosCentavos` só é diferente de zero quando há módulo
+       * avulso cobrado, então o ERP pode esconder a linha no caso normal.
+       */
+      valorPlanoCentavos:   emCentavos(doPlano),
+      valorModulosCentavos: emCentavos(extras),
     }
   }
 

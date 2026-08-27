@@ -39,6 +39,7 @@ import {
   marcarCobrancaStatus,
   findCobrancasRenovacao,
   contarCobrancasPorStatus,
+  estenderModulosExtras,
 } from '@startbig/database'
 import { confirmarPagamentoSchema, gerarCobrancaSchema } from '@startbig/schemas'
 import { EmailService } from '../../core/email/email.service'
@@ -683,16 +684,48 @@ export class FinanceiroService {
       }
     }
 
-    // O valor lançado é o que ENTROU, não o que foi cobrado: o financeiro tem
-    // que refletir o extrato, e a comissão do parceiro sai sobre o real.
+    /**
+     * Módulos avulsos renovam junto com a licença.
+     *
+     * O valor deles já entrou no PIX que acabou de ser pago, então o acesso tem
+     * que acompanhar: sem isto o cliente pagaria três meses de módulo numa
+     * renovação trimestral e perderia o acesso depois do primeiro.
+     */
+    try {
+      const estendidos = await estenderModulosExtras(licenca.id, cobranca.meses)
+      if (estendidos > 0)
+        this.logger.log(`[modulo] ${estendidos} módulo(s) avulso(s) da licença ${licenca.id} estendido(s) por ${cobranca.meses} mês(es).`)
+    } catch (err) {
+      // Best-effort: o dinheiro entrou e a licença renova de qualquer jeito.
+      // Falhar aqui não pode desfazer um pagamento confirmado.
+      this.logger.error(`[modulo] falha ao estender módulos da licença ${licenca.id}: ${err instanceof Error ? err.message : err}`)
+    }
+
+    /**
+     * O valor lançado no financeiro é o que ENTROU — o extrato tem que bater.
+     *
+     * Já a base da COMISSÃO é só a parte do plano. O parceiro indicou o cliente
+     * para o plano; o módulo avulso foi venda sua. Sem separar, um parceiro
+     * percentual passaria a receber sobre o módulo todo mês, para sempre.
+     *
+     * A proporção sai da cobrança, não de um recálculo: entre gerar o PIX e
+     * pagá-lo o cliente pode ter ganhado ou perdido um módulo, e a comissão tem
+     * que sair sobre o que foi cobrado naquele dia.
+     */
+    const cobrado    = Number(cobranca.valor)
+    const doPlano    = cobranca.valorPlano != null ? Number(cobranca.valorPlano) : cobrado
+    const proporcao  = cobrado > 0 ? doPlano / cobrado : 1
+    const baseComissao = Math.round(params.valorPago * proporcao * 100) / 100
+
     const resultado = await this.processarRenovacao({
       licenca,
-      meses:       cobranca.meses,
-      valor:       params.valorPago,
-      transacaoId: params.gatewayCobrancaId,
-      gateway:     'ASAAS',
-      origem:      'ASAAS',
-      descricao:   `PIX Asaas — ${cobranca.meses} mês(es)`,
+      meses:        cobranca.meses,
+      valor:        params.valorPago,
+      valorComissionavel: baseComissao,
+      transacaoId:  params.gatewayCobrancaId,
+      gateway:      'ASAAS',
+      origem:       'ASAAS',
+      descricao:    `PIX Asaas — ${cobranca.meses} mês(es)`,
     })
 
     // SÓ AGORA a cobrança vira PAGA (invariante I2 do contrato do ERP). O app
@@ -825,12 +858,21 @@ export class FinanceiroService {
     licenca:      Awaited<ReturnType<typeof findLicencaById>>
     meses:        number
     valor:        number
+    /**
+     * Base da comissão do parceiro, quando diferente do valor total.
+     *
+     * Existe por causa dos módulos avulsos: eles entram no valor cobrado mas não
+     * são venda do parceiro. Omitido = o total inteiro é comissionável, que é o
+     * caso de toda renovação sem módulo.
+     */
+    valorComissionavel?: number
     transacaoId:  string
     gateway:      string
     origem:       string
     descricao:    string
   }) {
     const { licenca, meses, valor, transacaoId, gateway, origem, descricao } = params
+    const valorComissionavel = params.valorComissionavel ?? valor
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
 
     const nomeCliente = !!licenca.cliente.pf
@@ -854,7 +896,9 @@ export class FinanceiroService {
     // Funil único de checkout, renovação automática e Asaas — é aqui que a
     // comissão recorrente nasce, uma linha por pagamento, proporcional aos meses.
     await this.parceiroService.apurarComissao({
-      id: pagamento.id, clienteId: licenca.clienteId, licencaId: licenca.id, valor, meses,
+      id: pagamento.id, clienteId: licenca.clienteId, licencaId: licenca.id,
+      // Só a parte do plano — módulo avulso não é venda do parceiro.
+      valor: valorComissionavel, meses,
     })
 
     try {

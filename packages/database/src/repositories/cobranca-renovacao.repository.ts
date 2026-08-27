@@ -24,17 +24,23 @@ export async function criarCobrancaRenovacao(dados: {
   planoId:    string
   meses:      number
   valor:      number
+  /**
+   * Parte do `valor` que é do plano, sem os módulos avulsos. Omitido significa
+   * "tudo plano" — o caso de toda cobrança que não envolve módulo.
+   */
+  valorPlano?: number
   gateway:    string
   metodo:     string
   expiraEm?:  Date | null
 }) {
   return prisma.cobrancaRenovacao.create({
     data: {
-      licencaId: dados.licencaId,
-      clienteId: dados.clienteId,
-      planoId:   dados.planoId,
-      meses:     dados.meses,
-      valor:     dados.valor,
+      licencaId:  dados.licencaId,
+      clienteId:  dados.clienteId,
+      planoId:    dados.planoId,
+      meses:      dados.meses,
+      valor:      dados.valor,
+      valorPlano: dados.valorPlano ?? dados.valor,
       gateway:   dados.gateway,
       metodo:    dados.metodo,
       status:    'PENDENTE',
@@ -171,4 +177,29 @@ export async function contarCobrancasPorStatus() {
     acc[l.status] = l._count
     return acc
   }, {})
+}
+
+/**
+ * Fecha os PIX pendentes de uma licença.
+ *
+ * Chamado quando um módulo avulso é concedido ou revogado, porque o valor da
+ * cobrança muda e a trava de idempotência NÃO olha valor — ela casa por licença,
+ * meses, método e plano. Sem isto:
+ *
+ *   1. cliente gera o PIX de R$ 59,90
+ *   2. você concede NF-e por R$ 50,00
+ *   3. ele paga os R$ 59,90 que já estavam na tela
+ *   4. o módulo renova junto, e os R$ 50,00 nunca foram cobrados
+ *
+ * O inverso é pior: revogar um módulo deixaria de pé um PIX cobrando por algo
+ * que o cliente não tem mais.
+ *
+ * Cancelar é seguro porque uma cobrança PENDENTE é só intenção — ninguém pagou.
+ * O próximo pedido gera um PIX novo, com o valor certo.
+ */
+export async function cancelarPixPendentesDaLicenca(licencaId: string) {
+  return prisma.cobrancaRenovacao.updateMany({
+    where: { licencaId, status: 'PENDENTE', metodo: 'PIX' },
+    data:  { status: 'CANCELADA' },
+  })
 }
