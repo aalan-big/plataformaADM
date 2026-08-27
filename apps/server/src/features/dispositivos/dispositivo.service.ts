@@ -192,6 +192,7 @@ export class DispositivoService {
     emCarencia: boolean
     dataLimiteCarencia: Date | null
     diasRestantesCarencia: number | null
+    diasRestantes: number | null
   } {
     const agora = new Date()
 
@@ -226,6 +227,27 @@ export class DispositivoService {
 
     const diasRestantesCarencia = emCarencia
       ? Math.max(0, Math.ceil((params.carenciaAte!.getTime() - agora.getTime()) / 86_400_000))
+      : null
+
+    /**
+     * Dias até o vencimento, para o ERP exibir a contagem em QUALQUER licença —
+     * não só nas de teste.
+     *
+     * O ERP já podia derivar isto do `dataVencimento` que sempre mandamos, mas
+     * calculado NA MÁQUINA DO CLIENTE ele depende do relógio dela: um PC com a
+     * data errada mostraria ao lojista um número que não é o que o servidor
+     * considera. É a mesma razão pela qual o ciclo de backup é calculado aqui e
+     * lido de lá, nunca o contrário.
+     *
+     * Fica FORA do token assinado de propósito: o JWT vive até 7 dias, e um
+     * número de dias congelado dentro dele mostraria "faltam 30" na semana
+     * inteira. Este campo vai no corpo, recalculado a cada validação.
+     *
+     * Nulo quando a licença não tem vencimento. Zero significa vencida hoje —
+     * o que não é o mesmo que bloqueada, que continua sendo o `status`.
+     */
+    const diasRestantes = params.dataVencimento
+      ? Math.max(0, Math.ceil((params.dataVencimento.getTime() - agora.getTime()) / 86_400_000))
       : null
 
     const token = jwt.sign(
@@ -265,6 +287,7 @@ export class DispositivoService {
 
     return {
       token,
+      diasRestantes,
       ultimaSincronizacao: agora,
       gracePeriodDias:     GRACE_PERIOD_DIAS,
       proximaValidacaoEm,

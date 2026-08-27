@@ -221,7 +221,8 @@ Content-Type: application/json
   "token": "eyJhbGciOiJSUzI1NiIs...",
   "ultimaSincronizacao": "...",
   "gracePeriodDias": 7,
-  "proximaValidacaoEm": "..."
+  "proximaValidacaoEm": "...",
+  "diasRestantes": 23
 }
 ```
 
@@ -299,7 +300,8 @@ Content-Type: application/json
   "token": "...",
   "ultimaSincronizacao": "...",
   "gracePeriodDias": 7,
-  "proximaValidacaoEm": "..."
+  "proximaValidacaoEm": "...",
+  "diasRestantes": 23
 }
 ```
 
@@ -310,6 +312,12 @@ Content-Type: application/json
 ```
 
 Possíveis motivos: `Licença bloqueada`, `Licença suspensa`, `Licença revogada`, `Licença vencida`, `Licença não encontrada`.
+
+**`diasRestantes`** — dias até o vencimento, recalculado a cada chamada. Vem em `conectar`, `validar` e `auto-cadastro`, para QUALQUER licença: paga, trial ou em carência. É o campo para exibir a contagem no menu do ERP.
+
+Use ele em vez de calcular a partir de `dataVencimento` na máquina do cliente: o relógio do PC pode estar errado, e aí o lojista vê um número diferente do que o servidor considera. Mesma razão pela qual o ciclo de backup é calculado aqui e lido daí.
+
+`null` = licença sem vencimento. `0` = venceu — o que não é o mesmo que bloqueada, que continua sendo o `status`.
 
 **Grace period:** mesmo sem internet, o ERP pode continuar funcionando localmente por até **7 dias** usando o último token válido (verificado com a chave pública RSA — ver seção 9). Depois disso, exige nova validação online.
 
