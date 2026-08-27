@@ -6,6 +6,7 @@ import {
   revogarModuloExtra,
   atualizarModulo,
   cancelarPixPendentesDaLicenca,
+  modulosCobraveisDaLicenca,
 } from '@startbig/database'
 import { concederModuloExtraSchema, editarModuloSchema } from '@startbig/schemas'
 import { Roles } from '../../core/decorators/roles.decorator'
@@ -24,6 +25,27 @@ import { ZodError } from 'zod'
 @Controller('modulo')
 export class ModuloController {
   private readonly logger = new Logger(ModuloController.name)
+
+  /**
+   * Fecha os PIX pendentes da licença — mas SÓ quando o valor da renovação
+   * mudou de fato.
+   *
+   * A trava de idempotência casa por licença/meses/método/plano e não olha
+   * valor, então um PIX gerado antes da concessão continuaria cobrando o valor
+   * velho: o cliente pagaria R$ 59,90 e levaria o módulo sem ser cobrado.
+   *
+   * O `if` importa tanto quanto o cancelamento. Cortesia e concessão sem valor
+   * não alteram o total, e cancelar nesses casos derrubaria o copia-e-cola que o
+   * cliente já tem aberto na tela — ele veria o PIX morrer sozinho, sem nada ter
+   * mudado para ele.
+   */
+  private async fecharPixSeMudouValor(licencaId: string, mudouValor: boolean) {
+    if (!mudouValor) return
+    const fechadas = await cancelarPixPendentesDaLicenca(licencaId)
+    if (fechadas.count > 0) {
+      this.logger.log(`[modulo] ${fechadas.count} PIX pendente(s) da licença ${licencaId} cancelado(s) — o valor da renovação mudou.`)
+    }
+  }
 
   private parse<T>(schema: { parse: (x: unknown) => T }, body: unknown): T {
     try {
@@ -78,17 +100,9 @@ export class ModuloController {
     })
     if (!criado) throw new NotFoundException(`Módulo desconhecido: ${dados.identificador}.`)
 
-    /**
-     * Fecha PIX pendente: o valor da renovação acabou de mudar, e a trava de
-     * idempotência casa por licença/meses/método/plano, sem olhar valor. Sem
-     * isto o cliente pagaria o PIX antigo e levaria o módulo sem ser cobrado —
-     * ou pagaria por um que acabou de perder.
-     */
-    const fechadas = await cancelarPixPendentesDaLicenca(licencaId)
-    if (fechadas.count > 0) {
-      this.logger.log(`[modulo] ${fechadas.count} PIX pendente(s) da licença ${licencaId} cancelado(s) — o valor da renovação mudou.`)
-    }
-
+    // Só concessão COBRADA mexe no valor da renovação. Cortesia não.
+    const mudaValor = !dados.cortesia && (dados.valorCobrado ?? 0) > 0
+    await this.fecharPixSeMudouValor(licencaId, mudaValor)
     return { data: await modulosDaLicencaDetalhado(licencaId) }
   }
 
@@ -97,19 +111,17 @@ export class ModuloController {
     @Param('licencaId') licencaId: string,
     @Param('identificador') identificador: string,
   ) {
+    /**
+     * Precisa saber ANTES de apagar se o extra era cobrado — depois da remoção
+     * a informação não existe mais para consultar.
+     */
+    const cobraveis = await modulosCobraveisDaLicenca(licencaId)
+    const eraCobrado = cobraveis.some(m => m.identificador === identificador)
+
     const r = await revogarModuloExtra(licencaId, identificador)
     if (!r) throw new NotFoundException(`Módulo desconhecido: ${identificador}.`)
-    /**
-     * Fecha PIX pendente: o valor da renovação acabou de mudar, e a trava de
-     * idempotência casa por licença/meses/método/plano, sem olhar valor. Sem
-     * isto o cliente pagaria o PIX antigo e levaria o módulo sem ser cobrado —
-     * ou pagaria por um que acabou de perder.
-     */
-    const fechadas = await cancelarPixPendentesDaLicenca(licencaId)
-    if (fechadas.count > 0) {
-      this.logger.log(`[modulo] ${fechadas.count} PIX pendente(s) da licença ${licencaId} cancelado(s) — o valor da renovação mudou.`)
-    }
 
+    await this.fecharPixSeMudouValor(licencaId, eraCobrado)
     return { data: await modulosDaLicencaDetalhado(licencaId) }
   }
 }
