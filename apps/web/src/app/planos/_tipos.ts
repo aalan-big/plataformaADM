@@ -15,7 +15,24 @@ export type Plano = {
   stripePriceIdAnual:      string | null
   status:                  string
   criadoEm:                string
+  modulos?:                PlanoModulo[]
   _count?:                 { licencas: number }
+}
+
+export type Modulo = {
+  id:            string
+  identificador: string
+  nome:          string
+  descricao:     string | null
+  icone:         string | null
+  ativo:         boolean
+  ordem:         number
+}
+
+export type PlanoModulo = {
+  moduloId:   string
+  cotaMensal: number | null
+  modulo:     Modulo
 }
 
 /** Períodos de cobrança na ordem em que aparecem para o cliente. */

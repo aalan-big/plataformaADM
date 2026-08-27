@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   X, Pencil, PowerOff, AlertCircle,
   Monitor, CreditCard, Loader2, Unlock, Lock, Trash2,
-  KeyRound, Copy, ExternalLink, RefreshCw, History, AlertTriangle, Save
+  KeyRound, Copy, ExternalLink, RefreshCw, History, AlertTriangle, Save, FileText, Plus, Boxes
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -55,7 +55,8 @@ export type ClienteCompleto = {
     inscricaoEstadual?:    string | null
     ambiente:              number
     focusEmpresaId?:       string | null
-    focusEmpresaToken?:    string | null
+    // O token em si não trafega mais: a API devolve só se ele existe.
+    tokenConfigurado?:     boolean
     certificadoNome?:      string | null
     certificadoVencimento?:string | null
     certificadoStatus:     string
@@ -117,6 +118,440 @@ const PALETA = [
 function corAvatar(nome: string) { return PALETA[(nome.charCodeAt(0) || 0) % PALETA.length] }
 
 // ─── LicencaCard ─────────────────────────────────────────────────────────────
+
+type ModuloDoPlano = { identificador: string; nome: string; ativo: boolean; cotaMensal: number | null }
+type ModuloExtra = ModuloDoPlano & {
+  cortesia:        boolean
+  valorCobrado:    string | number | null
+  dataContratacao: string
+  dataVencimento:  string | null
+  observacao:      string | null
+  vencido:         boolean
+}
+type ModulosLicenca = {
+  planoNome: string | null
+  doPlano:   ModuloDoPlano[]
+  extras:    ModuloExtra[]
+  catalogo:  { identificador: string; nome: string; descricao: string | null; ativo: boolean; precoMensal: string | number | null }[]
+}
+
+/**
+ * Módulos de uma licença, separados por origem.
+ *
+ * A separação entre "vem do plano" e "concedido à parte" é o motivo desta tela
+ * existir: o que vem do plano só muda mexendo no plano, e mexer no plano afeta
+ * todo mundo que o contratou. Misturar os dois numa lista só levaria o admin a
+ * tentar desmarcar aqui uma coisa que não se desmarca aqui.
+ */
+function PainelModulos({ licencaId }: { licencaId: string }) {
+  const [aberto, setAberto]         = useState(false)
+  const [dados, setDados]           = useState<ModulosLicenca | null>(null)
+  const [carregando, setCarregando] = useState(false)
+  const [erro, setErro]             = useState('')
+  const [salvando, setSalvando]     = useState(false)
+
+  const [novo, setNovo] = useState({ identificador: '', cortesia: false, dataVencimento: '', cotaMensal: '', valor: '', observacao: '' })
+
+  /**
+   * Ao escolher o módulo, sugere o preço avulso cadastrado em Módulos.
+   *
+   * Sem a sugestão, o valor é digitado de cabeça a cada concessão e vai
+   * divergindo da tabela sem ninguém perceber — e é justamente esse campo que
+   * responde "quanto esse cliente paga a mais" seis meses depois.
+   */
+  function escolherModulo(identificador: string) {
+    const m = dados?.catalogo.find(c => c.identificador === identificador)
+    const sugerido = m?.precoMensal == null ? '' : String(Number(m.precoMensal))
+    setNovo(p => ({ ...p, identificador, valor: p.cortesia ? '' : sugerido }))
+  }
+
+  const carregar = useCallback(async () => {
+    setCarregando(true); setErro('')
+    try {
+      const res  = await fetch(`/api/modulo/licenca/${licencaId}`)
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { setErro(json.erro ?? json.message ?? `Erro ${res.status}.`); return }
+      setDados(json.data)
+    } catch {
+      setErro('Falha ao carregar os módulos.')
+    } finally {
+      setCarregando(false)
+    }
+  }, [licencaId])
+
+  function alternar() {
+    const proximo = !aberto
+    setAberto(proximo)
+    if (proximo && !dados) carregar()
+  }
+
+  function mensagemDeErro(json: any, status: number) {
+    // O servidor devolve { erro, detalhes: [{campo, mensagem}] } no 400 do zod.
+    if (Array.isArray(json?.detalhes) && json.detalhes.length > 0) {
+      return json.detalhes.map((d: any) => d.mensagem).join(' ')
+    }
+    return json?.erro ?? json?.message ?? `Erro ${status}.`
+  }
+
+  async function conceder() {
+    if (!novo.identificador) { setErro('Escolha um módulo.'); return }
+    setSalvando(true); setErro('')
+    try {
+      const res = await fetch(`/api/modulo/licenca/${licencaId}/extra`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          identificador:  novo.identificador,
+          cortesia:       novo.cortesia,
+          dataVencimento: novo.dataVencimento || null,
+          cotaMensal:     novo.cotaMensal.trim() === '' ? null : Math.max(0, parseInt(novo.cotaMensal) || 0),
+          // Cortesia nunca manda valor: o servidor recusa os dois juntos, e é a
+          // regra certa — cortesia com valor cobrado é contradição.
+          valorCobrado:   novo.cortesia || novo.valor.trim() === '' ? null : Math.max(0, Number(novo.valor) || 0),
+          observacao:     novo.observacao.trim() || null,
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { setErro(mensagemDeErro(json, res.status)); return }
+      setDados(json.data)
+      setNovo({ identificador: '', cortesia: false, dataVencimento: '', cotaMensal: '', valor: '', observacao: '' })
+    } catch {
+      setErro('Falha ao conceder o módulo.')
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  async function revogar(identificador: string) {
+    setSalvando(true); setErro('')
+    try {
+      const res  = await fetch(`/api/modulo/licenca/${licencaId}/extra/${identificador}`, { method: 'DELETE' })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { setErro(mensagemDeErro(json, res.status)); return }
+      setDados(json.data)
+    } catch {
+      setErro('Falha ao revogar o módulo.')
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  // Módulos que ainda não vêm do plano nem foram concedidos — só esses fazem
+  // sentido no seletor. Oferecer um que o plano já inclui criaria um extra
+  // redundante que não muda nada e confunde na próxima leitura da tela.
+  const disponiveis = (dados?.catalogo ?? []).filter(m =>
+    m.ativo &&
+    !dados?.doPlano.some(p => p.identificador === m.identificador) &&
+    !dados?.extras.some(e => e.identificador === m.identificador)
+  )
+
+  return (
+    <div className="mt-2 border-t border-slate-800 pt-2">
+      <button
+        onClick={alternar}
+        className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
+      >
+        <Boxes size={12} />
+        Módulos liberados
+      </button>
+
+      {aberto && (
+        <div className="mt-2 space-y-2.5">
+          {carregando && (
+            <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+              <Loader2 size={11} className="animate-spin" /> Carregando…
+            </p>
+          )}
+
+          {dados && (
+            <>
+              <div className="space-y-1">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide">
+                  Do plano{dados.planoNome ? ` — ${dados.planoNome}` : ''}
+                </p>
+                {dados.doPlano.length === 0 ? (
+                  <p className="text-[11px] text-slate-500">Nenhum módulo incluso neste plano.</p>
+                ) : dados.doPlano.map(m => (
+                  <div key={m.identificador} className="flex items-center gap-2 text-[11px] px-2 py-1 rounded bg-slate-900/40">
+                    <Lock size={10} className="text-slate-600 shrink-0" />
+                    <span className="text-slate-300">{m.nome}</span>
+                    <span className="text-slate-600">
+                      {m.cotaMensal == null ? 'sem limite' : `${m.cotaMensal}/mês`}
+                    </span>
+                  </div>
+                ))}
+                <p className="text-[10px] text-slate-600">
+                  Herdados do plano — para mudar, edite o plano em Planos.
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide">Concedidos a esta licença</p>
+                {dados.extras.length === 0 ? (
+                  <p className="text-[11px] text-slate-500">Nenhum módulo avulso.</p>
+                ) : dados.extras.map(e => (
+                  <div key={e.identificador} className="flex items-center gap-2 text-[11px] px-2 py-1 rounded bg-slate-800/60">
+                    <span className="text-slate-200">{e.nome}</span>
+                    {e.cortesia && (
+                      <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-blue-500/15 text-blue-400">CORTESIA</span>
+                    )}
+                    {e.vencido && (
+                      <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-red-500/15 text-red-400">VENCIDO</span>
+                    )}
+                    {!e.cortesia && e.valorCobrado != null && (
+                      <span className="text-emerald-400/80">
+                        {Number(e.valorCobrado).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}/mês
+                      </span>
+                    )}
+                    <span className="text-slate-500">
+                      {e.dataVencimento ? `até ${formatData(e.dataVencimento)}` : 'sem prazo'}
+                    </span>
+                    <button
+                      onClick={() => revogar(e.identificador)}
+                      disabled={salvando}
+                      className="ml-auto text-slate-500 hover:text-red-400 disabled:opacity-50 transition-colors shrink-0"
+                      title="Revogar"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {disponiveis.length > 0 && (
+                <div className="space-y-1.5 pt-1 border-t border-slate-800">
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wide">Conceder módulo</p>
+                  <div className="flex gap-1.5">
+                    <select
+                      value={novo.identificador}
+                      onChange={e => escolherModulo(e.target.value)}
+                      className="flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500/40"
+                    >
+                      <option value="">Escolha…</option>
+                      {disponiveis.map(m => <option key={m.identificador} value={m.identificador}>{m.nome}</option>)}
+                    </select>
+                    {!novo.cortesia && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className="text-[11px] text-slate-500">R$</span>
+                        <input
+                          type="number" min={0} step="0.01" value={novo.valor}
+                          onChange={e => setNovo(p => ({ ...p, valor: e.target.value }))}
+                          placeholder="valor"
+                          className="w-20 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 placeholder-slate-500 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500/40"
+                        />
+                      </div>
+                    )}
+                    <input
+                      type="number" min={0} value={novo.cotaMensal}
+                      onChange={e => setNovo(p => ({ ...p, cotaMensal: e.target.value }))}
+                      placeholder="Cota"
+                      className="w-16 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 placeholder-slate-500 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500/40"
+                    />
+                  </div>
+                  <div className="flex gap-1.5 items-center">
+                    <label className="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer shrink-0">
+                      <input
+                        type="checkbox" checked={novo.cortesia}
+                        onChange={e => setNovo(p => ({ ...p, cortesia: e.target.checked, valor: '' }))}
+                        className="accent-blue-500"
+                      />
+                      Cortesia
+                    </label>
+                    <input
+                      type="date" value={novo.dataVencimento}
+                      onChange={e => setNovo(p => ({ ...p, dataVencimento: e.target.value }))}
+                      className="flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500/40"
+                    />
+                    <button
+                      onClick={conceder}
+                      disabled={salvando}
+                      className="flex items-center gap-1 px-2 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-[11px] font-semibold transition-colors shrink-0"
+                    >
+                      {salvando ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
+                      Conceder
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-500">
+                    {novo.cortesia
+                      ? 'Cortesia exige data de fim — sem prazo ela vira gratuidade permanente.'
+                      : 'Sem data, o módulo acompanha o ciclo da licença.'}
+                    {' '}O ERP enxerga a mudança em até 24h, na próxima revalidação.
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+
+          {erro && (
+            <p className="text-[11px] text-red-400 flex items-center gap-1.5">
+              <AlertCircle size={11} /> {erro}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+type Consumo = {
+  competencia: string
+  emitidas:    number
+  canceladas:  number
+  cotaPlano:   number | null
+  cotaExtra:   number
+  cota:        number | null
+  restantes:   number | null
+  ilimitado:   boolean
+}
+
+/**
+ * Cota fiscal do mês para uma licença.
+ *
+ * Carrega sob demanda, e não junto com o cliente: a maioria das licenças não
+ * emite nota, e disparar uma requisição por card ao abrir o perfil encheria a
+ * API de consulta que ninguém pediu.
+ */
+function PainelCotaFiscal({ licencaId }: { licencaId: string }) {
+  const [aberto,    setAberto]    = useState(false)
+  const [consumo,   setConsumo]   = useState<Consumo | null>(null)
+  const [carregando, setCarregando] = useState(false)
+  const [erro,      setErro]      = useState('')
+  const [extras,    setExtras]    = useState('')
+  const [motivo,    setMotivo]    = useState('')
+  const [concedendo, setConcedendo] = useState(false)
+
+  const carregar = useCallback(async () => {
+    setCarregando(true); setErro('')
+    try {
+      const res  = await fetch(`/api/fiscal/licencas/${licencaId}/consumo`)
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { setErro(json.erro ?? json.message ?? `Erro ${res.status}.`); return }
+      setConsumo(json)
+    } catch {
+      setErro('Falha ao carregar a cota fiscal.')
+    } finally {
+      setCarregando(false)
+    }
+  }, [licencaId])
+
+  function alternar() {
+    const proximo = !aberto
+    setAberto(proximo)
+    if (proximo && !consumo) carregar()
+  }
+
+  async function conceder() {
+    const qtd = parseInt(extras)
+    if (!qtd || qtd < 1) { setErro('Informe uma quantidade de pelo menos 1.'); return }
+    setConcedendo(true); setErro('')
+    try {
+      const res = await fetch(`/api/fiscal/licencas/${licencaId}/notas-extras`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ quantidade: qtd, ...(motivo.trim() ? { motivo: motivo.trim() } : {}) }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { setErro(json.erro ?? json.message ?? `Erro ${res.status}.`); return }
+      setConsumo(json)
+      setExtras(''); setMotivo('')
+    } catch {
+      setErro('Falha ao conceder notas avulsas.')
+    } finally {
+      setConcedendo(false)
+    }
+  }
+
+  return (
+    <div className="mt-2 border-t border-slate-800 pt-2">
+      <button
+        onClick={alternar}
+        className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
+      >
+        <FileText size={12} />
+        Cota fiscal do mês
+      </button>
+
+      {aberto && (
+        <div className="mt-2 space-y-2">
+          {carregando && (
+            <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+              <Loader2 size={11} className="animate-spin" /> Carregando…
+            </p>
+          )}
+
+          {consumo && (
+            <>
+              <div className="flex items-baseline gap-2 text-[11px]">
+                <span className="text-slate-500">{consumo.competencia}</span>
+                <span className="text-slate-200 font-semibold">
+                  {consumo.emitidas} emitida(s)
+                </span>
+                <span className="text-slate-500">
+                  {consumo.ilimitado ? 'de ilimitado' : `de ${consumo.cota}`}
+                </span>
+                {consumo.canceladas > 0 && (
+                  <span className="text-slate-500">· {consumo.canceladas} cancelada(s)</span>
+                )}
+              </div>
+
+              {!consumo.ilimitado && (
+                <p className="text-[10px] text-slate-500">
+                  {consumo.cotaPlano} do plano
+                  {consumo.cotaExtra > 0 && ` + ${consumo.cotaExtra} avulsa(s)`}
+                  {' · '}
+                  <span className={consumo.restantes === 0 ? 'text-red-400 font-semibold' : 'text-slate-400'}>
+                    {consumo.restantes} restante(s)
+                  </span>
+                </p>
+              )}
+
+              {consumo.ilimitado ? (
+                <p className="text-[10px] text-slate-500">
+                  O plano não tem teto — não há o que conceder.
+                </p>
+              ) : (
+                <div className="flex gap-1.5">
+                  <input
+                    type="number" min={1} value={extras}
+                    onChange={e => setExtras(e.target.value)}
+                    placeholder="Qtd."
+                    className="w-16 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500/40"
+                  />
+                  <input
+                    value={motivo}
+                    onChange={e => setMotivo(e.target.value)}
+                    placeholder="Motivo (opcional)"
+                    className="flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 placeholder-slate-500 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500/40"
+                  />
+                  <button
+                    onClick={conceder}
+                    disabled={concedendo}
+                    className="flex items-center gap-1 px-2 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-[11px] font-semibold transition-colors shrink-0"
+                  >
+                    {concedendo ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
+                    Conceder
+                  </button>
+                </div>
+              )}
+
+              {!consumo.ilimitado && (
+                <p className="text-[10px] text-slate-500">
+                  Notas avulsas valem só neste mês e somem na virada. Homologação não consome cota.
+                </p>
+              )}
+            </>
+          )}
+
+          {erro && (
+            <p className="text-[11px] text-red-400 flex items-center gap-1.5">
+              <AlertCircle size={11} /> {erro}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function LicencaCard({ licenca: l, onAtualizar }: { licenca: Licenca; onAtualizar: () => void }) {
   const [copiado,          setCopiado]          = useState(false)
@@ -433,6 +868,9 @@ function LicencaCard({ licenca: l, onAtualizar }: { licenca: Licenca; onAtualiza
         </div>
       )}
 
+      <PainelModulos licencaId={l.id} />
+      <PainelCotaFiscal licencaId={l.id} />
+
       {/* ── Confirmação de exclusão ── */}
       {confirmarExcluir && (
         <div className="bg-red-500/8 border border-red-500/20 rounded-lg px-3 py-2.5 space-y-2">
@@ -495,7 +933,9 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
       setRazaoSocial(cliente.configuracaoFiscal.razaoSocial || '')
       setInscricaoEstadual(cliente.configuracaoFiscal.inscricaoEstadual || '')
       setAmbiente(cliente.configuracaoFiscal.ambiente || 2)
-      setFocusToken(cliente.configuracaoFiscal.focusEmpresaToken || '')
+      // Campo de token começa vazio de propósito — vazio significa "mantém o
+      // que já está gravado". O valor real nunca chega até aqui.
+      setFocusToken('')
     } else if (cliente?.pj) {
       setCnpj(cliente.pj.cnpj || '')
       setRazaoSocial(cliente.pj.razaoSocial || '')
@@ -515,7 +955,9 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
           razaoSocial,
           inscricaoEstadual,
           ambiente,
-          focusEmpresaToken: focusToken
+          // Só vai quando o admin digitou algo. Mandar string vazia faria o
+          // servidor entender que é para apagar o token e desligaria a emissão.
+          ...(focusToken.trim() ? { focusEmpresaToken: focusToken.trim() } : {}),
         })
       })
 
@@ -738,8 +1180,13 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                         value={focusToken}
                         onChange={e => setFocusToken(e.target.value)}
                         className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500/40 text-xs font-mono"
-                        placeholder="Token obtido no painel da Focus"
+                        placeholder={cliente?.configuracaoFiscal?.tokenConfigurado ? 'Token já configurado — deixe em branco para manter' : 'Token obtido no painel da Focus'}
                       />
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        {cliente?.configuracaoFiscal?.tokenConfigurado
+                          ? 'Por segurança o token não é exibido. Preencha apenas para substituí-lo.'
+                          : 'Sem o token o cliente não consegue emitir notas.'}
+                      </p>
                     </div>
 
                     {erroFiscal && (
@@ -793,7 +1240,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                         <div>
                           <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Token Focus NFe</p>
                           <p className="text-slate-300 font-mono">
-                            {cliente.configuracaoFiscal.focusEmpresaToken ? '••••••••••••••••' : 'Não configurado'}
+                            {cliente.configuracaoFiscal.tokenConfigurado ? '••••••••••••••••' : 'Não configurado'}
                           </p>
                         </div>
                         <div>

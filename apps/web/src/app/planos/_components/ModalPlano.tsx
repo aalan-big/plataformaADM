@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { X, Loader2, AlertCircle } from 'lucide-react'
-import type { Plano } from '../_tipos'
+import type { Plano, Modulo } from '../_tipos'
 
 const campo = 'w-full bg-slate-800 border border-slate-700 text-slate-200 placeholder-slate-500 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/40'
 const rotulo = 'text-[11px] font-semibold text-slate-400 uppercase tracking-wide'
@@ -12,6 +12,25 @@ const vazio = {
   precoMensal: '', precoTrimestral: '', precoAnual: '',
   valorLicencaAdicional: '', descontoTrimestral: '', descontoAnual: '',
   publico: false,
+}
+
+/**
+ * Módulos marcados, com a cota digitada por identificador.
+ *
+ * A cota é string e não número porque vazio precisa ser distinguível de zero:
+ * vazio quer dizer "sem teto", zero quer dizer "não pode emitir nada".
+ */
+type SelecaoModulos = Record<string, { marcado: boolean; cota: string }>
+
+function selecaoInicial(p: Plano | null): SelecaoModulos {
+  const sel: SelecaoModulos = {}
+  for (const pm of p?.modulos ?? []) {
+    sel[pm.modulo.identificador] = {
+      marcado: true,
+      cota:    pm.cotaMensal == null ? '' : String(pm.cotaMensal),
+    }
+  }
+  return sel
 }
 
 function paraFormulario(p: Plano | null): typeof vazio {
@@ -42,7 +61,43 @@ export function ModalPlano({
   const [salvando, setSalvando] = useState(false)
   const [erro, setErro]         = useState('')
 
+  const [catalogo, setCatalogo] = useState<Modulo[]>([])
+  const [selecao,  setSelecao]  = useState<SelecaoModulos>(() => selecaoInicial(plano))
+
+  useEffect(() => {
+    let cancelado = false
+    fetch('/api/modulo')
+      .then(r => r.json())
+      .then(j => { if (!cancelado) setCatalogo(j.data ?? []) })
+      .catch(() => { /* catálogo indisponível só esconde a seção; não trava o resto do form */ })
+    return () => { cancelado = true }
+  }, [])
+
   const set = (k: keyof typeof vazio, v: string | boolean) => setForm(prev => ({ ...prev, [k]: v }))
+
+  function alternarModulo(identificador: string) {
+    setSelecao(prev => {
+      const atual = prev[identificador]
+      return { ...prev, [identificador]: { marcado: !atual?.marcado, cota: atual?.cota ?? '' } }
+    })
+  }
+
+  function definirCota(identificador: string, cota: string) {
+    setSelecao(prev => ({ ...prev, [identificador]: { marcado: prev[identificador]?.marcado ?? true, cota } }))
+  }
+
+  function modulosSelecionados() {
+    return catalogo
+      .filter(m => selecao[m.identificador]?.marcado)
+      .map(m => {
+        const cota = selecao[m.identificador]?.cota ?? ''
+        return {
+          identificador: m.identificador,
+          // Vazio = sem teto. Zero é valor legítimo e diferente disso.
+          cotaMensal: cota.trim() === '' ? null : Math.max(0, parseInt(cota) || 0),
+        }
+      })
+  }
 
   const numeroOuOmitir = (v: string) => (v.trim() === '' ? undefined : Number(v))
 
@@ -54,6 +109,14 @@ export function ModalPlano({
         limiteUsuario: parseInt(form.limiteUsuario) || 1,
         precoMensal:   Number(form.precoMensal) || 0,
         publico:       form.publico,
+        /**
+         * Só vai quando o catálogo carregou.
+         *
+         * Se a busca falhou, `catalogo` está vazio e mandar `[]` diria ao
+         * servidor "este plano não tem módulo nenhum" — apagaria os vínculos por
+         * causa de uma requisição que não respondeu. Omitir preserva.
+         */
+        ...(catalogo.length > 0 ? { modulos: modulosSelecionados() } : {}),
         ...(form.descricaoCheckout.trim()   ? { descricaoCheckout:     form.descricaoCheckout.trim() }        : {}),
         ...(numeroOuOmitir(form.precoTrimestral)       != null ? { precoTrimestral:       Number(form.precoTrimestral) }       : {}),
         ...(numeroOuOmitir(form.precoAnual)            != null ? { precoAnual:            Number(form.precoAnual) }            : {}),
@@ -106,6 +169,64 @@ export function ModalPlano({
                 onChange={e => set('limiteUsuario', e.target.value)} />
             </div>
           </div>
+
+          {/* Módulos inclusos */}
+          {catalogo.length > 0 && (
+            <div className="space-y-1.5">
+              <label className={rotulo}>Módulos inclusos no plano</label>
+              <div className="space-y-1.5">
+                {catalogo.map(m => {
+                  const sel     = selecao[m.identificador]
+                  const marcado = !!sel?.marcado
+                  const cota    = sel?.cota ?? ''
+                  return (
+                    <div
+                      key={m.id}
+                      className={`rounded-lg border px-3 py-2.5 transition-colors ${
+                        marcado ? 'bg-slate-800/60 border-slate-600' : 'bg-slate-900/40 border-slate-800'
+                      }`}
+                    >
+                      <label className="flex items-start gap-2.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={marcado}
+                          onChange={() => alternarModulo(m.identificador)}
+                          className="mt-0.5 accent-blue-500"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm text-slate-200 font-medium">{m.nome}</p>
+                          {m.descricao && <p className="text-[11px] text-slate-500">{m.descricao}</p>}
+                          {!m.ativo && (
+                            <p className="text-[10px] text-amber-400 mt-0.5">Módulo inativo no catálogo.</p>
+                          )}
+                        </div>
+                      </label>
+
+                      {marcado && (
+                        <div className="mt-2 pl-6 flex items-center gap-2">
+                          <input
+                            type="number" min={0} value={cota}
+                            onChange={e => definirCota(m.identificador, e.target.value)}
+                            placeholder="Sem limite"
+                            className="w-28 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 placeholder-slate-500 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500/40"
+                          />
+                          <span className="text-[11px] text-slate-500">
+                            {cota.trim() === ''
+                              ? 'uso mensal sem limite'
+                              : `máximo por mês — ao atingir, o uso é bloqueado até a virada do mês`}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Vale para licenças deste plano. O ERP do cliente passa a enxergar a mudança em até 24h,
+                quando revalidar a licença. Emissões em homologação não consomem cota.
+              </p>
+            </div>
+          )}
 
           {/* Descrição que o cliente lê no checkout */}
           <div className="space-y-1.5">

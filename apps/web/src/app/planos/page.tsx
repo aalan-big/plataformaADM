@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Layers, Plus, Pencil, RefreshCw, Loader2, AlertTriangle,
-  CheckCircle2, Power, PowerOff, Users, CreditCard, Globe,
+  CheckCircle2, Power, PowerOff, Users, CreditCard, Globe, Boxes,
 } from 'lucide-react'
 import { ModalPlano } from './_components/ModalPlano'
 import {
@@ -207,10 +207,38 @@ export default function PlanosPage() {
                     </div>
 
                     {p.descricaoCheckout && (
-                      <p className="text-xs text-slate-500 leading-relaxed mb-4 max-w-2xl">
+                      <p className="text-xs text-slate-500 leading-relaxed mb-3 max-w-2xl">
                         {p.descricaoCheckout}
                       </p>
                     )}
+
+                    {/*
+                      Módulos do plano, visíveis SEM abrir a edição.
+                      Sem isto, a pergunta "o que este plano libera?" só tinha
+                      resposta dentro do formulário — e comparar dois planos
+                      exigia abrir e fechar os dois.
+                    */}
+                    <div className="flex items-center gap-1.5 flex-wrap mb-4">
+                      <Boxes size={11} className="text-slate-600 shrink-0" />
+                      {(p.modulos ?? []).length === 0 ? (
+                        <span className="text-[11px] text-slate-600">
+                          nenhum módulo — só o que todo plano já inclui
+                        </span>
+                      ) : (
+                        (p.modulos ?? []).map(pm => (
+                          <span
+                            key={pm.moduloId}
+                            className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700"
+                            title={pm.cotaMensal == null ? 'Sem teto mensal' : `Teto de ${pm.cotaMensal} por mês`}
+                          >
+                            {pm.modulo.nome}
+                            {pm.cotaMensal != null && (
+                              <span className="text-slate-500"> · {pm.cotaMensal}/mês</span>
+                            )}
+                          </span>
+                        ))
+                      )}
+                    </div>
 
                     {/* Preços por período, com o estado no Stripe ao lado */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
