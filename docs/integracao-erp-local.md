@@ -389,6 +389,10 @@ O conteúdo (payload) do token contém: `licencaId`, `hwid`, `plano`, `limite`, 
 | Pedir URL de upload | POST | `/erp/backup/url-upload` | Antes de cada envio de backup |
 | Confirmar o envio | POST | `/erp/backup/confirmar` | Logo após o PUT, sempre |
 | Pedir URL de restauração | POST | `/erp/backup/url-download` | Quando o usuário for restaurar |
+| Emitir NF-e | POST | `/erp/fiscal/nfe/emitir` | Ao fechar uma venda que gera nota |
+| Consultar NF-e | GET | `/erp/fiscal/nfe/consultar?ref=` | Para acompanhar `processando` até o status final |
+| Cancelar NF-e | POST | `/erp/fiscal/nfe/cancelar` | Quando o usuário cancela uma nota autorizada |
+| Cota fiscal do mês | GET | `/erp/fiscal/nfe/consumo` | Ao abrir a tela de emissão |
 
 ---
 
@@ -761,4 +765,156 @@ URLs válidas por **5 minutos**, e `expiraEm` é a primeira que vence. Mesmo gat
 
 ---
 
-*Documento gerado a partir do código-fonte da plataforma (`apps/server/src/features/dispositivos` e `apps/server/src/features/erp`) em 16/06/2026. Seção de login/reinstalação adicionada em 06/07/2026. Seção de cobrança/renovação recorrente adicionada em 11/07/2026. Seção de backup em nuvem adicionada em 26/07/2026, validada ponta a ponta em produção. Partição mensal do backup de ordens de serviço (tipo `os`) adicionada em 27/07/2026 — ainda **não** validada em produção.*
+
+---
+
+## 13. Módulos e emissão fiscal (NF-e)
+
+### 13.1. O que são módulos
+
+Cada licença enxerga um conjunto de **módulos** liberados. A lista vem do plano contratado, mais o que tenha sido contratado à parte, e viaja **dentro do JWT assinado** — junto com `limite` e `dataVencimento`.
+
+Cada tipo de documento fiscal é um módulo próprio, com cota própria:
+
+| Identificador | Documento | Situação |
+|---|---|---|
+| `NFE` | Nota Fiscal Eletrônica (mercadoria) | disponível |
+| `NFCE` | Nota Fiscal de Consumidor Eletrônica | planejado |
+| `NFSE` | Nota Fiscal de Serviço Eletrônica | planejado |
+
+São separados porque atendem clientes diferentes — quem vende mercadoria não emite NFS-e, e quem presta serviço não emite NFC-e. Um cliente pode ter um, dois ou os três, e cada um conta a própria cota: emitir NFC-e **não** consome a cota de NF-e.
+
+Está no token assinado de propósito: é um campo que libera acesso, e campo que libera acesso não pode trafegar fora da assinatura, senão vira o único elo forjável entre a API e o ERP.
+
+```json
+{
+  "licencaId": "uuid...",
+  "limite": 3,
+  "dataVencimento": "...",
+  "modulos": ["NFCE", "NFE"]
+}
+```
+
+> ⚠️ **Regra obrigatória: claim ausente = libera tudo.**
+>
+> Um token emitido antes desta versão não tem o campo `modulos`. Um ERP que faça
+> `if (payload.modulos.Contains("NFE"))` vai ler nulo e **esconder o menu de um
+> cliente que paga**, sem erro aparecendo em lugar nenhum. Trate a ausência do
+> campo como "pode tudo", nunca como lista vazia:
+>
+> ```csharp
+> // Lista ausente = token antigo = libera. Lista presente e sem o módulo = bloqueia.
+> bool temModulo(string m) => payload.modulos == null || payload.modulos.Contains(m);
+> ```
+>
+> Lista **presente e vazia** é diferente de ausente: significa "nenhum módulo liberado".
+
+A lista é reavaliada a cada `validar`. Uma mudança feita no painel aparece para o cliente na próxima revalidação — em até 24 h, não na hora. Não guarde os módulos em disco separado do token: quem manda é sempre o token corrente.
+
+### 13.2. Emitir NF-e
+
+Todas as rotas de `/erp/fiscal/*` exigem o header `Authorization: Bearer <token>` com o JWT da licença.
+
+```
+POST https://api.startbig.com.br/erp/fiscal/nfe/emitir
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+| Campo | Tipo | Obrigatório | Observação |
+|---|---|---|---|
+| `ref` | string | ✅ | Sua referência da nota. Só `A–Z a–z 0–9 . _ -`, máx. 50 caracteres |
+| `payload` | objeto | ✅ | Dados da NF-e (emitente, destinatário, itens, totais) |
+
+A `ref` é a **chave de idempotência**: ela é consultada na Focus antes de emitir. Reenviar a mesma `ref` devolve a nota que já existe em vez de emitir outra. Use um valor estável e único por nota (o número do seu pedido, por exemplo) — nunca um valor novo a cada tentativa, senão a idempotência não protege nada.
+
+O `payload.emitente.cnpj` **precisa ser o CNPJ configurado para esta licença**. Não é o ERP que escolhe com qual empresa emite: o servidor usa o token da Focus vinculado à licença, e recusa se os dois não baterem.
+
+```json
+{
+  "status": "autorizado",
+  "chave_acesso": "3526...",
+  "protocolo": "135260...",
+  "numero": 1234,
+  "serie": 1,
+  "url_pdf": "https://.../danfe.pdf",
+  "url_xml": "https://.../nota.xml",
+  "codigo_sefaz": 100,
+  "mensagem_sefaz": "Autorizado o uso da NF-e"
+}
+```
+
+Valores de `status`: `autorizado`, `processando`, `cancelado`, `erro`.
+
+`processando` **não é falha** — a nota entrou na fila da SEFAZ. Consulte a mesma `ref` depois para pegar o status final.
+
+### 13.3. Consultar e cancelar
+
+```
+GET  /erp/fiscal/nfe/consultar?ref=PEDIDO-1234
+POST /erp/fiscal/nfe/cancelar     { "ref": "...", "justificativa": "..." }
+```
+
+A `justificativa` exige no mínimo 15 caracteres — é regra da SEFAZ, não nossa.
+
+### 13.4. Cota mensal
+
+Planos podem ter teto de notas por mês. Quem consulta:
+
+```
+GET /erp/fiscal/nfe/consumo
+```
+
+```json
+{
+  "competencia": "2026-08",
+  "emitidas": 78,
+  "canceladas": 2,
+  "cotaPlano": 100,
+  "cotaExtra": 0,
+  "cota": 100,
+  "restantes": 22,
+  "ilimitado": false
+}
+```
+
+Regras que valem a pena conhecer antes de montar a tela:
+
+- **`ilimitado: true` significa sem teto.** Não mostre "0 restantes" nesse caso — `restantes` vem `null`.
+- **Emissão em homologação (`ambiente: 2`) não consome cota.** O cliente testar a integração não pode gastar o pacote dele.
+- **Nota rejeitada não conta.** Só `autorizado` e `processando` entram no contador.
+- **Cancelar não devolve cota.** A nota chegou a existir na SEFAZ.
+- **A competência vira no fuso de São Paulo**, não em UTC.
+
+Esta rota é **conveniência, não trava**: sirva para avisar o operador antes dele preencher a nota inteira. Quem barra de verdade é o `emitir`, no servidor — o ERP não precisa (e não deve) tentar controlar isso sozinho.
+
+### 13.5. Erros
+
+| HTTP | Quando | O que fazer |
+|---|---|---|
+| `401` | Token ausente, inválido ou expirado | Chamar `validar` e repetir |
+| `403` | Licença não tem o módulo do documento (`NFE`, `NFCE`, `NFSE`) | Esconder a função. Não repetir |
+| `402` | Cota do mês esgotada | Avisar o operador. **Não repetir** — só resolve com virada do mês ou concessão do admin |
+| `404` | Cliente sem configuração fiscal cadastrada | Avisar que falta configurar. Não repetir |
+| `400` | Dados inválidos, ou CNPJ do emitente não confere | Corrigir. Não repetir sem mudar o corpo |
+| `503` | Não foi possível confirmar na Focus se a nota já existe | **Nenhuma nota foi emitida.** Repetir com a MESMA `ref` |
+| `502` | Focus fora do ar ou sem resposta | Repetir com a MESMA `ref` |
+
+> ⚠️ **Em `502` e `503`, reenvie sempre com a mesma `ref`.** Gerar uma `ref` nova
+> na repetição é o caminho para a nota duplicada — e nota duplicada não se
+> resolve com atualização, se resolve com contador e SEFAZ.
+
+### 13.6. Checklist para o ERP
+
+- [ ] Ler `modulos` do JWT, tratando **ausência como "libera tudo"**
+- [ ] Reavaliar os módulos a cada `validar`, sem cache próprio em disco
+- [ ] Usar uma `ref` estável por nota, e **reusá-la** em toda repetição
+- [ ] Conferir que o CNPJ do emitente é o da licença antes de enviar
+- [ ] Tratar `processando` como sucesso, com consulta posterior
+- [ ] Chamar `/consumo` ao abrir a tela de emissão, e esconder o aviso quando `ilimitado`
+- [ ] Tratar cada erro pelo código HTTP, nunca pelo texto da mensagem
+- [ ] Não repetir automaticamente em `400`, `402`, `403` ou `404`
+
+---
+
+*Seção 13 (módulos e emissão fiscal) adicionada em 27/08/2026. As rotas fiscais existem no servidor; a trava por módulo (`403`) só passa a valer quando `ENTITLEMENTS_ENFORCE` for ligado em produção — até lá, licença sem o módulo continua emitindo normalmente.*
