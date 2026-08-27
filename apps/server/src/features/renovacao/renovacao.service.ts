@@ -297,8 +297,23 @@ export class RenovacaoService {
     const pendente = await findCobrancaPendente({ licencaId: licenca.id, meses, metodo: 'PIX', planoId })
 
     if (pendente?.gatewayCobrancaId) {
-      const completa = await this.garantirQrCode(pendente)
-      return this.respostaCobranca(completa, meses)
+      /**
+       * Reaproveitar exige confirmar que o outro lado ainda aceita.
+       *
+       * `status = PENDENTE` aqui só quer dizer que ninguém nos avisou do
+       * contrário. A cobrança pode ter sido deletada no painel do Asaas, ou ter
+       * passado do `dueDate` — e nos dois casos o copia-e-cola que guardamos
+       * continua parecendo bom, mas o banco do cliente recusa. Sem esta
+       * conferência, a idempotência vira uma máquina de devolver QR morto: o
+       * operador manda, o cliente tenta pagar, ninguém entende por quê.
+       */
+      if (await this.aindaPagavelNoGateway(pendente.gatewayCobrancaId)) {
+        const completa = await this.garantirQrCode(pendente)
+        return this.respostaCobranca(completa, meses)
+      }
+
+      this.logger.warn(`[renovacao] cobrança ${pendente.id} (${pendente.gatewayCobrancaId}) não é mais pagável no gateway — cancelada e refeita`)
+      await marcarCobrancaStatus(pendente.id, 'CANCELADA')
     }
 
     // Linha órfã: criada aqui, mas o Asaas nunca chegou a receber a cobrança
@@ -388,16 +403,48 @@ export class RenovacaoService {
    * mais que o teto de I8. É o que permite devolver 201 rápido sem deixar o ERP
    * sem nada para desenhar.
    */
+  /**
+   * A cobrança ainda pode ser paga do lado do gateway?
+   *
+   * Falha de rede devolve `true` de propósito. Um Asaas fora do ar não é motivo
+   * para cancelar uma cobrança boa e criar outra: o cliente ficaria com dois
+   * códigos e o operador sem saber qual mandar. Na dúvida, mantém — o erro
+   * aparece na hora de pagar, e é recuperável.
+   */
+  private async aindaPagavelNoGateway(gatewayCobrancaId: string): Promise<boolean> {
+    try {
+      const c = await this.asaas.buscarCobranca(gatewayCobrancaId)
+      if (this.asaas.ehPago(c.status)) return false          // já paga: não gerar outra
+      return c.status === 'PENDING' && !c.deletada
+    } catch (err) {
+      this.logger.warn(`[renovacao] não deu para conferir ${gatewayCobrancaId} no gateway: ${err instanceof Error ? err.message : err} — mantendo a cobrança`)
+      return true
+    }
+  }
+
   private async garantirQrCode(cobranca: NonNullable<Awaited<ReturnType<typeof findCobrancaRenovacaoById>>>) {
     if (cobranca.copiaECola || !cobranca.gatewayCobrancaId) return cobranca
 
     try {
       const qr = await this.asaas.buscarQrCodePix(cobranca.gatewayCobrancaId)
+
+      /**
+       * O QR vive MUITO mais que a cobrança — o Asaas devolve validade de cerca
+       * de um ano, enquanto o `dueDate` é de um dia. Gravar a validade do QR
+       * como nossa fazia a idempotência considerar viva, por um ano, uma
+       * cobrança que morreu no dia seguinte: a tela devolvia o mesmo
+       * copia-e-cola para sempre e o banco recusava.
+       *
+       * Vale o que expira PRIMEIRO. `expiraEm` já foi gravado na criação com o
+       * fim do dia do vencimento, então só encurtamos se o QR for mais curto
+       * ainda.
+       */
+      const encurtar = qr.expiraEm && cobranca.expiraEm && qr.expiraEm < cobranca.expiraEm
+
       return await anexarDadosDoGateway(cobranca.id, {
         copiaECola:   qr.copiaECola,
         qrCodeBase64: qr.imagemBase64,
-        // A validade do QR é a autoritativa: é ela que o banco respeita.
-        ...(qr.expiraEm ? { expiraEm: qr.expiraEm } : {}),
+        ...(encurtar ? { expiraEm: qr.expiraEm! } : {}),
       })
     } catch (err) {
       this.logger.warn(`[renovacao] QR ainda indisponível para ${cobranca.id}: ${err instanceof Error ? err.message : err}`)

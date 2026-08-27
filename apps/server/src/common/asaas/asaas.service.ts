@@ -34,6 +34,8 @@ export type CobrancaAsaas = {
   status:     string
   invoiceUrl: string | null
   value:      number
+  /** Apagada no painel do Asaas. Segue respondendo PENDING, mas não aceita pagamento. */
+  deletada?:  boolean
 }
 
 export type QrCodePix = {
@@ -200,10 +202,15 @@ export class AsaasService {
   }
 
   async buscarCobranca(paymentId: string): Promise<CobrancaAsaas> {
-    const p = await this.chamar<{ id: string; status: string; invoiceUrl?: string; value: number }>(
+    const p = await this.chamar<{ id: string; status: string; invoiceUrl?: string; value: number; deleted?: boolean }>(
       `/payments/${paymentId}`,
     )
-    return { id: p.id, status: p.status, invoiceUrl: p.invoiceUrl ?? null, value: p.value }
+    /**
+     * `deleted` importa tanto quanto o status: uma cobrança apagada no painel
+     * do Asaas CONTINUA respondendo `PENDING`, mas o QR dela já não é aceito
+     * pelo banco. Sem este campo, "pendente" parecia sinônimo de "pagável".
+     */
+    return { id: p.id, status: p.status, invoiceUrl: p.invoiceUrl ?? null, value: p.value, deletada: p.deleted === true }
   }
 
   /** Status do Asaas que significam "o dinheiro entrou". */
