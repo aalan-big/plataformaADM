@@ -20,9 +20,39 @@
  *   COBRANCA_ID=<uuid> npx dotenv -e apps/server/.env -- tsx scripts/checar-pix-asaas.ts
  * ============================================================================
  */
+import { readFileSync } from 'fs'
 import { prisma } from '@startbig/database'
 
-const chave = process.env.ASAAS_API_KEY?.trim() ?? ''
+/**
+ * Lê a chave do arquivo, sem passar pelo dotenv-cli.
+ *
+ * A chave do Asaas começa com `$` (`$aact_prod_...`), e o dotenv-cli faz
+ * expansão de variável: ele interpreta isso como referência a uma variável de
+ * ambiente inexistente e entrega string vazia. O servidor não sofre disso
+ * porque usa `dotenv.config()` direto, sem expansão — por isso o PIX funciona
+ * em produção enquanto um script rodado com `dotenv -e` jura que a chave não
+ * existe.
+ *
+ * `process.env` continua tendo prioridade, para quem exportar a chave na mão.
+ */
+function lerChaveAsaas(): string {
+  const doAmbiente = process.env.ASAAS_API_KEY?.trim()
+  if (doAmbiente) return doAmbiente
+
+  for (const caminho of ['apps/server/.env', '.env']) {
+    try {
+      const linha = readFileSync(caminho, 'utf8')
+        .split('\n')
+        .find(l => l.trim().startsWith('ASAAS_API_KEY='))
+      if (!linha) continue
+      // Tira o nome, o `=`, aspas e espaços — sem expandir nada.
+      return linha.split('=').slice(1).join('=').trim().replace(/^["']|["']$/g, '')
+    } catch { /* arquivo não existe neste ambiente */ }
+  }
+  return ''
+}
+
+const chave = lerChaveAsaas()
 const ehProducao = chave.startsWith('$aact_prod_')
 const baseUrl = process.env.ASAAS_BASE_URL?.trim()
   ?? (ehProducao ? 'https://api.asaas.com/v3' : 'https://api-sandbox.asaas.com/v3')
