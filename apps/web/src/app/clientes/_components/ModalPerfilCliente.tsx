@@ -712,26 +712,26 @@ function LicencaCard({ licenca: l, onAtualizar }: { licenca: Licenca; onAtualiza
       {erroBloq && <p className="text-xs text-orange-400">{erroBloq}</p>}
 
       {/* ── Info grid ── */}
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 text-[13px]">
         <div>
-          <p className="text-slate-500 text-[10px] uppercase tracking-wide">Plano</p>
-          <p className="text-slate-300">{l.plano.nome}</p>
+          <p className="text-slate-500 text-[11px]">Plano</p>
+          <p className="text-slate-200 font-medium">{l.plano.nome}</p>
         </div>
         {l.dataVencimento && (
           <div>
-            <p className="text-slate-500 text-[10px] uppercase tracking-wide">Vencimento</p>
-            <p className="text-slate-300">{formatData(l.dataVencimento)}</p>
+            <p className="text-slate-500 text-[11px]">Vencimento</p>
+            <p className="text-slate-200 font-medium">{formatData(l.dataVencimento)}</p>
           </div>
         )}
         <div>
-          <p className="text-slate-500 text-[10px] uppercase tracking-wide">Usuários</p>
-          <p className={l.totalUsuarios >= limiteEfetivo && limiteEfetivo > 0 ? 'text-orange-400' : 'text-slate-300'}>
+          <p className="text-slate-500 text-[11px]">Usuários</p>
+          <p className={`font-medium ${l.totalUsuarios >= limiteEfetivo && limiteEfetivo > 0 ? 'text-orange-400' : 'text-slate-200'}`}>
             {l.totalUsuarios}/{limiteEfetivo}
           </p>
         </div>
         <div>
-          <p className="text-slate-500 text-[10px] uppercase tracking-wide">Última conexão</p>
-          <p className="text-slate-300">{tempoRelativo(l.ultimoHeartbeat)}</p>
+          <p className="text-slate-500 text-[11px]">Última conexão</p>
+          <p className="text-slate-200 font-medium">{tempoRelativo(l.ultimoHeartbeat)}</p>
         </div>
       </div>
 
@@ -1007,17 +1007,17 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-lg bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
+      <div className="w-full max-w-2xl bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl flex flex-col max-h-[92vh]">
 
         {/* Cabeçalho */}
-        <div className="flex items-center justify-between px-4 py-4 border-b border-slate-800">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-slate-900/60 rounded-t-2xl">
           <div className="flex items-center gap-3 min-w-0">
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold text-white shrink-0 ${corAvatar(nome)}`}>
+            <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-base font-bold text-white shrink-0 ${corAvatar(nome)}`}>
               {nome[0]?.toUpperCase() ?? '?'}
             </div>
             <div className="min-w-0">
-              <h2 className="text-sm font-semibold text-white truncate">{nome}</h2>
-              <p className="text-[11px] text-slate-400">{cliente?.email ?? ''}</p>
+              <h2 className="text-[15px] font-semibold text-white truncate leading-tight">{nome}</h2>
+              <p className="text-[11px] text-slate-500 truncate">{cliente?.email ?? ''}</p>
             </div>
           </div>
           <div className="flex items-center gap-1 shrink-0">
@@ -1049,7 +1049,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
         </div>
 
         {/* Corpo */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 sm:space-y-5">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5 sm:space-y-6">
 
           {carregando && (
             <div className="flex flex-col items-center gap-2 py-12">
@@ -1069,10 +1069,10 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
             <>
               {/* Info do cliente */}
               <div className="bg-slate-800/30 border border-slate-700/50 rounded-xl p-4 space-y-3">
-                <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Dados do cliente</p>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 text-xs">
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider pb-2 border-b border-slate-700/40">Dados do cliente</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-3.5 text-[13px]">
                   <div>
-                    <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Tipo</p>
+                    <p className="text-slate-500 text-[11px] mb-1">Tipo</p>
                     <span className={`inline-block font-semibold px-1.5 py-0.5 rounded text-[10px] ${
                       cliente.pj ? 'bg-blue-500/15 text-blue-400' : 'bg-purple-500/15 text-purple-400'
                     }`}>
@@ -1080,31 +1080,31 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                     </span>
                   </div>
                   <div>
-                    <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">
+                    <p className="text-slate-500 text-[11px] mb-1">
                       {cliente.pf ? 'CPF' : 'CNPJ'}
                     </p>
                     <p className="text-slate-300 font-mono">{doc}</p>
                   </div>
                   {cliente.pj && cliente.pj?.nomeFantasia && (
                     <div>
-                      <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Nome Fantasia</p>
+                      <p className="text-slate-500 text-[11px] mb-1">Nome Fantasia</p>
                       <p className="text-slate-300">{cliente.pj.nomeFantasia}</p>
                     </div>
                   )}
                   {cliente.pj && cliente.pj?.inscricaoEstadual && (
                     <div>
-                      <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Inscrição Estadual</p>
+                      <p className="text-slate-500 text-[11px] mb-1">Inscrição Estadual</p>
                       <p className="text-slate-300">{cliente.pj.inscricaoEstadual}</p>
                     </div>
                   )}
                   {cliente.pj && cliente.pj?.responsavel && (
                     <div>
-                      <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Responsável</p>
+                      <p className="text-slate-500 text-[11px] mb-1">Responsável</p>
                       <p className="text-slate-300">{cliente.pj.responsavel}</p>
                     </div>
                   )}
                   <div>
-                    <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Cadastrado em</p>
+                    <p className="text-slate-500 text-[11px] mb-1">Cadastrado em</p>
                     <p className="text-slate-300">{formatData(cliente.criadoEm)}</p>
                   </div>
                 </div>
@@ -1113,7 +1113,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
               {/* Configuração Fiscal */}
               <div className="bg-slate-800/30 border border-slate-700/50 rounded-xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Configuração Fiscal (Focus NFe)</p>
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider pb-2 border-b border-slate-700/40">Configuração Fiscal (Focus NFe)</p>
                   {!editandoFiscal && (
                     <button
                       onClick={() => setEditandoFiscal(true)}
@@ -1129,7 +1129,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                   <div className="space-y-3 text-xs">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wide block mb-1">Razão Social</label>
+                        <label className="text-[11px] text-slate-400 block mb-1.5">Razão Social</label>
                         <input
                           type="text"
                           value={razaoSocial}
@@ -1139,7 +1139,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wide block mb-1">CNPJ</label>
+                        <label className="text-[11px] text-slate-400 block mb-1.5">CNPJ</label>
                         <input
                           type="text"
                           value={cnpj}
@@ -1152,7 +1152,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
 
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wide block mb-1">Inscrição Estadual</label>
+                        <label className="text-[11px] text-slate-400 block mb-1.5">Inscrição Estadual</label>
                         <input
                           type="text"
                           value={inscricaoEstadual}
@@ -1162,7 +1162,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wide block mb-1">Ambiente</label>
+                        <label className="text-[11px] text-slate-400 block mb-1.5">Ambiente</label>
                         <select
                           value={ambiente}
                           onChange={e => setAmbiente(Number(e.target.value))}
@@ -1175,7 +1175,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                     </div>
 
                     <div>
-                      <label className="text-[10px] text-slate-500 uppercase tracking-wide block mb-1">Token de Empresa (Focus NFe)</label>
+                      <label className="text-[11px] text-slate-400 block mb-1.5">Token de Empresa (Focus NFe)</label>
                       <input
                         type="password"
                         value={focusToken}
@@ -1219,19 +1219,19 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                     {cliente.configuracaoFiscal ? (
                       <>
                         <div>
-                          <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Razão Social Emitente</p>
+                          <p className="text-slate-500 text-[11px] mb-1">Razão Social Emitente</p>
                           <p className="text-slate-300 font-medium">{cliente.configuracaoFiscal.razaoSocial}</p>
                         </div>
                         <div>
-                          <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">CNPJ Emitente</p>
+                          <p className="text-slate-500 text-[11px] mb-1">CNPJ Emitente</p>
                           <p className="text-slate-300 font-mono">{formatCnpj(cliente.configuracaoFiscal.cnpj)}</p>
                         </div>
                         <div>
-                          <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Inscrição Estadual</p>
+                          <p className="text-slate-500 text-[11px] mb-1">Inscrição Estadual</p>
                           <p className="text-slate-300">{cliente.configuracaoFiscal.inscricaoEstadual || '—'}</p>
                         </div>
                         <div>
-                          <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Ambiente SEFAZ</p>
+                          <p className="text-slate-500 text-[11px] mb-1">Ambiente SEFAZ</p>
                           <span className={`inline-block font-semibold px-1.5 py-0.5 rounded text-[10px] ${
                             cliente.configuracaoFiscal.ambiente === 1 ? 'bg-amber-500/15 text-amber-400' : 'bg-blue-500/15 text-blue-400'
                           }`}>
@@ -1239,13 +1239,13 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                           </span>
                         </div>
                         <div>
-                          <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Token Focus NFe</p>
+                          <p className="text-slate-500 text-[11px] mb-1">Token Focus NFe</p>
                           <p className="text-slate-300 font-mono">
                             {cliente.configuracaoFiscal.tokenConfigurado ? '••••••••••••••••' : 'Não configurado'}
                           </p>
                         </div>
                         <div>
-                          <p className="text-slate-500 text-[10px] uppercase tracking-wide mb-0.5">Certificado Digital</p>
+                          <p className="text-slate-500 text-[11px] mb-1">Certificado Digital</p>
                           <span className={`inline-block font-semibold px-1.5 py-0.5 rounded text-[10px] ${
                             cliente.configuracaoFiscal.certificadoStatus === 'ATIVO' ? 'bg-emerald-500/15 text-emerald-400'
                             : cliente.configuracaoFiscal.certificadoStatus === 'VENCIDO' ? 'bg-red-500/15 text-red-400'
@@ -1258,7 +1258,8 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                         </div>
                       </>
                     ) : (
-                      <div className="col-span-2 text-center py-2 text-slate-500 text-xs">
+                      <div className="col-span-2 flex items-center gap-2 text-slate-500 text-xs">
+                        <FileText size={13} className="shrink-0 text-slate-600" />
                         Nenhuma configuração fiscal vinculada a este cliente.
                       </div>
                     )}
@@ -1268,7 +1269,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
 
               {/* Licenças */}
               <div className="space-y-2.5">
-                <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider pb-2 border-b border-slate-700/40">
                   Licenças ({licencas.length})
                 </p>
                 {licencas.length === 0 ? (
