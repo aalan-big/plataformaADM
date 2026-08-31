@@ -18,14 +18,44 @@ type Modulo = {
 }
 
 /**
- * Módulos cuja regra é aplicada pelo SERVIDOR.
+ * Onde a regra de cada módulo é REALMENTE aplicada.
  *
- * A distinção não é decoração: a emissão de NF-e passa pela API, então negar ali
- * é definitivo. Um módulo que só existe dentro do ERP depende do ERP esconder o
- * menu — e quem controla a máquina pode ignorar isso. Quem vai definir preço
- * precisa enxergar essa diferença na hora de decidir quanto cobrar.
+ * A distinção não é decoração: ela responde "o cliente consegue contornar?", que
+ * é o que decide quanto dá para cobrar. Mas ela tem dois valores possíveis, não
+ * um — e tratar isso como sim/não já levou a uma conclusão errada aqui.
+ *
+ * - `plataforma`: a negação acontece na API deste projeto (emissão fiscal passa
+ *   por ela). Vale para qualquer cliente, em qualquer versão do ERP instalada.
+ *
+ * - `erp`: a negação acontece no servidor LOCAL do ERP, que tem backend próprio.
+ *   `requer_modulo()` lê a claim do JWT conferida com a chave pública e responde
+ *   403. Não é menu escondido: chamar a API local direto leva 403 igual, e sem a
+ *   chave privada da plataforma ninguém forja módulo. A única ressalva é a
+ *   versão instalada na loja — build antigo pode não conhecer o identificador.
+ *
+ * Módulo fora deste mapa não tem trava em lugar nenhum: aparece no catálogo,
+ * entra na claim, e nada lê essa claim. Não cobre por ele.
  */
-const APLICADO_NO_SERVIDOR = new Set(['NFE', 'NFCE', 'NFSE'])
+const ONDE_TRAVA: Record<string, 'plataforma' | 'erp'> = {
+  NFE:            'plataforma',
+  NFCE:           'plataforma',
+  NFSE:           'plataforma',
+  FINANCEIRO:     'erp',
+  FINANCEIRO_PRO: 'erp',
+}
+
+const SELO_TRAVA = {
+  plataforma: {
+    label: 'trava na plataforma',
+    title: 'A regra é aplicada pela API deste projeto — o ERP não tem como contornar, em nenhuma versão.',
+    cls:   'bg-emerald-500/10 text-emerald-400',
+  },
+  erp: {
+    label: 'trava no ERP',
+    title: 'A regra é aplicada pelo servidor local do ERP (403 em requer_modulo), lendo a claim assinada. Não é menu escondido — mas depende da versão instalada na loja.',
+    cls:   'bg-teal-500/10 text-teal-300',
+  },
+} as const
 
 function formatarReais(v: string | number | null) {
   if (v == null) return null
@@ -112,7 +142,7 @@ function CardModulo({ modulo, onSalvo }: { modulo: Modulo; onSalvo: () => void }
 /** Estado padrão: mostra fatos, não formulário. */
 function Leitura({ modulo, onEditar }: { modulo: Modulo; onEditar: () => void }) {
   const preco     = formatarReais(modulo.precoMensal)
-  const noServidor = APLICADO_NO_SERVIDOR.has(modulo.identificador)
+  const ondeTrava = ONDE_TRAVA[modulo.identificador]
 
   return (
     <div className="p-3.5 flex items-start gap-3">
@@ -135,12 +165,24 @@ function Leitura({ modulo, onEditar }: { modulo: Modulo; onEditar: () => void })
               BASE
             </span>
           )}
-          {noServidor && (
+          {ondeTrava && (
             <span
-              className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 flex items-center gap-1"
-              title="A regra é aplicada pela API — o ERP não tem como contornar."
+              className={`text-[10px] font-medium px-1.5 py-0.5 rounded flex items-center gap-1 ${SELO_TRAVA[ondeTrava].cls}`}
+              title={SELO_TRAVA[ondeTrava].title}
             >
-              <ShieldCheck size={10} /> trava no servidor
+              <ShieldCheck size={10} /> {SELO_TRAVA[ondeTrava].label}
+            </span>
+          )}
+          {/* Ausência de selo é informação, não lacuna: significa que nada lê a
+              claim desse módulo, e portanto que ele não trava nada em lugar
+              nenhum. Dizer isso na tela evita cobrar por um cadeado que não
+              existe. */}
+          {!ondeTrava && (
+            <span
+              className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400 flex items-center gap-1"
+              title="Nenhum código lê este módulo ainda — ele entra na licença mas não bloqueia nada."
+            >
+              sem trava
             </span>
           )}
         </div>
