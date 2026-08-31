@@ -119,6 +119,39 @@ async function main() {
     console.log('\n  ⚠ Confira cada uma: falta algum módulo que essa loja usa hoje?')
   }
 
+  // -- 4. Quem esta em qual plano ------------------------------------------
+  //
+  // Esta e a pergunta que decide o alcance do seed, e a secao 3 nao responde:
+  // quando a claim esta vazia ela so conta as licencas. Depois do seed toda
+  // licenca recebe os modulos-base (seguro) e perde tudo que o plano dela nao
+  // inclui — entao "quem esta em qual plano" e, literalmente, a lista de quem
+  // mantem e de quem perde cada recurso.
+  const porPlano = new Map<string, string[]>()
+  for (const l of licencas) {
+    const cli  = l.cliente
+    const nome = cli.pf?.nomeCompleto ?? cli.pj?.razaoSocial ?? cli.email
+    const pl   = l.plano?.nome ?? '(sem plano)'
+    porPlano.set(pl, [...(porPlano.get(pl) ?? []), nome])
+  }
+
+  console.log('')
+  console.log('-- Licencas ativas por PLANO ' + '-'.repeat(37))
+  const planosCadastrados = await prisma.plano.findMany({
+    select: { nome: true, status: true }, orderBy: { precoMensal: 'asc' },
+  })
+  for (const pl of planosCadastrados) {
+    const clientes = porPlano.get(pl.nome) ?? []
+    const vinculados = await prisma.planoModulo.findMany({
+      where:   { plano: { nome: pl.nome } },
+      include: { modulo: { select: { identificador: true } } },
+    })
+    const mods = vinculados.map(v => v.modulo.identificador).join(', ') || 'nenhum'
+    console.log(`  ${pl.nome}${pl.status === 'ATIVO' ? '' : ' [' + pl.status + ']'} - ${clientes.length} licenca(s) ativa(s) | modulos do plano: ${mods}`)
+    clientes.forEach(c => console.log(`      . ${c}`))
+  }
+  const semPlano = porPlano.get('(sem plano)') ?? []
+  if (semPlano.length > 0) console.log(`  (sem plano) - ${semPlano.length} licenca(s)`)
+
   console.log('\nConcluído.')
 }
 
