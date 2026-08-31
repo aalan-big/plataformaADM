@@ -71,7 +71,7 @@ const CATALOGO = [
    * Quem entra em qual plano passa a ser escolha explícita, feita no painel,
    * depois que o preço estiver definido.
    */
-  { identificador: 'NFE', nome: 'NF-e', descricao: 'Nota Fiscal Eletrônica de mercadoria, via Focus NFe.', icone: 'FileText', ordem: 10, vincularATodos: false, incluidoPorPadrao: false },
+  { identificador: 'NFE', nome: 'NF-e', descricao: 'Nota Fiscal Eletrônica de mercadoria, via Focus NFe.', icone: 'FileText', ordem: 10, vincularATodos: false, incluidoPorPadrao: false, vincularAosPlanos: [] },
 
   /**
    * FINANCEIRO — base. Visão Geral, Contas a Pagar, Contas a Receber, Extrato e
@@ -85,24 +85,73 @@ const CATALOGO = [
    *
    * A flag não envelhece: vale inclusive para plano que ainda não existe.
    */
-  { identificador: 'FINANCEIRO', nome: 'Financeiro', descricao: 'Contas a pagar e a receber, extrato e plano de contas.', icone: 'Wallet', ordem: 20, vincularATodos: false, incluidoPorPadrao: true },
+  { identificador: 'FINANCEIRO', nome: 'Financeiro', descricao: 'Contas a pagar e a receber, extrato e plano de contas.', icone: 'Wallet', ordem: 20, vincularATodos: false, incluidoPorPadrao: true, vincularAosPlanos: [] },
 
   /**
    * FINANCEIRO_PRO — o recorte que se vende. Análise, Fluxo de Caixa e
    * Conciliação. "A base guarda e controla o dinheiro; o pro avisa e aconselha."
    *
-   * Nasce sem vínculo e sem ser base: quem entra em qual plano é decisão
-   * comercial, feita no painel depois do preço definido.
+   * Vinculado a PRO e Business no próprio seed, e não depois no painel, porque
+   * entre semear e vincular existe uma janela em que NINGUÉM tem o módulo — nem
+   * quem paga o plano de cima. A claim vira allowlist no primeiro módulo que
+   * entra, e a partir daí tudo que não está nela fecha, em minutos. Vincular no
+   * mesmo comando faz semear e vender virarem um evento só.
+   *
+   * O plano é casado por NOME. Se ele não existir, o script aborta sem gravar
+   * nada — ver o pré-voo em `main()`.
    */
-  { identificador: 'FINANCEIRO_PRO', nome: 'Financeiro PRO', descricao: 'Análise, fluxo de caixa e conciliação bancária.', icone: 'ChartLine', ordem: 21, vincularATodos: false, incluidoPorPadrao: false },
+  { identificador: 'FINANCEIRO_PRO', nome: 'Financeiro PRO', descricao: 'Análise, fluxo de caixa e conciliação bancária.', icone: 'ChartLine', ordem: 21, vincularATodos: false, incluidoPorPadrao: false, vincularAosPlanos: ['PRO', 'Business'] },
 ]
 
 async function main() {
   const marca = SIMULAR ? '[SIMULAÇÃO] ' : ''
   console.log(`${marca}Semeando catálogo de módulos...\n`)
 
+  /**
+   * PRE-VOO: todo plano nomeado tem que existir ANTES de gravarmos qualquer
+   * coisa. Abortar aqui e a diferenca entre "nada aconteceu" e uma pane.
+   *
+   * O motivo e a allowlist: a trava de um modulo NAO depende de ele existir no
+   * catalogo, depende de a claim estar preenchida. No instante em que o primeiro
+   * modulo entra, a lista deixa de ser vazia e o ERP passa a liberar so o que
+   * esta nela — tudo o mais fecha. Se o plano de destino nao existir, o modulo
+   * seria criado sem ter onde ser concedido, e o recurso ficaria fechado para
+   * toda a base sem caminho de volta a nao ser criar o plano as pressas.
+   *
+   * Nesse cenario, gravar metade e pior que nao gravar nada.
+   */
+  const nomesDePlano = [...new Set(CATALOGO.flatMap(c => c.vincularAosPlanos))]
+  const planosAlvo = new Map<string, { id: string; nome: string }>()
+
+  if (nomesDePlano.length > 0) {
+    const encontrados = await prisma.plano.findMany({
+      where:  { nome: { in: nomesDePlano } },
+      select: { id: true, nome: true },
+    })
+    encontrados.forEach(pl => planosAlvo.set(pl.nome, pl))
+
+    const faltando = nomesDePlano.filter(n => !planosAlvo.has(n))
+    if (faltando.length > 0) {
+      const todos = await prisma.plano.findMany({ select: { nome: true }, orderBy: { nome: 'asc' } })
+      console.error(`ABORTADO — plano nao encontrado: ${faltando.join(', ')}`)
+      console.error(`Planos existentes neste banco: ${todos.map(pl => pl.nome).join(', ') || '(nenhum)'}`)
+      console.error('')
+      console.error('Nada foi gravado, de proposito. Semear sem o plano de destino fecharia o')
+      console.error('modulo para a base inteira sem ter onde devolve-lo — a claim vira allowlist')
+      console.error('no primeiro modulo que entra, e o efeito chega as lojas em minutos.')
+      console.error('')
+      console.error('Crie o plano no painel primeiro, ou ajuste `vincularAosPlanos` no CATALOGO.')
+      process.exit(1)
+    }
+
+    for (const [nome, pl] of planosAlvo) {
+      console.log(`${marca}  plano de destino confirmado: ${nome} (${pl.id})`)
+    }
+    console.log('')
+  }
+
   for (const item of CATALOGO) {
-    const { vincularATodos, ...dados } = item
+    const { vincularATodos, vincularAosPlanos, ...dados } = item
     const existente = await prisma.modulo.findUnique({ where: { identificador: dados.identificador } })
 
     if (SIMULAR) {
@@ -115,6 +164,28 @@ async function main() {
         create: dados,
       })
       console.log(`  ${existente ? '~' : '+'} ${dados.identificador} — ${dados.nome}${dados.incluidoPorPadrao ? '  [BASE: entra na claim de toda licença]' : ''}`)
+    }
+
+    for (const nomePlano of vincularAosPlanos) {
+      const alvo = planosAlvo.get(nomePlano)!
+      const mod  = SIMULAR
+        ? existente
+        : await prisma.modulo.findUnique({ where: { identificador: dados.identificador } })
+
+      const jaTem = mod
+        ? await prisma.planoModulo.findUnique({
+            where: { planoId_moduloId: { planoId: alvo.id, moduloId: mod.id } },
+          })
+        : null
+
+      if (jaTem) {
+        console.log(`      = ${alvo.nome}: ja vinculado (cota ${jaTem.cotaMensal ?? 'ilimitada'}) — preservado`)
+      } else if (SIMULAR) {
+        console.log(`${marca}      + ${alvo.nome}: vincularia ${dados.identificador} sem teto`)
+      } else if (mod) {
+        await prisma.planoModulo.create({ data: { planoId: alvo.id, moduloId: mod.id, cotaMensal: null } })
+        console.log(`      + ${alvo.nome}: vinculado sem teto`)
+      }
     }
 
     if (!vincularATodos) continue
