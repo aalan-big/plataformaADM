@@ -27,6 +27,7 @@ import {
   findLicencasExpirandoOuVencidas,
   criarLicenca,
   renovarLicencaComHistorico,
+  darCortesiaEmDias,
   registrarEventoLicenca,
   findHistoricoByLicenca,
   findAllPlanos,
@@ -45,6 +46,7 @@ import {
 } from '@startbig/database'
 import {
   renovarLicencaSchema,
+  cortesiaLicencaSchema,
   criarLicencaSchema,
   conectarSchema,
   desconectarSchema,
@@ -574,6 +576,46 @@ export class DispositivoService {
         dataVencimento,
         ultimoPagamento: new Date(),
         emailEnviado:    emailEnviado ? licenca.cliente.email : null,
+      },
+    }
+  }
+
+  /**
+   * Dias de cortesia: estende o vencimento sem cobrar nada.
+   *
+   * O caminho de venda (renovar) trabalha em meses porque mes e a unidade do
+   * contrato. Cortesia trabalha em dias porque a unidade do favor e outra:
+   * "mais uma semana pra voce testar", "os 3 dias que voce ficou sem sistema".
+   * Forcar as duas na mesma rota faria uma das duas mentir no historico.
+   *
+   * O que esta rota deliberadamente NAO faz: promover trial a licenca paga.
+   * Cliente sem plano comprado continua trial depois da cortesia — ele ganhou
+   * prazo, nao um plano. Isso mantem o funil honesto: o trial estendido segue
+   * aparecendo como trial pra ser cobrado quando o prazo acabar.
+   */
+  async darCortesia(licencaId: string, body: unknown) {
+    const { dias, observacao } = this.parseBody(cortesiaLicencaSchema, body ?? {})
+
+    const licenca = await findLicencaById(licencaId)
+    if (!licenca) throw new NotFoundException('Licença não encontrada.')
+
+    // Cortesia em licenca revogada seria prazo pra uma chave que nao volta a
+    // funcionar — o admin acharia que resolveu e o cliente continuaria fora.
+    // Reativar primeiro e uma decisao consciente, e tem botao proprio.
+    if (licenca.status === 'REVOGADA')
+      throw new BadRequestException('Licença revogada — reative antes de conceder cortesia.')
+
+    const atualizada = await darCortesiaEmDias(licencaId, { dias, observacao })
+    if (!atualizada) throw new NotFoundException('Licença não encontrada.')
+
+    return {
+      msg: `Cortesia de ${dias} ${dias === 1 ? 'dia' : 'dias'} concedida.`,
+      data: {
+        id:             licencaId,
+        dataVencimento: atualizada.dataVencimento,
+        diasCortesia:   atualizada.diasCortesia,
+        status:         atualizada.status,
+        isTrial:        atualizada.isTrial,
       },
     }
   }

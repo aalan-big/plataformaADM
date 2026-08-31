@@ -7,7 +7,7 @@ import {
   ShieldCheck, ShieldOff, ShieldAlert, ShieldX,
   MonitorOff, UserMinus, UserPlus, RotateCcw,
   Ban, Pause, Trash2, Play, Link2, ExternalLink,
-  ChevronDown, ChevronUp, ArrowRight,
+  ChevronDown, ChevronUp, ArrowRight, Gift,
 } from 'lucide-react'
 import ModalGerarChave from './ModalGerarChave'
 
@@ -95,6 +95,7 @@ const STATUS_CONFIG: Record<Status, { label: string; cor: string; dot: string; I
 const HISTORICO_TIPO_CONFIG: Record<string, { label: string; cor: string }> = {
   TRIAL:      { label: 'Trial',       cor: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' },
   RENOVACAO:  { label: 'Renovação',   cor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' },
+  CORTESIA:   { label: 'Cortesia',    cor: 'text-purple-300 bg-purple-500/15 border-purple-500/25' },
   BLOQUEIO:   { label: 'Bloqueio',    cor: 'text-red-400 bg-red-500/10 border-red-500/20' },
   SUSPENSAO:  { label: 'Suspensão',   cor: 'text-orange-400 bg-orange-500/10 border-orange-500/20' },
   REVOGACAO:  { label: 'Revogação',   cor: 'text-red-500 bg-red-600/10 border-red-600/20' },
@@ -154,6 +155,11 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
   const [modalRenovar, setModalRenovar] = useState(false)
   const [acao, setAcao] = useState<string | null>(null)
   const [mostrarAdmin, setMostrarAdmin] = useState(false)
+  // Cortesia em dias
+  const [diasCortesia, setDiasCortesia]   = useState(7)
+  const [obsCortesia, setObsCortesia]     = useState('')
+  const [dandoCortesia, setDandoCortesia] = useState(false)
+  const [msgCortesia, setMsgCortesia]     = useState('')
   // Link de pagamento
   const [mesesStripe, setMesesStripe] = useState(1)
   const [linkStripe, setLinkStripe] = useState('')
@@ -220,6 +226,37 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
       setErro('Falha de conexão.')
     } finally {
       setAcao(null)
+    }
+  }
+
+  /**
+   * Cortesia nao entra no `executarAcao` porque manda corpo (dias/observacao) e
+   * porque precisa devolver uma confirmacao visivel: os outros botoes mudam o
+   * status, que aparece no topo do modal; este muda uma data no meio da tela, e
+   * sem a mensagem o operador nao sabe se o clique pegou — e clica de novo.
+   */
+  async function darCortesia() {
+    setDandoCortesia(true)
+    setErro(''); setMsgCortesia('')
+    try {
+      const res = await fetch(`/api/licenca/${licencaId}/cortesia`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ dias: diasCortesia, observacao: obsCortesia.trim() || undefined }),
+      })
+      const j = await res.json()
+      if (!res.ok) {
+        setErro(j.message ?? j.erro ?? 'Erro ao conceder cortesia.')
+        return
+      }
+      setMsgCortesia(j.msg ?? 'Cortesia concedida.')
+      setObsCortesia('')
+      carregar()
+      onAtualizar()
+    } catch {
+      setErro('Falha de conexão.')
+    } finally {
+      setDandoCortesia(false)
     }
   }
 
@@ -387,6 +424,21 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
 
   const dias = licenca ? diasRestantes(licenca.dataVencimento) : null
   const statusCfg = licenca ? STATUS_CONFIG[licenca.status] : null
+  /**
+   * Espelha a conta do servidor (`darCortesiaEmDias`): licenca viva soma no
+   * vencimento atual, vencida conta de hoje. Duplicar a regra aqui e proposital
+   * — a alternativa seria mostrar uma data errada ate o servidor responder, e a
+   * data e justamente o que o operador precisa conferir ANTES de clicar.
+   */
+  const novoVencimentoCortesia = (() => {
+    if (!licenca) return null
+    const agora = new Date()
+    const atual = licenca.dataVencimento ? new Date(licenca.dataVencimento) : null
+    const base  = atual && atual > agora ? atual : agora
+    const alvo  = new Date(base)
+    alvo.setDate(alvo.getDate() + diasCortesia)
+    return alvo.toLocaleDateString('pt-BR')
+  })()
   const executando = acao !== null
 
   return (
@@ -614,6 +666,68 @@ export default function ModalDetalhe({ licencaId, onClose, onAtualizar }: Props)
                           cor="text-slate-400 bg-slate-700/40 hover:bg-slate-700/70 border-slate-600/40"
                           icone={UserMinus} label="-1 Extra" />
                       </div>
+                      {/* ── Cortesia em dias ──────────────────────────────
+                          Fica aqui, e nao junto de "Renovar licenca", porque as
+                          duas coisas so parecem iguais: renovar registra venda
+                          (meses, pagamento, deixa de ser trial); cortesia so
+                          empurra a data. Misturar as duas na mesma barra faria
+                          alguem dar meses de graca achando que deu dias. */}
+                      {licenca.status !== 'REVOGADA' && (
+                        <div className="pt-3 border-t border-slate-700/50 space-y-2">
+                          <p className="text-[10px] text-slate-500 uppercase tracking-wide">Dias de cortesia</p>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {[3, 7, 15, 30].map(d => (
+                              <button
+                                key={d}
+                                onClick={() => setDiasCortesia(d)}
+                                className={`px-2.5 py-1.5 text-[11px] font-semibold rounded-lg border transition-colors ${
+                                  diasCortesia === d
+                                    ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
+                                    : 'bg-slate-700/40 border-slate-600/40 text-slate-400 hover:bg-slate-700/70'
+                                }`}
+                              >
+                                {d}d
+                              </button>
+                            ))}
+                            <input
+                              type="number" min={1} max={90} value={diasCortesia}
+                              onChange={e => setDiasCortesia(Math.min(90, Math.max(1, Number(e.target.value) || 1)))}
+                              className="w-16 bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1.5 text-slate-200 text-[11px] focus:outline-none focus:ring-1 focus:ring-purple-500/30"
+                            />
+                            <input
+                              type="text" value={obsCortesia} maxLength={200}
+                              onChange={e => setObsCortesia(e.target.value)}
+                              placeholder="Motivo (opcional)"
+                              className="flex-1 min-w-[8rem] bg-slate-950 border border-slate-700/60 rounded-lg px-2 py-1.5 text-slate-200 placeholder-slate-600 text-[11px] focus:outline-none focus:ring-1 focus:ring-purple-500/30"
+                            />
+                            <button
+                              onClick={darCortesia}
+                              disabled={dandoCortesia || executando}
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 border-purple-500/20"
+                            >
+                              {dandoCortesia ? <Loader2 size={11} className="animate-spin" /> : <Gift size={11} />}
+                              Conceder
+                            </button>
+                          </div>
+
+                          {/* O efeito escrito antes do clique, como na troca de
+                              plano: quem ja venceu conta de hoje, nao da data
+                              velha — e essa diferenca muda o resultado. */}
+                          <p className="text-[10px] text-slate-500 leading-relaxed">
+                            {novoVencimentoCortesia
+                              ? <>Novo vencimento: <span className="text-slate-300 font-medium">{novoVencimentoCortesia}</span>{dias !== null && dias <= 0 && <span className="text-slate-600"> · contado a partir de hoje, a licença já venceu</span>}</>
+                              : 'Soma os dias no vencimento atual.'}
+                            {licenca.isTrial && <span className="text-yellow-500/80"> · continua como trial — cortesia não é venda.</span>}
+                          </p>
+
+                          {msgCortesia && (
+                            <p className="flex items-start gap-1.5 text-[11px] text-emerald-400">
+                              <CheckCheck size={12} className="shrink-0 mt-0.5" /> {msgCortesia}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
                       {executando && (
                         <div className="flex items-center gap-2 text-slate-500 text-xs">
                           <Loader2 size={11} className="animate-spin" />

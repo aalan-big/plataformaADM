@@ -76,6 +76,7 @@ const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
 const HISTORICO_CONFIG: Record<string, { label: string; cls: string }> = {
   TRIAL:        { label: 'Trial',     cls: 'text-purple-400  bg-purple-500/10'  },
   RENOVACAO:    { label: 'Renovação', cls: 'text-blue-400    bg-blue-500/10'    },
+  CORTESIA:     { label: 'Cortesia',  cls: 'text-purple-300  bg-purple-500/15'  },
   BLOQUEIO:     { label: 'Bloqueio',  cls: 'text-orange-400  bg-orange-500/10'  },
   DESBLOQUEIO:  { label: 'Desbloq.', cls: 'text-emerald-400 bg-emerald-500/10' },
   ATIVACAO:     { label: 'Ativação',  cls: 'text-teal-400    bg-teal-500/10'    },

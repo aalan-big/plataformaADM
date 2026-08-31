@@ -108,6 +108,11 @@ export class DispositivoController {
     return this.dispositivoService.renovar(id, body)
   }
 
+  @Patch(':id/cortesia')
+  async darCortesia(@Param('id') id: string, @Body() body: unknown) {
+    return this.dispositivoService.darCortesia(id, body)
+  }
+
   @Patch(':id/resetar-usuarios')
   async resetarUsuarios(@Param('id') id: string) {
     return this.dispositivoService.resetarContadorUsuarios(id)

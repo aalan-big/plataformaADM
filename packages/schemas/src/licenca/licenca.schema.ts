@@ -12,6 +12,18 @@ export const renovarLicencaSchema = z.object({
   meses: z.number().int().min(1).max(24),
 })
 
+/**
+ * Cortesia em DIAS, e nao em meses como a renovacao. Sao coisas diferentes:
+ * renovar e o registro de uma venda; cortesia e um presente com prazo curto
+ * ("te dou mais 5 dias pra decidir"). Por isso o minimo aqui e 1 dia, e o teto
+ * de 90 existe pra que "cortesia" nao vire assinatura gratuita por descuido —
+ * quem precisa de mais que um trimestre de graca esta renovando, nao cortejando.
+ */
+export const cortesiaLicencaSchema = z.object({
+  dias:       z.number().int().min(1).max(90),
+  observacao: z.string().trim().max(200).optional(),
+})
+
 export const adicionarExtraSchema = z.object({
   extras: z.number().int().min(1).max(100),
 })

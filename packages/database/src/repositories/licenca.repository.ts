@@ -186,6 +186,78 @@ export async function renovarLicencaComHistorico(id: string, dados: {
   return licenca
 }
 
+/**
+ * Soma dias de cortesia no vencimento — de graca, sem passar por pagamento.
+ *
+ * Difere de `renovarLicencaComHistorico` em tres pontos que sao a razao de esta
+ * funcao existir separada, e nao um parametro daquela:
+ *
+ * - NAO mexe em `isTrial`. Cortesia nao e venda. Quem ainda nao comprou plano
+ *   continua trial ate pagar; o contrario faria a licenca se declarar paga sem
+ *   dinheiro nenhum ter entrado, e o relatorio de trials perderia esse cliente
+ *   de vista justamente na semana em que ele precisa ser cobrado.
+ * - NAO toca em `ultimoPagamento`, pelo mesmo motivo: aquele campo responde
+ *   "quando entrou dinheiro", e cortesia nao e resposta pra essa pergunta.
+ * - NAO limpa `carenciaAte`. A carencia e do cartao que falhou e segue seu
+ *   proprio curso no Stripe; apagar aqui encurtaria a tolerancia de quem ja
+ *   estava dentro dela — o oposto do que um presente deveria fazer.
+ *
+ * `diasCortesia` acumula o total ja concedido (trial inicial incluso), que e o
+ * numero util na hora de decidir se ainda cabe mais um "so mais uns dias".
+ */
+export async function darCortesiaEmDias(id: string, dados: {
+  dias:        number
+  observacao?: string
+}) {
+  const licenca = await prisma.licenca.findUnique({
+    where:  { id },
+    select: { chaveAtivacao: true, dataVencimento: true, diasCortesia: true, status: true },
+  })
+  if (!licenca) return null
+
+  // Licenca ja vencida conta a partir de hoje, nao do vencimento antigo: dar 5
+  // dias a quem venceu ha 30 renderia uma data no passado, ou seja, cortesia
+  // nenhuma. Licenca viva soma no fim do prazo atual, senao o presente comeria
+  // os dias que o cliente ja tinha.
+  const agora = new Date()
+  const base  = licenca.dataVencimento && licenca.dataVencimento > agora
+    ? new Date(licenca.dataVencimento)
+    : agora
+
+  const dataVencimento = new Date(base)
+  dataVencimento.setDate(dataVencimento.getDate() + dados.dias)
+
+  const atualizada = await prisma.licenca.update({
+    where: { id },
+    data: {
+      dataVencimento,
+      diasCortesia: (licenca.diasCortesia ?? 0) + dados.dias,
+      // Uma licenca VENCIDA com vencimento futuro seria um estado impossivel: o
+      // ERP le o status antes da data e continuaria barrando o cliente. Os
+      // demais status (BLOQUEADA, SUSPENSA, REVOGADA) sao decisao humana e nao
+      // se desfazem por um presente de prazo — quem bloqueou e quem reativa.
+      ...(licenca.status === 'VENCIDA' ? { status: 'ATIVA' as const } : {}),
+    },
+  })
+
+  await prisma.licencaHistorico.create({
+    data: {
+      licencaId:      id,
+      tipo:           'CORTESIA',
+      chaveAtivacao:  licenca.chaveAtivacao,
+      dataVencimento,
+      // `meses` fica nulo de proposito: preencher com uma fracao arredondada
+      // faria os relatorios de faturamento somarem meses que ninguem vendeu.
+      meses:          null,
+      observacao:     dados.observacao?.trim()
+        ? `Cortesia de ${dados.dias} ${dados.dias === 1 ? 'dia' : 'dias'} — ${dados.observacao.trim()}`
+        : `Cortesia de ${dados.dias} ${dados.dias === 1 ? 'dia' : 'dias'}`,
+    },
+  })
+
+  return atualizada
+}
+
 export async function registrarEventoLicenca(licencaId: string, dados: {
   tipo:          string
   chaveAtivacao: string
