@@ -250,14 +250,14 @@ function PainelModulos({ licencaId }: { licencaId: string }) {
     <div className="mt-2 border-t border-slate-800 pt-2">
       <button
         onClick={alternar}
-        className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
+        className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white transition-colors"
       >
-        <Boxes size={12} />
+        <Boxes size={13} />
         Módulos liberados
       </button>
 
       {aberto && (
-        <div className="mt-2 space-y-2.5">
+        <div className="mt-3 space-y-4">
           {carregando && (
             <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
               <Loader2 size={11} className="animate-spin" /> Carregando…
@@ -266,14 +266,14 @@ function PainelModulos({ licencaId }: { licencaId: string }) {
 
           {dados && (
             <>
-              <div className="space-y-1">
-                <p className="text-[10px] text-slate-500 uppercase tracking-wide">
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
                   Do plano{dados.planoNome ? ` — ${dados.planoNome}` : ''}
                 </p>
                 {dados.doPlano.length === 0 ? (
-                  <p className="text-[11px] text-slate-500">Nenhum módulo incluso neste plano.</p>
+                  <p className="text-[11px] text-slate-500 px-2.5 py-2 rounded-lg border border-dashed border-slate-700/60">Nenhum módulo incluso neste plano.</p>
                 ) : dados.doPlano.map(m => (
-                  <div key={m.identificador} className="flex items-center gap-2 text-[11px] px-2 py-1 rounded bg-slate-900/40">
+                  <div key={m.identificador} className="flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg bg-slate-900/50 border border-slate-800">
                     <Lock size={10} className="text-slate-600 shrink-0" />
                     <span className="text-slate-300">{m.nome}</span>
                     <span className="text-slate-600">
@@ -286,12 +286,12 @@ function PainelModulos({ licencaId }: { licencaId: string }) {
                 </p>
               </div>
 
-              <div className="space-y-1">
-                <p className="text-[10px] text-slate-500 uppercase tracking-wide">Concedidos a esta licença</p>
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Concedidos a esta licença</p>
                 {dados.extras.length === 0 ? (
-                  <p className="text-[11px] text-slate-500">Nenhum módulo avulso.</p>
+                  <p className="text-[11px] text-slate-500 px-2.5 py-2 rounded-lg border border-dashed border-slate-700/60">Nenhum módulo avulso.</p>
                 ) : dados.extras.map(e => (
-                  <div key={e.identificador} className="flex items-center gap-2 text-[11px] px-2 py-1 rounded bg-slate-800/60">
+                  <div key={e.identificador} className="flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg bg-slate-800/60 border border-slate-700/50">
                     <span className="text-slate-200">{e.nome}</span>
                     {e.cortesia && (
                       <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-blue-500/15 text-blue-400">CORTESIA</span>
@@ -320,64 +320,118 @@ function PainelModulos({ licencaId }: { licencaId: string }) {
               </div>
 
               {disponiveis.length > 0 && (
-                <div className="space-y-1.5 pt-1 border-t border-slate-800">
-                  <p className="text-[10px] text-slate-500 uppercase tracking-wide">Conceder módulo</p>
-                  <div className="flex gap-1.5">
-                    <select
-                      value={novo.identificador}
-                      onChange={e => escolherModulo(e.target.value)}
-                      className="flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500/40"
-                    >
-                      <option value="">Escolha…</option>
-                      {disponiveis.map(m => <option key={m.identificador} value={m.identificador}>{m.nome}</option>)}
-                    </select>
-                    {!novo.cortesia && (
-                      <div className="flex items-center gap-1 shrink-0">
-                        <span className="text-[11px] text-slate-500">R$</span>
+                <div className="pt-3 border-t border-slate-800 space-y-2">
+                  <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Conceder módulo
+                  </p>
+
+                  {/* Painel proprio, com fundo distinto do resto: aqui se AGE, e
+                      o resto da secao so informa. Antes os campos flutuavam
+                      soltos entre duas listas e nada dizia onde comecava o
+                      formulario. */}
+                  <div className="bg-slate-900/60 border border-slate-700/50 rounded-lg p-3 space-y-3">
+
+                    <div>
+                      <label className="text-[11px] text-slate-400 block mb-1.5">Módulo</label>
+                      <select
+                        value={novo.identificador}
+                        onChange={e => escolherModulo(e.target.value)}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500/40"
+                      >
+                        <option value="">Escolha…</option>
+                        {disponiveis.map(m => <option key={m.identificador} value={m.identificador}>{m.nome}</option>)}
+                      </select>
+                    </div>
+
+                    {/* Esta escolha vem ANTES dos campos porque e ela que decide
+                        quais campos existem — marcar cortesia faz o valor sumir.
+                        Como checkbox espremido entre a data e o botao, a decisao
+                        que mais muda o formulario era a menos visivel dele. */}
+                    <div>
+                      <label className="text-[11px] text-slate-400 block mb-1.5">Como liberar</label>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setNovo(p => ({ ...p, cortesia: false }))}
+                          className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                            !novo.cortesia
+                              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                              : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          Cobrar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNovo(p => ({ ...p, cortesia: true, valor: '' }))}
+                          className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                            novo.cortesia
+                              ? 'bg-blue-500/15 border-blue-500/40 text-blue-300'
+                              : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          Cortesia
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className={`grid gap-2 ${novo.cortesia ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                      {!novo.cortesia && (
+                        <div>
+                          <label className="text-[11px] text-slate-400 block mb-1.5">Valor mensal</label>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-slate-500">R$</span>
+                            <input
+                              type="number" min={0} step="0.01" value={novo.valor}
+                              onChange={e => setNovo(p => ({ ...p, valor: e.target.value }))}
+                              placeholder="0,00"
+                              className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-200 placeholder-slate-600 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500/40"
+                            />
+                          </div>
+                        </div>
+                      )}
+                      <div>
+                        <label className="text-[11px] text-slate-400 block mb-1.5">Cota mensal</label>
                         <input
-                          type="number" min={0} step="0.01" value={novo.valor}
-                          onChange={e => setNovo(p => ({ ...p, valor: e.target.value }))}
-                          placeholder="valor"
-                          className="w-20 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 placeholder-slate-500 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500/40"
+                          type="number" min={0} value={novo.cotaMensal}
+                          onChange={e => setNovo(p => ({ ...p, cotaMensal: e.target.value }))}
+                          placeholder="sem limite"
+                          className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-200 placeholder-slate-600 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500/40"
                         />
                       </div>
-                    )}
-                    <input
-                      type="number" min={0} value={novo.cotaMensal}
-                      onChange={e => setNovo(p => ({ ...p, cotaMensal: e.target.value }))}
-                      placeholder="Cota"
-                      className="w-16 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 placeholder-slate-500 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500/40"
-                    />
-                  </div>
-                  <div className="flex gap-1.5 items-center">
-                    <label className="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer shrink-0">
-                      <input
-                        type="checkbox" checked={novo.cortesia}
-                        onChange={e => setNovo(p => ({ ...p, cortesia: e.target.checked, valor: '' }))}
-                        className="accent-blue-500"
-                      />
-                      Cortesia
-                    </label>
-                    <input
-                      type="date" value={novo.dataVencimento}
-                      onChange={e => setNovo(p => ({ ...p, dataVencimento: e.target.value }))}
-                      className="flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-200 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500/40"
-                    />
+                      <div>
+                        <label className="text-[11px] text-slate-400 block mb-1.5">
+                          Vence em
+                          {novo.cortesia && <span className="text-blue-400/80"> · obrigatório</span>}
+                        </label>
+                        <input
+                          type="date" value={novo.dataVencimento}
+                          onChange={e => setNovo(p => ({ ...p, dataVencimento: e.target.value }))}
+                          className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-slate-200 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500/40"
+                        />
+                      </div>
+                    </div>
+
                     <button
                       onClick={conceder}
-                      disabled={salvando}
-                      className="flex items-center gap-1 px-2 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-[11px] font-semibold transition-colors shrink-0"
+                      disabled={salvando || !novo.identificador}
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-xs font-semibold transition-colors"
                     >
-                      {salvando ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
-                      Conceder
+                      {salvando ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+                      Conceder módulo
                     </button>
+
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      {novo.cortesia
+                        ? 'Cortesia exige data de fim — sem prazo ela vira gratuidade permanente.'
+                        : 'Sem data, o módulo acompanha o ciclo da licença.'}
+                      {/* O prazo real: o ERP rele a claim a cada requisicao e
+                          reescreve o token na revalidacao online, que roda no
+                          boot e a cada poucos minutos de navegacao. "Ate 24h"
+                          sugeria uma folga que nao existe. */}
+                      {' '}Loja aberta enxerga em minutos; quem está offline, ao reconectar.
+                    </p>
                   </div>
-                  <p className="text-[10px] text-slate-500">
-                    {novo.cortesia
-                      ? 'Cortesia exige data de fim — sem prazo ela vira gratuidade permanente.'
-                      : 'Sem data, o módulo acompanha o ciclo da licença.'}
-                    {' '}O ERP enxerga a mudança em até 24h, na próxima revalidação.
-                  </p>
                 </div>
               )}
             </>
