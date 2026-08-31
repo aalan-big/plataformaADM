@@ -241,6 +241,27 @@ export async function concederModuloExtra(licencaId: string, dados: {
   })
 }
 
+/**
+ * Liga (ou desliga) o extra ao item da assinatura do Stripe que o cobra.
+ *
+ * Fica separado do `concederModuloExtra` porque a ordem importa: primeiro o
+ * acesso e gravado aqui, depois tentamos cobrar no Stripe. Se o Stripe falhar,
+ * o cliente ja tem o modulo e a falta de cobranca e visivel — o inverso
+ * (cobrar e nao liberar) seria dinheiro sem contrapartida.
+ */
+export async function vincularItemAssinatura(
+  licencaId: string,
+  identificador: string,
+  stripeSubscriptionItemId: string | null,
+) {
+  const modulo = await findModuloPorIdentificador(identificador)
+  if (!modulo) return null
+  return prisma.licencaModuloExtra.update({
+    where: { licencaId_moduloId: { licencaId, moduloId: modulo.id } },
+    data:  { stripeSubscriptionItemId },
+  })
+}
+
 export async function revogarModuloExtra(licencaId: string, identificador: string) {
   const modulo = await findModuloPorIdentificador(identificador)
   if (!modulo) return null
@@ -363,6 +384,8 @@ export async function modulosCobraveisDaLicenca(licencaId: string, agora: Date =
     nome:          e.modulo.nome,
     // Valor MENSAL. Quem multiplica pelo período é quem monta a cobrança.
     valorMensal:   Number(e.valorCobrado),
+    // Item da assinatura que cobra este módulo, quando o cliente é de cartão.
+    stripeSubscriptionItemId: e.stripeSubscriptionItemId,
   }))
 }
 

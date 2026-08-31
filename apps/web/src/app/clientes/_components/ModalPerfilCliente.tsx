@@ -152,6 +152,13 @@ function PainelModulos({ licencaId }: { licencaId: string }) {
   const [salvando, setSalvando]     = useState(false)
 
   const [novo, setNovo] = useState({ identificador: '', cortesia: false, dataVencimento: '', cotaMensal: '', valor: '', observacao: '' })
+  /**
+   * Aviso de COBRANÇA, separado de `erro` de propósito: a operação deu certo (o
+   * módulo foi liberado ou revogado) mas o dinheiro ficou fora de sincronia com
+   * o Stripe. Mostrar isso como erro faria o operador repetir a ação — e um
+   * retry no conceder cria um segundo item cobrando em dobro.
+   */
+  const [aviso, setAviso] = useState<string | null>(null)
 
   /**
    * Ao escolher o módulo, sugere o preço avulso cadastrado em Módulos.
@@ -196,7 +203,7 @@ function PainelModulos({ licencaId }: { licencaId: string }) {
 
   async function conceder() {
     if (!novo.identificador) { setErro('Escolha um módulo.'); return }
-    setSalvando(true); setErro('')
+    setSalvando(true); setErro(''); setAviso(null)
     try {
       const res = await fetch(`/api/modulo/licenca/${licencaId}/extra`, {
         method:  'POST',
@@ -215,6 +222,7 @@ function PainelModulos({ licencaId }: { licencaId: string }) {
       const json = await res.json().catch(() => ({}))
       if (!res.ok) { setErro(mensagemDeErro(json, res.status)); return }
       setDados(json.data)
+      setAviso(json.aviso ?? null)
       setNovo({ identificador: '', cortesia: false, dataVencimento: '', cotaMensal: '', valor: '', observacao: '' })
     } catch {
       setErro('Falha ao conceder o módulo.')
@@ -224,12 +232,13 @@ function PainelModulos({ licencaId }: { licencaId: string }) {
   }
 
   async function revogar(identificador: string) {
-    setSalvando(true); setErro('')
+    setSalvando(true); setErro(''); setAviso(null)
     try {
       const res  = await fetch(`/api/modulo/licenca/${licencaId}/extra/${identificador}`, { method: 'DELETE' })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) { setErro(mensagemDeErro(json, res.status)); return }
       setDados(json.data)
+      setAviso(json.aviso ?? null)
     } catch {
       setErro('Falha ao revogar o módulo.')
     } finally {
@@ -435,6 +444,13 @@ function PainelModulos({ licencaId }: { licencaId: string }) {
                 </div>
               )}
             </>
+          )}
+
+          {aviso && (
+            <div className="flex items-start gap-2 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/25 rounded-lg px-2.5 py-2">
+              <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+              <span className="leading-relaxed">{aviso}</span>
+            </div>
           )}
 
           {erro && (

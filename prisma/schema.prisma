@@ -811,6 +811,16 @@ model LicencaModuloExtra {
   /// Teto próprio deste extra. NULO = sem teto.
   cotaMensal Int?
 
+  /// Item da assinatura do Stripe que cobra este módulo, quando o cliente paga
+  /// no cartão. NULO = não há nada a cobrar lá (cortesia, cliente de PIX, ou
+  /// concessão feita antes de o cartão passar a cobrar módulo).
+  ///
+  /// Guardado porque revogar precisa PARAR a cobrança, e achar o item de volta
+  /// pelo nome do produto seria adivinhação: dois módulos com nome parecido, ou
+  /// um rename no catálogo, e o revogar apagaria a linha errada da fatura de um
+  /// cliente. O id é exato e não depende de nada mudar de nome.
+  stripeSubscriptionItemId String?
+
   licenca Licenca @relation(fields: [licencaId], references: [id], onDelete: Cascade)
   modulo  Modulo  @relation(fields: [moduloId], references: [id], onDelete: Cascade)
 

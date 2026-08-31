@@ -40,6 +40,7 @@ import {
   findCobrancasRenovacao,
   contarCobrancasPorStatus,
   estenderModulosExtras,
+  modulosCobraveisDaLicenca,
 } from '@startbig/database'
 import { confirmarPagamentoSchema, gerarCobrancaSchema } from '@startbig/schemas'
 import { EmailService } from '../../core/email/email.service'
@@ -237,6 +238,15 @@ export class FinanceiroService {
     // O Stripe recusa o checkout se o Price não existir no modo da chave em uso
     // (o caso clássico: Price de teste com chave live). Sem este try, o cliente
     // recebia a mensagem crua do gateway e nós não ficávamos sabendo de nada.
+    /**
+     * Modulos avulsos entram no checkout do cartao, como o PIX ja fazia.
+     *
+     * Sem isto a venda avulsa falhava EM SILENCIO no cartao: o painel concedia
+     * o modulo com valor, o cliente renovava, e o dinheiro do modulo nunca
+     * entrava — ninguem percebia ate fechar o mes.
+     */
+    const extras = await modulosCobraveisDaLicenca(dados.licencaId)
+
     try {
       const result = await this.stripeService.criarCheckoutSession({
         meses:         dados.meses,
@@ -244,6 +254,7 @@ export class FinanceiroService {
         email:         licenca.cliente.email,
         stripePriceId,
         appUrl:        this.validarOrigem(origem),
+        extras,
         ...(plano.id !== licenca.planoId ? { planoId: plano.id } : {}),
       })
 
@@ -330,7 +341,7 @@ export class FinanceiroService {
 
     // ── 1. Primeiro pagamento da assinatura ──────────────────────────────────
     if (evento.tipo === 'checkout.session.completed') {
-      const { sessionId, subscriptionId, licencaId, planoId, meses, amountTotal, email } = (evento as any).dados
+      const { sessionId, subscriptionId, licencaId, planoId, meses, amountTotal, email, modulosMensal } = (evento as any).dados
 
       const jaProcessado = await findPagamentoByTransacaoId(sessionId)
       if (jaProcessado) return { msg: 'Pagamento já processado' }
@@ -374,8 +385,14 @@ export class FinanceiroService {
         }
       }
 
+      const valorPago = (amountTotal ?? 0) / 100
+      const baseComissao = await this.modulosNoPagamentoStripe({
+        licencaId, meses, valorTotal: valorPago, modulosMensal: modulosMensal ?? 0,
+      })
+
       const resultado = await this.processarRenovacao({
-        licenca, meses, valor: (amountTotal ?? 0) / 100, transacaoId: sessionId, gateway: 'STRIPE', origem: 'STRIPE',
+        licenca, meses, valor: valorPago, valorComissionavel: baseComissao,
+        transacaoId: sessionId, gateway: 'STRIPE', origem: 'STRIPE',
         descricao: `Stripe checkout — ${meses} mês(es)`,
       })
 
@@ -401,7 +418,7 @@ export class FinanceiroService {
 
     // ── 2. Fatura paga: renovação de ciclo OU ajuste proporcional de plano (upgrade)
     if (evento.tipo === 'invoice.payment_succeeded') {
-      const { invoiceId, subscriptionId, amountTotal, billingReason, licencaId: metaLicencaId, meses: metaMeses } = (evento as any).dados
+      const { invoiceId, subscriptionId, amountTotal, billingReason, licencaId: metaLicencaId, meses: metaMeses, modulosMensal } = (evento as any).dados
       if (!subscriptionId) {
         await this.alarmarDescarte({
           evento:     'invoice.payment_succeeded',
@@ -464,8 +481,13 @@ export class FinanceiroService {
       // meses vem da metadata da fatura; só chama a API se por algum motivo não veio
       const meses = metaMeses ?? (await this.stripeService.buscarMetadadosSubscription(subscriptionId)).meses
 
+      const baseComissao = await this.modulosNoPagamentoStripe({
+        licencaId: licenca.id, meses, valorTotal: amountTotal, modulosMensal: modulosMensal ?? 0,
+      })
+
       const resultado = await this.processarRenovacao({
-        licenca, meses, valor: amountTotal, transacaoId: invoiceId,
+        licenca, meses, valor: amountTotal, valorComissionavel: baseComissao,
+        transacaoId: invoiceId,
         gateway: 'STRIPE', origem: 'STRIPE', descricao: `Renovação automática Stripe — ${meses} mês(es)`,
       })
 
@@ -853,6 +875,43 @@ export class FinanceiroService {
   }
 
   // ── Helper: renovar licença + registrar pagamento + enviar e-mail ──────────
+
+  /**
+   * O que o caminho do PIX ja fazia e o do cartao nao: estender os modulos
+   * avulsos e separar a base da comissao.
+   *
+   * Sao duas coisas que precisam andar juntas com QUALQUER pagamento, e ficavam
+   * so no Asaas. No cartao o resultado era um cliente que pagava pelo modulo
+   * (depois desta mudanca) e perdia o acesso a ele no mes seguinte, porque
+   * ninguem empurrava o vencimento.
+   *
+   * `modulosMensal` vem da metadata da assinatura, e nao de uma consulta ao
+   * banco, de proposito: e o valor que foi REALMENTE cobrado naquela fatura.
+   * Uma concessao feita depois da assinatura nascer nao esta na cobranca, e
+   * descontar da comissao um dinheiro que nao entrou tiraria do parceiro algo
+   * que ele tem direito.
+   */
+  private async modulosNoPagamentoStripe(params: {
+    licencaId:     string
+    meses:         number
+    valorTotal:    number
+    modulosMensal: number
+  }): Promise<number> {
+    try {
+      const estendidos = await estenderModulosExtras(params.licencaId, params.meses)
+      if (estendidos > 0)
+        this.logger.log(`[modulo] ${estendidos} módulo(s) avulso(s) da licença ${params.licencaId} estendido(s) por ${params.meses} mês(es) (Stripe).`)
+    } catch (err) {
+      // Best-effort, igual ao PIX: o dinheiro entrou e a licença renova de
+      // qualquer jeito. Falhar aqui não pode desfazer pagamento confirmado.
+      this.logger.error(`[modulo] falha ao estender módulos da licença ${params.licencaId}: ${err instanceof Error ? err.message : err}`)
+    }
+
+    const totalModulos = params.modulosMensal * params.meses
+    // Nunca negativo: fatura com desconto ou credito poderia ficar abaixo do
+    // valor dos modulos, e comissao negativa nao existe.
+    return Math.max(0, params.valorTotal - totalModulos)
+  }
 
   private async processarRenovacao(params: {
     licenca:      Awaited<ReturnType<typeof findLicencaById>>

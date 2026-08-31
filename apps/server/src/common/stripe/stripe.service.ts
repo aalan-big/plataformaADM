@@ -20,6 +20,9 @@ import Stripe from 'stripe'
 
 export type CheckoutResult  = { url: string; sessionId: string }
 
+/** Modulo avulso a cobrar junto do plano. `valorMensal` em reais. */
+export type ModuloCobravel = { nome: string; valorMensal: number }
+
 export type EventoParsed =
   | {
       tipo:   'checkout.session.completed'
@@ -31,6 +34,8 @@ export type EventoParsed =
         meses:          number
         amountTotal:    number | null
         email:          string | null
+        /** Soma MENSAL dos modulos avulsos cobrados nesta assinatura. */
+        modulosMensal:  number
       }
     }
   | {
@@ -42,6 +47,8 @@ export type EventoParsed =
         billingReason:  string | null
         licencaId:      string | null
         meses:          number | null
+        /** Soma MENSAL dos modulos avulsos cobrados nesta assinatura. */
+        modulosMensal:  number
       }
     }
   | {
@@ -74,6 +81,55 @@ export class StripeService {
     this.logger.log(`StripeService iniciado — modo ${this.modoLive ? 'LIVE (dinheiro real)' : 'TEST'}`)
   }
 
+  /**
+   * Transforma modulos avulsos em itens de linha recorrentes do Stripe.
+   *
+   * Duas coisas aqui nao podem ser chutadas, e por isso o Price do plano e
+   * BUSCADO em vez de deduzido:
+   *
+   * 1. Numa assinatura, todos os itens precisam ter o MESMO ciclo. Se o item do
+   *    plano cobra a cada 3 meses e o do modulo a cada 1, o Stripe recusa a
+   *    sessao inteira — e o cliente ve o erro, nao nos.
+   *
+   * 2. O valor do modulo e MENSAL, mas a linha cobra por ciclo. Quantos meses
+   *    tem o ciclo sai do proprio `recurring` do Price, e nao do parametro
+   *    `meses`: se um dia o Price trimestral tiver sido criado no Stripe de um
+   *    jeito diferente do que o nosso banco assume, quem manda e o Stripe —
+   *    senao cobrariamos 3x um modulo numa cobranca mensal.
+   *
+   * Produto ad-hoc (`product_data`) em vez de Price pre-criado de proposito: o
+   * valor do modulo e negociado por cliente, entao um Price fixo no catalogo
+   * nao conseguiria representar "este paga 40, aquele paga 25".
+   */
+  private async linhasDeModulos(
+    stripePriceIdDoPlano: string,
+    extras: ModuloCobravel[],
+  ) {
+    // Sem anotacao de retorno: a tipagem do pacote nao expoe
+    // Stripe.Checkout.SessionCreateParams nesta versao, e o inferido ja e
+    // conferido no ponto de uso, dentro do sessions.create.
+    if (extras.length === 0) return []
+
+    const price = await this.stripe.prices.retrieve(stripePriceIdDoPlano)
+    const rec   = price.recurring
+    if (!rec) throw new BadRequestException('O Price do plano não é recorrente — não dá para anexar módulo a ele.')
+
+    const mesesDoCiclo =
+      rec.interval === 'year'  ? 12 * (rec.interval_count ?? 1)
+      : rec.interval === 'month' ? (rec.interval_count ?? 1)
+      : 1 // semanal/diario nao existe no nosso catalogo; cobra 1 mes e nao quebra
+
+    return extras.map(e => ({
+      price_data: {
+        currency:     price.currency,
+        product_data: { name: `${e.nome} (módulo avulso)` },
+        unit_amount:  Math.round(e.valorMensal * mesesDoCiclo * 100),
+        recurring:    { interval: rec.interval, interval_count: rec.interval_count ?? 1 },
+      },
+      quantity: 1,
+    }))
+  }
+
   async criarCheckoutSession(dados: {
     meses:         number
     licencaId:     string
@@ -87,21 +143,42 @@ export class StripeService {
      * sem alterar nada antes de o dinheiro entrar.
      */
     planoId?:      string
+    /**
+     * Modulos avulsos desta licenca. Entram como itens de linha proprios, e nao
+     * somados ao valor do plano, para o cliente ver o que esta pagando na tela
+     * do Stripe e na fatura — "R$ 89,90" viraria "R$ 129,90" sem explicacao.
+     */
+    extras?:       ModuloCobravel[]
   }): Promise<CheckoutResult> {
     // Quem compra em assine.startbig.com.br tem de voltar para assine., não para
     // o painel: trocar de domínio no meio do pagamento parece golpe.
     const appUrl = dados.appUrl ?? process.env.APP_URL ?? 'http://localhost:3000'
     const label  = dados.meses === 1 ? '1 mês' : `${dados.meses} meses`
 
+    /**
+     * `modulosMensal` na metadata nao e informacao decorativa: e a unica forma
+     * de o webhook saber, meses depois, QUANTO daquela fatura era modulo.
+     *
+     * A comissao do parceiro incide so sobre o plano. Deduzir isso na hora do
+     * pagamento exigiria adivinhar se a assinatura tinha o modulo — e uma
+     * assinatura antiga, criada antes desta mudanca, cobra so o plano. Chutar
+     * "subtrai o modulo" ali roubaria comissao de quem indicou o cliente.
+     * Gravado aqui, o numero e o que foi realmente cobrado, e nao um palpite.
+     */
+    const modulosMensal = (dados.extras ?? []).reduce((soma, e) => soma + e.valorMensal, 0)
+
     const metadados: Record<string, string> = {
-      licencaId: dados.licencaId,
-      meses:     String(dados.meses),
+      licencaId:     dados.licencaId,
+      meses:         String(dados.meses),
+      modulosMensal: String(modulosMensal),
       ...(dados.planoId ? { planoId: dados.planoId } : {}),
     }
 
+    const linhasExtras = await this.linhasDeModulos(dados.stripePriceId, dados.extras ?? [])
+
     const session = await this.stripe.checkout.sessions.create({
       payment_method_types: ['card'],
-      line_items: [{ price: dados.stripePriceId, quantity: 1 }],
+      line_items: [{ price: dados.stripePriceId, quantity: 1 }, ...linhasExtras],
       mode:           'subscription',
       customer_email: dados.email,
       // Endereço de cobrança é exigência de nota fiscal. Coletar aqui, e não no
@@ -116,7 +193,7 @@ export class StripeService {
       subscription_data: { metadata: metadados },
     })
 
-    this.logger.log(`Checkout Session (assinatura) criada: ${session.id} → licença ${dados.licencaId} (${label}, price ${dados.stripePriceId})`)
+    this.logger.log(`Checkout Session (assinatura) criada: ${session.id} → licença ${dados.licencaId} (${label}, price ${dados.stripePriceId}${linhasExtras.length > 0 ? `, +${linhasExtras.length} módulo(s)` : ''})`)
     return { url: session.url!, sessionId: session.id }
   }
 
@@ -149,6 +226,7 @@ export class StripeService {
           planoId:        s.metadata?.planoId     ?? null,
           meses:          parseInt(s.metadata?.meses ?? '1') || 1,
           amountTotal:    s.amount_total,
+          modulosMensal:  Number(s.metadata?.modulosMensal ?? 0) || 0,
           email:          s.customer_email,
         },
       }
@@ -156,7 +234,7 @@ export class StripeService {
 
     if (event.type === 'invoice.payment_succeeded') {
       const inv = event.data.object as any
-      const { subscriptionId, licencaId, meses } = this.extrairDadosFatura(inv)
+      const { subscriptionId, licencaId, meses, modulosMensal } = this.extrairDadosFatura(inv)
       return {
         tipo:  'invoice.payment_succeeded',
         dados: {
@@ -166,6 +244,7 @@ export class StripeService {
           billingReason: inv.billing_reason ?? null,
           licencaId,
           meses,
+          modulosMensal,
         },
       }
     }
@@ -189,7 +268,7 @@ export class StripeService {
    * novo formato da API 2025+ (dahlia): `invoice.subscription` foi movido para
    * `invoice.parent.subscription_details`. Mantém fallback para o campo antigo.
    */
-  private extrairDadosFatura(inv: any): { subscriptionId: string; licencaId: string | null; meses: number | null } {
+  private extrairDadosFatura(inv: any): { subscriptionId: string; licencaId: string | null; meses: number | null; modulosMensal: number } {
     const subDetails = inv.parent?.subscription_details ?? null
     const rawSub     = subDetails?.subscription ?? inv.subscription
     const subscriptionId = typeof rawSub === 'string' ? rawSub : (rawSub?.id ?? '')
@@ -198,6 +277,9 @@ export class StripeService {
       subscriptionId,
       licencaId: metadata.licencaId ?? null,
       meses:     parseInt(metadata.meses ?? '') || null,
+      // Ausente = assinatura criada antes de o modulo entrar no cartao: zero, e
+      // a comissao segue sobre o total, que e o que de fato foi cobrado.
+      modulosMensal: Number(metadata.modulosMensal ?? 0) || 0,
     }
   }
 
@@ -207,6 +289,79 @@ export class StripeService {
       licencaId: sub.metadata?.licencaId ?? null,
       meses:     parseInt(sub.metadata?.meses ?? '1') || 1,
     }
+  }
+
+  /**
+   * Anexa um modulo avulso a uma assinatura JA existente.
+   *
+   * Sem isto a venda avulsa so funcionaria para quem assinasse depois de ganhar
+   * o modulo — o caso raro. O comum e o contrario: o cliente ja paga no cartao
+   * ha meses e agora quer o modulo. A assinatura dele nao muda sozinha, entao a
+   * cobranca nunca aconteceria.
+   *
+   * `proration_behavior: 'none'` de proposito: o modulo passa a ser cobrado no
+   * PROXIMO ciclo, sem cobranca proporcional agora. E a escolha conservadora —
+   * errar para o lado de nao cobrar o cliente por um pedaco de mes que ele nem
+   * pediu e melhor que uma cobranca surpresa no cartao dele no mesmo dia.
+   *
+   * A metadata e reescrita junto porque e dela que o webhook tira a base da
+   * comissao. Item novo sem atualizar o numero faria o parceiro comissionar
+   * sobre o modulo a partir do ciclo seguinte.
+   */
+  async adicionarModuloNaSubscription(
+    subscriptionId: string,
+    modulo: ModuloCobravel,
+  ): Promise<{ itemId: string }> {
+    const sub = await this.stripe.subscriptions.retrieve(subscriptionId)
+    const rec = sub.items?.data?.[0]?.price?.recurring
+    if (!rec) throw new BadRequestException('Assinatura sem item recorrente — não dá para anexar módulo.')
+
+    const currency = sub.items.data[0].price.currency
+    const mesesDoCiclo =
+      rec.interval === 'year'  ? 12 * (rec.interval_count ?? 1)
+      : rec.interval === 'month' ? (rec.interval_count ?? 1)
+      : 1
+
+    const item = await this.stripe.subscriptionItems.create({
+      subscription: subscriptionId,
+      price_data: {
+        currency,
+        product_data: { name: `${modulo.nome} (módulo avulso)` },
+        unit_amount:  Math.round(modulo.valorMensal * mesesDoCiclo * 100),
+        recurring:    { interval: rec.interval, interval_count: rec.interval_count ?? 1 },
+      },
+      quantity: 1,
+      proration_behavior: 'none',
+    })
+
+    const atual = Number(sub.metadata?.modulosMensal ?? 0) || 0
+    await this.stripe.subscriptions.update(subscriptionId, {
+      metadata: { ...sub.metadata, modulosMensal: String(atual + modulo.valorMensal) },
+    })
+
+    this.logger.log(`[modulo] ${modulo.nome} anexado à assinatura ${subscriptionId} (item ${item.id}, R$ ${modulo.valorMensal}/mês).`)
+    return { itemId: item.id }
+  }
+
+  /**
+   * Tira o modulo da assinatura. Chamado ao revogar — sem isto o Stripe
+   * continuaria cobrando todo mes por um acesso que o cliente ja nao tem, que e
+   * o unico erro pior que nao cobrar.
+   */
+  async removerModuloDaSubscription(
+    subscriptionId: string,
+    itemId: string,
+    valorMensal: number,
+  ): Promise<void> {
+    await this.stripe.subscriptionItems.del(itemId, { proration_behavior: 'none' })
+
+    const sub   = await this.stripe.subscriptions.retrieve(subscriptionId)
+    const atual = Number(sub.metadata?.modulosMensal ?? 0) || 0
+    await this.stripe.subscriptions.update(subscriptionId, {
+      metadata: { ...sub.metadata, modulosMensal: String(Math.max(0, atual - valorMensal)) },
+    })
+
+    this.logger.log(`[modulo] item ${itemId} removido da assinatura ${subscriptionId}.`)
   }
 
   async cancelarSubscription(subscriptionId: string): Promise<void> {

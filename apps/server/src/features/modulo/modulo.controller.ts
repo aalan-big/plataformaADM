@@ -8,9 +8,12 @@ import {
   cancelarPixPendentesDaLicenca,
   modulosCobraveisDaLicenca,
   ModuloBaseProtegidoError,
+  vincularItemAssinatura,
+  findLicencaById,
 } from '@startbig/database'
 import { concederModuloExtraSchema, editarModuloSchema } from '@startbig/schemas'
 import { Roles } from '../../core/decorators/roles.decorator'
+import { StripeService } from '../../common/stripe/stripe.service'
 import { ZodError } from 'zod'
 
 /**
@@ -26,6 +29,8 @@ import { ZodError } from 'zod'
 @Controller('modulo')
 export class ModuloController {
   private readonly logger = new Logger(ModuloController.name)
+
+  constructor(private readonly stripeService: StripeService) {}
 
   /**
    * Fecha os PIX pendentes da licença — mas SÓ quando o valor da renovação
@@ -113,7 +118,38 @@ export class ModuloController {
     // Só concessão COBRADA mexe no valor da renovação. Cortesia não.
     const mudaValor = !dados.cortesia && (dados.valorCobrado ?? 0) > 0
     await this.fecharPixSeMudouValor(licencaId, mudaValor)
-    return { data: await modulosDaLicencaDetalhado(licencaId) }
+
+    /**
+     * Cliente de CARTÃO precisa da assinatura alterada — ela não muda sozinha.
+     *
+     * O caso comum da venda avulsa não é "assina já com o módulo", é "já paga
+     * há meses e agora quer o módulo". Sem anexar o item aqui, a concessão
+     * ficava valendo (acesso liberado) e nunca era cobrada: prejuízo silencioso.
+     *
+     * Falhar aqui NÃO desfaz a concessão. O acesso já está gravado, e o certo é
+     * o operador saber que a cobrança não entrou — devolver erro faria ele
+     * conceder de novo, e o retry criaria um segundo item cobrando em dobro.
+     */
+    let avisoCobranca: string | null = null
+    if (mudaValor) {
+      const licenca = await findLicencaById(licencaId)
+      const subId   = (licenca as any)?.stripeSubscriptionId as string | null
+      if (subId) {
+        try {
+          const { itemId } = await this.stripeService.adicionarModuloNaSubscription(subId, {
+            nome:        criado.modulo.nome,
+            valorMensal: dados.valorCobrado!,
+          })
+          await vincularItemAssinatura(licencaId, dados.identificador, itemId)
+        } catch (err) {
+          const detalhe = err instanceof Error ? err.message : String(err)
+          this.logger.error(`[modulo] falha ao anexar ${dados.identificador} à assinatura ${subId}: ${detalhe}`)
+          avisoCobranca = 'Módulo liberado, mas NÃO foi possível incluí-lo na assinatura do cartão. O acesso está valendo e a cobrança não — resolva no Stripe ou cobre à parte.'
+        }
+      }
+    }
+
+    return { data: await modulosDaLicencaDetalhado(licencaId), aviso: avisoCobranca }
   }
 
   @Delete('licenca/:licencaId/extra/:identificador')
@@ -126,12 +162,35 @@ export class ModuloController {
      * a informação não existe mais para consultar.
      */
     const cobraveis = await modulosCobraveisDaLicenca(licencaId)
-    const eraCobrado = cobraveis.some(m => m.identificador === identificador)
+    const cobrado   = cobraveis.find(m => m.identificador === identificador)
+    const eraCobrado = !!cobrado
+
+    /**
+     * Parar a cobrança vem ANTES de apagar o vínculo: depois da remoção o id do
+     * item some do banco, e o Stripe seguiria cobrando todo mês por um acesso
+     * que o cliente já não tem — o único erro pior que não cobrar.
+     */
+    let avisoCobranca: string | null = null
+    if (cobrado?.stripeSubscriptionItemId) {
+      const licenca = await findLicencaById(licencaId)
+      const subId   = (licenca as any)?.stripeSubscriptionId as string | null
+      if (subId) {
+        try {
+          await this.stripeService.removerModuloDaSubscription(
+            subId, cobrado.stripeSubscriptionItemId, cobrado.valorMensal,
+          )
+        } catch (err) {
+          const detalhe = err instanceof Error ? err.message : String(err)
+          this.logger.error(`[modulo] falha ao remover item ${cobrado.stripeSubscriptionItemId} da assinatura ${subId}: ${detalhe}`)
+          avisoCobranca = 'Módulo revogado, mas a cobrança CONTINUA na assinatura do cartão. Remova o item no Stripe para o cliente parar de pagar.'
+        }
+      }
+    }
 
     const r = await revogarModuloExtra(licencaId, identificador)
     if (!r) throw new NotFoundException(`Módulo desconhecido: ${identificador}.`)
 
     await this.fecharPixSeMudouValor(licencaId, eraCobrado)
-    return { data: await modulosDaLicencaDetalhado(licencaId) }
+    return { data: await modulosDaLicencaDetalhado(licencaId), aviso: avisoCobranca }
   }
 }
