@@ -21,6 +21,54 @@ export const MODULO_NFSE = 'NFSE'
 export const TIPOS_DOCUMENTO_FISCAL = [MODULO_NFE, MODULO_NFCE, MODULO_NFSE] as const
 export type TipoDocumentoFiscal = (typeof TIPOS_DOCUMENTO_FISCAL)[number]
 
+/**
+ * Recusa de desativar um modulo-base. Classe propria, e nao `Error` cru, para o
+ * controller distinguir "regra de negocio" de "o banco caiu" — a primeira e um
+ * 400 com texto util, a segunda e um 500 que ninguem deve ver como se fosse
+ * culpa do que digitou.
+ */
+export class ModuloBaseProtegidoError extends Error {
+  constructor(public readonly identificador: string, mensagem: string) {
+    super(mensagem)
+    this.name = 'ModuloBaseProtegidoError'
+  }
+}
+
+/**
+ * Identificadores dos modulos-base — os que toda licenca recebe, sem vinculo.
+ *
+ * Cache curto de proposito. Esta funcao roda no caminho quente de assinatura do
+ * token (conectar, validar e heartbeat de toda a base, a cada poucos minutos),
+ * e a resposta muda no maximo uma vez por semestre. Sem cache seria uma consulta
+ * por requisicao para ler uma lista que nao muda; com TTL longo, um seed novo
+ * demoraria a valer e alguem concluiria que o script falhou.
+ *
+ * NAO filtra por `ativo`, e isso e deliberado: modulo-base desativado por
+ * engano tiraria o acesso da base inteira de uma vez. Para aposentar um base, o
+ * caminho e desmarcar a flag primeiro — dois passos conscientes em vez de um
+ * clique. `atualizarModulo` recusa a desativacao enquanto a flag estiver ligada.
+ */
+let cacheBase: { ids: string[]; expiraEm: number } | null = null
+const TTL_BASE_MS = 60_000
+
+export async function modulosBase(agora: Date = new Date()): Promise<string[]> {
+  if (cacheBase && cacheBase.expiraEm > agora.getTime()) return cacheBase.ids
+
+  const linhas = await prisma.modulo.findMany({
+    where:  { incluidoPorPadrao: true },
+    select: { identificador: true },
+  })
+  const ids = linhas.map(l => l.identificador).sort()
+
+  cacheBase = { ids, expiraEm: agora.getTime() + TTL_BASE_MS }
+  return ids
+}
+
+/** Zera o cache — usado depois de gravar no catalogo, para a mudanca valer ja. */
+export function invalidarCacheModulosBase() {
+  cacheBase = null
+}
+
 export async function listarModulos(incluirInativos = false) {
   return prisma.modulo.findMany({
     where:   incluirInativos ? {} : { ativo: true },
@@ -209,12 +257,31 @@ export async function atualizarModulo(identificador: string, dados: {
   ativo?:       boolean
   ordem?:       number
   precoMensal?: number | null
+  incluidoPorPadrao?: boolean
 }) {
   const modulo = await findModuloPorIdentificador(identificador)
   if (!modulo) return null
 
+  /**
+   * Desativar um modulo-base tiraria ele da claim de TODA licenca ao mesmo
+   * tempo — o painel apresenta esse toggle como decisao comercial banal ("tirar
+   * de circulacao"), mas para um base ele e um botao de apagar a luz da base
+   * inteira, e o efeito chega em minutos, nao em dias.
+   *
+   * Quem realmente quer aposentar um base desmarca `incluidoPorPadrao` antes.
+   */
+  if (dados.ativo === false && modulo.incluidoPorPadrao) {
+    throw new ModuloBaseProtegidoError(
+      identificador,
+      `${identificador} é módulo-base: desativá-lo tiraria o acesso de todas as licenças. ` +
+      `Desmarque "incluído por padrão" antes de desativar.`,
+    )
+  }
+
   // `identificador` fora do update de propósito — ver comentário no schema.
-  return prisma.modulo.update({ where: { id: modulo.id }, data: dados })
+  const atualizado = await prisma.modulo.update({ where: { id: modulo.id }, data: dados })
+  invalidarCacheModulosBase()
+  return atualizado
 }
 
 export async function findModuloPorId(id: string) {
@@ -261,6 +328,7 @@ export async function listarModulosDetalhado() {
     ativo:         m.ativo,
     ordem:         m.ordem,
     precoMensal:   m.precoMensal,
+    incluidoPorPadrao: m.incluidoPorPadrao,
     planos:        m.planos.map(p => ({ nome: p.plano.nome, cotaMensal: p.cotaMensal })),
     // Só concessões vigentes: contar as vencidas infla o número e sugere um uso
     // que já não existe.

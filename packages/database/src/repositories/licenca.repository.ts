@@ -26,15 +26,32 @@ type LicencaComModulos = {
 /**
  * Lista consolidada de módulos que uma licença pode usar.
  *
- * União de "o que o plano inclui" com "o que foi contratado à parte", sem
- * duplicata. Extra vencido fica de fora, e módulo desativado no catálogo também
- * — desativar no catálogo é a forma de tirar um produto de circulação sem
- * precisar caçar todos os planos que o referenciam.
+ * União de três origens, sem duplicata: os módulos-base (`base`), o que o plano
+ * inclui e o que foi contratado à parte. Extra vencido fica de fora, e módulo
+ * desativado no catálogo também — desativar no catálogo é a forma de tirar um
+ * produto de circulação sem precisar caçar todos os planos que o referenciam.
+ *
+ * ATENÇÃO ao que esta lista significa do outro lado: o ERP a trata como
+ * ALLOWLIST COMPLETA. Lista vazia quer dizer "a plataforma ainda não configurou"
+ * e libera tudo; lista preenchida libera SÓ o que está nela. Não é incremento.
+ *
+ * A consequência é contraintuitiva e vale ter em mente antes de mexer aqui:
+ * conceder UM módulo a uma licença tira dela todos os outros. Uma cortesia de
+ * NFE dada no painel deixa a claim em `['NFE']`, e a partir da revalidação
+ * seguinte aquela loja perde o financeiro inteiro — sem ninguém ter mexido em
+ * financeiro. É por isso que `base` existe e é parâmetro OBRIGATÓRIO: um valor
+ * padrão faria um chamador distraído emitir token sem os módulos-base, que é
+ * exatamente o acidente que a flag foi criada para impedir.
  *
  * Função pura, sobre dados já carregados: é ela que roda dentro da assinatura do
- * token, onde não pode haver await.
+ * token, onde não pode haver await. Quem chama busca `base` com
+ * `modulosBase()` — que tem cache curto justamente para isso.
  */
-export function modulosDaLicenca(licenca: LicencaComModulos, agora: Date = new Date()): string[] {
+export function modulosDaLicenca(
+  licenca: LicencaComModulos,
+  base: string[],
+  agora: Date = new Date(),
+): string[] {
   const doPlano = (licenca.plano?.modulos ?? [])
     .filter(pm => pm.modulo.ativo)
     .map(pm => pm.modulo.identificador)
@@ -43,7 +60,7 @@ export function modulosDaLicenca(licenca: LicencaComModulos, agora: Date = new D
     .filter(e => e.modulo.ativo && (!e.dataVencimento || e.dataVencimento > agora))
     .map(e => e.modulo.identificador)
 
-  return Array.from(new Set([...doPlano, ...extras])).sort()
+  return Array.from(new Set([...base, ...doPlano, ...extras])).sort()
 }
 
 export async function findLicencaById(id: string) {

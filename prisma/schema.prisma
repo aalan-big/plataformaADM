@@ -730,6 +730,20 @@ model Modulo {
   /// Ordem de exibição na lista do painel.
   ordem     Int     @default(0)
 
+  /// Módulo-base: entra na claim de TODA licença, sem depender de vínculo.
+  ///
+  /// Existe porque a claim `modulos` é allowlist COMPLETA do lado do ERP — lista
+  /// preenchida libera só o que está nela. Vincular "a todos os planos" resolve
+  /// isso no dia do seed e só nele: `semear-modulos.ts` percorre os planos que
+  /// existiam naquele instante, então o plano criado no mês seguinte nasce sem o
+  /// vínculo, e toda licença dele recebe uma lista sem o módulo — cliente novo
+  /// abrindo o ERP com o módulo inteiro no cadeado, meses depois, sem ninguém
+  /// ter mexido em nada.
+  ///
+  /// A flag tira essa decisão da memória de quem cria plano: o que é base é base
+  /// para sempre, inclusive para plano que ainda não existe.
+  incluidoPorPadrao Boolean @default(false)
+
   /// Preço de venda avulsa por mês, para quem contrata fora do plano.
   ///
   /// NULO = não vendido à parte: o módulo existe, mas só chega ao cliente vindo

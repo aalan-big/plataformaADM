@@ -7,6 +7,7 @@ import {
   atualizarModulo,
   cancelarPixPendentesDaLicenca,
   modulosCobraveisDaLicenca,
+  ModuloBaseProtegidoError,
 } from '@startbig/database'
 import { concederModuloExtraSchema, editarModuloSchema } from '@startbig/schemas'
 import { Roles } from '../../core/decorators/roles.decorator'
@@ -74,7 +75,16 @@ export class ModuloController {
   @Patch(':identificador')
   async editar(@Param('identificador') identificador: string, @Body() body: unknown) {
     const dados = this.parse(editarModuloSchema, body)
-    const atualizado = await atualizarModulo(identificador, dados)
+
+    let atualizado
+    try {
+      atualizado = await atualizarModulo(identificador, dados)
+    } catch (e) {
+      // Recusa de regra de negócio vira 400 com o texto pronto para a tela; o
+      // resto sobe e vira 500, que é o que erro de infraestrutura deve ser.
+      if (e instanceof ModuloBaseProtegidoError) throw new BadRequestException(e.message)
+      throw e
+    }
     if (!atualizado) throw new NotFoundException(`Módulo desconhecido: ${identificador}.`)
     return { data: atualizado }
   }

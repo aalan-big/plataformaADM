@@ -14,6 +14,7 @@ type Modulo = {
   precoMensal:     string | number | null
   planos:          PlanoDoModulo[]
   licencasAvulsas: number
+  incluidoPorPadrao: boolean
 }
 
 /**
@@ -125,6 +126,14 @@ function Leitura({ modulo, onEditar }: { modulo: Modulo; onEditar: () => void })
           </code>
           {!modulo.ativo && (
             <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-700/60 text-slate-400">INATIVO</span>
+          )}
+          {/* O selo mais importante da lista: diz que este módulo chega a todo
+              cliente sem depender de vínculo, e portanto que mexer nele tem
+              alcance de base inteira. */}
+          {modulo.incluidoPorPadrao && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300" title="Entra na licença de todos os clientes, inclusive em planos futuros">
+              BASE
+            </span>
           )}
           {noServidor && (
             <span
@@ -268,19 +277,47 @@ function FormaEdicao({ modulo, onFechar, onSalvo }: {
         </p>
       </div>
 
-      <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer w-fit">
-        <input type="checkbox" checked={ativo} onChange={e => setAtivo(e.target.checked)} className="accent-blue-500" />
+      {/* Módulo-base não pode ser desativado por aqui: ele entra na claim de
+          TODA licença, e desmarcar esta caixa apagaria o módulo da base inteira
+          de uma vez. O servidor recusa de qualquer forma (400) — a caixa
+          desabilitada existe para o operador não descobrir isso pelo erro. */}
+      <label className={`flex items-center gap-2 text-xs w-fit ${
+        modulo.incluidoPorPadrao ? 'text-slate-500 cursor-not-allowed' : 'text-slate-300 cursor-pointer'
+      }`}>
+        <input
+          type="checkbox" checked={ativo}
+          disabled={modulo.incluidoPorPadrao}
+          onChange={e => setAtivo(e.target.checked)}
+          className="accent-blue-500 disabled:opacity-40"
+        />
         Ativo no catálogo
       </label>
 
-      {desativandoEmUso && (
+      {modulo.incluidoPorPadrao && (
+        <div className="text-[11px] text-blue-300 bg-blue-500/10 border border-blue-500/20 rounded-lg p-2 flex items-start gap-1.5">
+          <AlertCircle size={12} className="mt-0.5 shrink-0" />
+          <span>
+            <strong>Módulo-base:</strong> entra na licença de todos os clientes, inclusive
+            em planos criados no futuro. Não pode ser desativado por aqui — desligá-lo
+            tiraria o acesso da base inteira. Para aposentá-lo, tire a marca de base no
+            <code className="mx-1 px-1 rounded bg-slate-800 text-slate-300">semear-modulos.ts</code>
+            primeiro.
+          </span>
+        </div>
+      )}
+
+      {desativandoEmUso && !modulo.incluidoPorPadrao && (
         <div className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg p-2 flex items-start gap-1.5">
           <AlertCircle size={12} className="mt-0.5 shrink-0" />
           <span>
             Este módulo está em uso
             {modulo.planos.length > 0 && ` em ${modulo.planos.length} plano(s)`}
             {modulo.licencasAvulsas > 0 && `${modulo.planos.length > 0 ? ' e' : ''} em ${modulo.licencasAvulsas} licença(s) à parte`}.
-            Desativar tira o acesso de todos eles na próxima revalidação, em até 24h.
+            {/* O prazo real: o ERP relê a claim a cada requisição e reescreve o
+                token na revalidação online, que roda no boot e a cada poucos
+                minutos de navegação. "Até 24h" dava a impressão de haver uma
+                tarde para voltar atrás — não há. */}
+            {' '}Loja aberta perde o acesso em minutos; quem está offline, ao reconectar.
           </span>
         </div>
       )}

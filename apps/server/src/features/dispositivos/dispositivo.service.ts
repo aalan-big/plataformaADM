@@ -42,7 +42,8 @@ import {
   countSessoesAtivas,
   deletarSessao,
   deletarTodasSessoesDaLicenca,
-  modulosDaLicenca
+  modulosDaLicenca,
+  modulosBase
 } from '@startbig/database'
 import {
   renovarLicencaSchema,
@@ -650,7 +651,7 @@ export class DispositivoService {
       limite,
       dataVencimento: licenca.dataVencimento,
       carenciaAte:    licenca.carenciaAte,
-      modulos:        modulosDaLicenca(licenca),
+      modulos:        modulosDaLicenca(licenca, await modulosBase()),
     })
 
     // Sem HWID: só valida a licença e devolve o JWT com o limite.
@@ -821,7 +822,7 @@ export class DispositivoService {
       limite,
       dataVencimento: licenca.dataVencimento,
       carenciaAte:    licenca.carenciaAte,
-      modulos:        modulosDaLicenca(licenca),
+      modulos:        modulosDaLicenca(licenca, await modulosBase()),
     })
 
     // `assinado` já traz emCarencia, dataLimiteCarencia e diasRestantesCarencia.
@@ -996,8 +997,8 @@ export class DispositivoService {
       plano:          plano.nome,
       limite:         plano.limiteUsuario,
       dataVencimento: vencimento,
-      // Licença recém-criada não tem extra contratado — só o que o plano inclui.
-      modulos:        modulosDaLicenca({ plano }),
+      // Licença recém-criada não tem extra contratado — só o plano e os base.
+      modulos:        modulosDaLicenca({ plano }, await modulosBase()),
     })
 
     // 9. Enviar e-mail de boas-vindas com a chave de ativação

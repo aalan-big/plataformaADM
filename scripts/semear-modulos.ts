@@ -38,6 +38,26 @@ const SIMULAR = process.env.SIMULAR === '1'
  * nome, e anuncia para um cliente algo que não existe. Enquanto o módulo é só
  * plano futuro, o lugar dele é no roadmap, não no catálogo.
  */
+/**
+ * ATENÇÃO — LEIA ANTES DE ACRESCENTAR QUALQUER LINHA AQUI.
+ *
+ * A claim `modulos` do JWT é ALLOWLIST COMPLETA do lado do ERP: lista vazia
+ * significa "a plataforma ainda não configurou" e libera tudo; lista preenchida
+ * libera SÓ o que está nela. Não é incremento.
+ *
+ * Hoje as licenças em campo recebem `[]` e por isso o ERP abre inteiro. No
+ * instante em que QUALQUER módulo passar a entrar na claim de uma licença, ela
+ * cruza para o modo allowlist — e tudo que não estiver na lista fecha.
+ *
+ * O efeito não é lento. O ERP relê a claim a cada requisição e o token é
+ * reescrito na revalidação online, que roda no boot e a cada poucos minutos de
+ * navegação. Loja online sente em minutos. Os 7 dias de validade do JWT são o
+ * teto de quem está offline — não são rede de segurança para desfazer engano.
+ *
+ * Daí a regra: um módulo que representa acesso que a base JÁ TEM entra como
+ * `incluidoPorPadrao: true`, no MESMO deploy do primeiro módulo restritivo.
+ * Semear só o restritivo tira da base um acesso que ninguém decidiu tirar.
+ */
 const CATALOGO = [
   /**
    * `vincularATodos: false` — o módulo nasce no catálogo e em NENHUM plano.
@@ -51,7 +71,30 @@ const CATALOGO = [
    * Quem entra em qual plano passa a ser escolha explícita, feita no painel,
    * depois que o preço estiver definido.
    */
-  { identificador: 'NFE', nome: 'NF-e', descricao: 'Nota Fiscal Eletrônica de mercadoria, via Focus NFe.', icone: 'FileText', ordem: 10, vincularATodos: false },
+  { identificador: 'NFE', nome: 'NF-e', descricao: 'Nota Fiscal Eletrônica de mercadoria, via Focus NFe.', icone: 'FileText', ordem: 10, vincularATodos: false, incluidoPorPadrao: false },
+
+  /**
+   * FINANCEIRO — base. Visão Geral, Contas a Pagar, Contas a Receber, Extrato e
+   * Plano de Contas. É o que toda loja já usa hoje.
+   *
+   * `incluidoPorPadrao: true` em vez de `vincularATodos: true` porque vincular
+   * é um RETRATO: o loop abaixo percorre os planos que existem no instante em
+   * que o script roda. O plano criado no mês seguinte nasceria sem o vínculo, e
+   * toda licença dele receberia uma lista sem FINANCEIRO — cliente novo abrindo
+   * o ERP com o financeiro inteiro no cadeado, sem ninguém ter mexido em nada.
+   *
+   * A flag não envelhece: vale inclusive para plano que ainda não existe.
+   */
+  { identificador: 'FINANCEIRO', nome: 'Financeiro', descricao: 'Contas a pagar e a receber, extrato e plano de contas.', icone: 'Wallet', ordem: 20, vincularATodos: false, incluidoPorPadrao: true },
+
+  /**
+   * FINANCEIRO_PRO — o recorte que se vende. Análise, Fluxo de Caixa e
+   * Conciliação. "A base guarda e controla o dinheiro; o pro avisa e aconselha."
+   *
+   * Nasce sem vínculo e sem ser base: quem entra em qual plano é decisão
+   * comercial, feita no painel depois do preço definido.
+   */
+  { identificador: 'FINANCEIRO_PRO', nome: 'Financeiro PRO', descricao: 'Análise, fluxo de caixa e conciliação bancária.', icone: 'ChartLine', ordem: 21, vincularATodos: false, incluidoPorPadrao: false },
 ]
 
 async function main() {
@@ -63,15 +106,15 @@ async function main() {
     const existente = await prisma.modulo.findUnique({ where: { identificador: dados.identificador } })
 
     if (SIMULAR) {
-      console.log(`${marca}${existente ? 'atualizaria' : 'criaria'} módulo ${dados.identificador} (${dados.nome})`)
+      console.log(`${marca}${existente ? 'atualizaria' : 'criaria'} módulo ${dados.identificador} (${dados.nome})${dados.incluidoPorPadrao ? '  [BASE: entra na claim de toda licença]' : ''}`)
     } else {
       await prisma.modulo.upsert({
         where:  { identificador: dados.identificador },
         // `identificador` fica fora do update de propósito — é imutável.
-        update: { nome: dados.nome, descricao: dados.descricao, icone: dados.icone, ordem: dados.ordem },
+        update: { nome: dados.nome, descricao: dados.descricao, icone: dados.icone, ordem: dados.ordem, incluidoPorPadrao: dados.incluidoPorPadrao },
         create: dados,
       })
-      console.log(`  ${existente ? '~' : '+'} ${dados.identificador} — ${dados.nome}`)
+      console.log(`  ${existente ? '~' : '+'} ${dados.identificador} — ${dados.nome}${dados.incluidoPorPadrao ? '  [BASE: entra na claim de toda licença]' : ''}`)
     }
 
     if (!vincularATodos) continue
