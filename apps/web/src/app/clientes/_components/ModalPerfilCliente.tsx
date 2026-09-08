@@ -57,6 +57,11 @@ export type ClienteCompleto = {
     focusEmpresaId?:       string | null
     // O token em si não trafega mais: a API devolve só se ele existe.
     tokenConfigurado?:     boolean
+    // Idem para o CSC, com uma diferença: este a plataforma nem guarda. O
+    // código fica no cadastro da empresa na Focus, e aqui só marcamos que já
+    // foi cadastrado — para o suporte saber, antes do primeiro cupom, se a
+    // NFC-e sairia sem QR Code.
+    cscConfigurado?:       boolean
     certificadoNome?:      string | null
     certificadoVencimento?:string | null
     certificadoStatus:     string
@@ -465,6 +470,7 @@ function PainelModulos({ licencaId }: { licencaId: string }) {
 }
 
 type Consumo = {
+  tipoDocumento: string
   competencia: string
   emitidas:    number
   canceladas:  number
@@ -473,7 +479,22 @@ type Consumo = {
   cota:        number | null
   restantes:   number | null
   ilimitado:   boolean
+  // O ambiente é decidido na configuração fiscal do cliente, não no ERP. Vem
+  // junto para o admin não precisar abrir outra aba para saber se o que está
+  // vendo é produção ou teste. `null` = cliente sem configuração fiscal.
+  configurado:  boolean
+  ambiente:     number | null
+  ambienteNome: string | null
 }
+
+/**
+ * Os documentos que a plataforma emite. NFS-e existe no contador mas não tem
+ * emissão — oferecer aqui criaria cota para um produto que não sai.
+ */
+const TIPOS_FISCAIS = [
+  { id: 'NFE',  rotulo: 'NF-e'  },
+  { id: 'NFCE', rotulo: 'NFC-e' },
+] as const
 
 /**
  * Cota fiscal do mês para uma licença.
@@ -490,11 +511,12 @@ function PainelCotaFiscal({ licencaId }: { licencaId: string }) {
   const [extras,    setExtras]    = useState('')
   const [motivo,    setMotivo]    = useState('')
   const [concedendo, setConcedendo] = useState(false)
+  const [tipo,      setTipo]      = useState<string>('NFE')
 
-  const carregar = useCallback(async () => {
+  const carregar = useCallback(async (doc: string) => {
     setCarregando(true); setErro('')
     try {
-      const res  = await fetch(`/api/fiscal/licencas/${licencaId}/consumo`)
+      const res  = await fetch(`/api/fiscal/licencas/${licencaId}/consumo?tipo=${doc}`)
       const json = await res.json().catch(() => ({}))
       if (!res.ok) { setErro(json.erro ?? json.message ?? `Erro ${res.status}.`); return }
       setConsumo(json)
@@ -508,7 +530,22 @@ function PainelCotaFiscal({ licencaId }: { licencaId: string }) {
   function alternar() {
     const proximo = !aberto
     setAberto(proximo)
-    if (proximo && !consumo) carregar()
+    if (proximo && !consumo) carregar(tipo)
+  }
+
+  /**
+   * Troca de documento zera o consumo antes de buscar.
+   *
+   * Sem isso a tela mostraria o número da NF-e sob o rótulo da NFC-e enquanto a
+   * requisição não volta — e um admin decidindo conceder cota olharia para o
+   * saldo do documento errado.
+   */
+  function trocarTipo(doc: string) {
+    if (doc === tipo) return
+    setTipo(doc)
+    setConsumo(null)
+    setExtras(''); setMotivo('')
+    carregar(doc)
   }
 
   async function conceder() {
@@ -519,7 +556,7 @@ function PainelCotaFiscal({ licencaId }: { licencaId: string }) {
       const res = await fetch(`/api/fiscal/licencas/${licencaId}/notas-extras`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ quantidade: qtd, ...(motivo.trim() ? { motivo: motivo.trim() } : {}) }),
+        body:    JSON.stringify({ quantidade: qtd, tipoDocumento: tipo, ...(motivo.trim() ? { motivo: motivo.trim() } : {}) }),
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) { setErro(json.erro ?? json.message ?? `Erro ${res.status}.`); return }
@@ -544,6 +581,35 @@ function PainelCotaFiscal({ licencaId }: { licencaId: string }) {
 
       {aberto && (
         <div className="mt-2 space-y-2">
+          <div className="flex gap-1">
+            {TIPOS_FISCAIS.map(t => (
+              <button
+                key={t.id}
+                onClick={() => trocarTipo(t.id)}
+                className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold transition-colors ${
+                  tipo === t.id
+                    ? 'bg-blue-500/15 text-blue-400'
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {t.rotulo}
+              </button>
+            ))}
+            {consumo?.ambienteNome && (
+              <span className={`ml-auto px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                consumo.ambiente === 1 ? 'bg-amber-500/15 text-amber-400' : 'bg-blue-500/15 text-blue-400'
+              }`}>
+                {consumo.ambiente === 1 ? 'PRODUÇÃO' : 'HOMOLOGAÇÃO'}
+              </span>
+            )}
+          </div>
+
+          {consumo && !consumo.configurado && (
+            <p className="text-[10px] text-amber-400">
+              Cliente sem configuração fiscal — não emite até o CNPJ e o token da Focus serem preenchidos acima.
+            </p>
+          )}
+
           {carregando && (
             <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
               <Loader2 size={11} className="animate-spin" /> Carregando…
@@ -995,6 +1061,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
   const [inscricaoEstadual, setInscricaoEstadual] = useState('')
   const [ambiente, setAmbiente] = useState(2)
   const [focusToken, setFocusToken] = useState('')
+  const [cscConfigurado, setCscConfigurado] = useState(false)
   const [salvandoFiscal, setSalvandoFiscal] = useState(false)
   const [erroFiscal, setErroFiscal] = useState('')
 
@@ -1004,6 +1071,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
       setRazaoSocial(cliente.configuracaoFiscal.razaoSocial || '')
       setInscricaoEstadual(cliente.configuracaoFiscal.inscricaoEstadual || '')
       setAmbiente(cliente.configuracaoFiscal.ambiente || 2)
+      setCscConfigurado(!!cliente.configuracaoFiscal.cscConfigurado)
       // Campo de token começa vazio de propósito — vazio significa "mantém o
       // que já está gravado". O valor real nunca chega até aqui.
       setFocusToken('')
@@ -1029,6 +1097,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
           // Só vai quando o admin digitou algo. Mandar string vazia faria o
           // servidor entender que é para apagar o token e desligaria a emissão.
           ...(focusToken.trim() ? { focusEmpresaToken: focusToken.trim() } : {}),
+          cscConfigurado,
         })
       })
 
@@ -1235,7 +1304,21 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                         <label className="text-[11px] text-slate-400 block mb-1.5">Ambiente</label>
                         <select
                           value={ambiente}
-                          onChange={e => setAmbiente(Number(e.target.value))}
+                          onChange={e => {
+                            const novo = Number(e.target.value)
+                            setAmbiente(novo)
+                            /**
+                             * Mudar de ambiente desmarca o CSC.
+                             *
+                             * O código é por ambiente: o de homologação não vale
+                             * em produção. Deixar a marca herdada mandaria um
+                             * "sim" que o servidor aceitaria como afirmação
+                             * explícita do admin — e a primeira NFC-e real
+                             * sairia sem QR Code, descoberto com o cupom já
+                             * impresso e na mão do cliente.
+                             */
+                            if (novo !== cliente?.configuracaoFiscal?.ambiente) setCscConfigurado(false)
+                          }}
                           className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500/40 text-xs"
                         >
                           <option value={2}>Homologação (Testes)</option>
@@ -1257,6 +1340,32 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                         {cliente?.configuracaoFiscal?.tokenConfigurado
                           ? 'Por segurança o token não é exibido. Preencha apenas para substituí-lo.'
                           : 'Sem o token o cliente não consegue emitir notas.'}
+                      </p>
+                    </div>
+
+                    {/*
+                      O CSC não tem campo de valor aqui, e isso é deliberado: o
+                      código fica no cadastro da empresa na Focus, junto do
+                      certificado, e a plataforma não o transporta nem o guarda.
+                      A Focus pede o CSC uma vez por empresa e monta sozinha o
+                      hash do QR Code — ele nunca precisou passar por aqui, e
+                      CSC somado à chave de acesso permite forjar QR Code de
+                      NFC-e. O que existe é a marca de que já foi cadastrado.
+                    */}
+                    <div>
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={cscConfigurado}
+                          onChange={e => setCscConfigurado(e.target.checked)}
+                          className="mt-0.5 accent-blue-500"
+                        />
+                        <span className="text-[11px] text-slate-300">
+                          CSC cadastrado na Focus para <strong>{ambiente === 1 ? 'produção' : 'homologação'}</strong>
+                        </span>
+                      </label>
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        O código não é guardado aqui — fica no cadastro da empresa na Focus. Sem ele a NFC-e sai sem QR Code, e cupom sem QR Code não vale. O CSC é por ambiente: trocar o ambiente desmarca esta caixa.
                       </p>
                     </div>
 
@@ -1313,6 +1422,14 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                           <p className="text-slate-300 font-mono">
                             {cliente.configuracaoFiscal.tokenConfigurado ? '••••••••••••••••' : 'Não configurado'}
                           </p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-[11px] mb-1">CSC (QR Code NFC-e)</p>
+                          <span className={`inline-block font-semibold px-1.5 py-0.5 rounded text-[10px] ${
+                            cliente.configuracaoFiscal.cscConfigurado ? 'bg-emerald-500/15 text-emerald-400' : 'bg-slate-500/15 text-slate-400'
+                          }`}>
+                            {cliente.configuracaoFiscal.cscConfigurado ? 'CADASTRADO NA FOCUS' : 'PENDENTE'}
+                          </span>
                         </div>
                         <div>
                           <p className="text-slate-500 text-[11px] mb-1">Certificado Digital</p>

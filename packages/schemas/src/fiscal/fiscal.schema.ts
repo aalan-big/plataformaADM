@@ -29,6 +29,19 @@ export const configuracaoFiscalSchema = z.object({
   focusEmpresaToken: z.string().trim().min(1).optional(),
 
   removerToken: z.boolean().optional(),
+
+  /**
+   * Marcador de que o CSC desta empresa já está cadastrado na Focus.
+   *
+   * É um "sim/não" para o suporte, não o segredo: o CSC fica no cadastro da
+   * empresa na Focus, junto do certificado, e a plataforma não o transporta nem
+   * o guarda. A Focus pede o código uma única vez por empresa e monta sozinha o
+   * hash do QR Code — ele nunca precisou viajar por nota.
+   *
+   * O CSC é por ambiente: o de homologação não vale em produção. Por isso
+   * `salvarConfiguracaoFiscal` derruba este marcador quando o ambiente muda.
+   */
+  cscConfigurado: z.boolean().optional(),
 })
 
 export type ConfiguracaoFiscalInput = z.infer<typeof configuracaoFiscalSchema>
@@ -49,3 +62,81 @@ export const refNotaSchema = z.string()
   .regex(/^[A-Za-z0-9._-]+$/, {
     message: 'A referência (ref) aceita apenas letras, números, ponto, hífen e underline.',
   })
+
+/**
+ * Chave de idempotência enviada pelo ERP no cabeçalho `X-Idempotency-Key`.
+ *
+ * Limites frouxos porque quem gera é o ERP e o formato é escolha dele — um UUID,
+ * o id da venda, um hash. O que importa é caber num índice e não ser vazia.
+ */
+export const chaveIdempotenciaSchema = z.string()
+  .trim()
+  .min(8,   { message: 'A chave de idempotência deve ter ao menos 8 caracteres.' })
+  .max(200, { message: 'A chave de idempotência deve ter no máximo 200 caracteres.' })
+
+/**
+ * Corpo da emissão de uma nota (NF-e ou NFC-e).
+ *
+ * O `payload` passa INTEIRO para a Focus. Esta validação valida só o que a
+ * plataforma usa — a `ref`, que vira chave de idempotência e caminho de URL, e
+ * a existência de itens — e deliberadamente não tenta conferir os campos
+ * fiscais.
+ *
+ * A versão anterior listava campo a campo (`natureza_operacao`, `emitente`,
+ * `destinatario`, `items`, `totais`) e, como todo objeto Zod, DESCARTAVA o que
+ * não estivesse na lista. Na prática isso apagava `icms_situacao_tributaria`,
+ * `presenca_comprador`, `modalidade_frete`, `formas_pagamento` e o resto do que
+ * a SEFAZ exige, antes de a nota sair daqui: a Focus recusava por falta de
+ * campo obrigatório e o motivo apontava para o payload de quem não tinha tirado
+ * nada. Quem conhece o conjunto completo de campos é a Focus, e é lá que a
+ * validação fiscal deve acontecer.
+ *
+ * `looseObject` em vez de `object` é justamente isso: campo desconhecido passa.
+ */
+export const emitirNotaSchema = z.object({
+  ref: refNotaSchema,
+  payload: z.looseObject({
+    // Nota sem item nenhum é certamente um erro do chamador, e é a única coisa
+    // que dá para afirmar aqui sem conhecer o regime tributário da operação.
+    items: z.array(z.looseObject({})).min(1, 'A nota deve conter pelo menos um item.'),
+  }),
+})
+
+export const cancelarNotaSchema = z.object({
+  ref: refNotaSchema,
+  // 15 caracteres é exigência da SEFAZ, não escolha nossa.
+  justificativa: z.string().trim().min(15, 'A justificativa de cancelamento deve conter no mínimo 15 caracteres.'),
+})
+
+/**
+ * Inutilização de uma faixa de numeração.
+ *
+ * Sem `ref` e sem `cnpj`: a Focus identifica o evento pela faixa, e o CNPJ sai
+ * da configuração fiscal da licença — aceitar um do corpo deixaria um ERP
+ * adulterado inutilizar numeração de outro emitente, que é evento registrado na
+ * SEFAZ e que ninguém desfaz.
+ */
+export const inutilizarSchema = z.looseObject({
+  serie:          z.coerce.number().int().min(0, 'Série inválida.').max(999, 'Série inválida.'),
+  numero_inicial: z.coerce.number().int().min(1, 'O número inicial deve ser maior que zero.'),
+  numero_final:   z.coerce.number().int().min(1, 'O número final deve ser maior que zero.'),
+  justificativa:  z.string().trim().min(15, 'A justificativa de inutilização deve conter no mínimo 15 caracteres.'),
+
+  /**
+   * O ano da faixa. NÃO consta do schema publicado da Focus — mas o evento de
+   * inutilização da SEFAZ tem ano, e quem não o informa fica dependendo de a
+   * Focus assumir o ano corrente. Isso erra exatamente uma vez por ano, no pior
+   * lugar possível: inutilizar em janeiro uma faixa de dezembro registraria o
+   * evento no ano errado, e evento de inutilização a SEFAZ não desfaz.
+   *
+   * Por isso é aceito e repassado como veio, sem transformação: se a Focus o
+   * entender, a faixa vai para o ano certo; se ignorar, nada muda. O objeto é
+   * `looseObject` pela mesma razão — campo que a Focus passe a aceitar amanhã
+   * não pode ser descartado aqui em silêncio, que foi o defeito do schema de
+   * emissão.
+   */
+  ano: z.union([z.string(), z.number()]).optional(),
+}).refine(d => d.numero_final >= d.numero_inicial, {
+  message: 'O número final não pode ser menor que o inicial.',
+  path:    ['numero_final'],
+})

@@ -19,6 +19,9 @@ const selectConfiguracaoFiscal = {
   inscricaoEstadual:     true,
   ambiente:              true,
   focusEmpresaId:        true,
+  /// Marcador, não segredo: diz se o CSC já foi cadastrado na Focus para o
+  /// ambiente vigente. O código em si não passa por esta plataforma.
+  cscConfigurado:        true,
   certificadoNome:       true,
   certificadoVencimento: true,
   certificadoStatus:     true,

@@ -7,6 +7,17 @@ import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common'
  */
 const TIMEOUT_MS = 30_000
 
+/**
+ * Recurso da Focus por tipo de documento.
+ *
+ * NF-e e NFC-e são a MESMA API com caminho diferente — `/nfe` e `/nfce` —, e os
+ * corpos de emissão, consulta, cancelamento e inutilização têm o mesmo formato.
+ * Por isso os métodos abaixo recebem o recurso em vez de existirem duas vezes:
+ * duplicar daria duas cópias do tratamento de timeout, de erro e de encode para
+ * envelhecerem em direções diferentes.
+ */
+export type RecursoFocus = 'nfe' | 'nfce'
+
 @Injectable()
 export class FocusNfeService {
   private readonly logger = new Logger(FocusNfeService.name)
@@ -62,38 +73,74 @@ export class FocusNfeService {
   }
 
   /**
-   * Envia o payload da NF-e para a Focus NFe autorizar.
+   * Envia o payload da nota para a Focus NFe autorizar.
+   *
+   * O corpo vai como veio do ERP, sem poda: a Focus é quem conhece o conjunto
+   * completo de campos da SEFAZ, e filtrar aqui significaria derrubar campo
+   * obrigatório em silêncio — a nota seria rejeitada lá e o motivo apontaria
+   * para o payload de quem não tirou nada.
    */
-  async emitir(token: string, ref: string, payload: any, ambiente: number): Promise<any> {
-    this.logger.log(`Enviando NF-e ref "${ref}" para a Focus NFe (ambiente: ${ambiente})`)
+  async emitir(token: string, recurso: RecursoFocus, ref: string, payload: any, ambiente: number): Promise<any> {
+    this.logger.log(`Enviando ${recurso.toUpperCase()} ref "${ref}" para a Focus NFe (ambiente: ${ambiente})`)
     return this.requisitar(
-      `${this.getBaseUrl(ambiente)}/nfe?ref=${this.encodeRef(ref)}`,
+      `${this.getBaseUrl(ambiente)}/${recurso}?ref=${this.encodeRef(ref)}`,
       { method: 'POST', headers: this.getHeaders(token), body: JSON.stringify(payload) },
-      `emissão ref "${ref}"`,
+      `emissão ${recurso} ref "${ref}"`,
     )
   }
 
   /**
-   * Consulta o status de uma nota fiscal na Focus NFe usando a referência de envio.
+   * Consulta o status de uma nota na Focus NFe usando a referência de envio.
+   *
+   * `completa=1` porque é a única forma de a Focus devolver o protocolo de
+   * autorização: na resposta simples ele não existe em campo nenhum, e sem
+   * protocolo o ERP não tem o que imprimir nem o que arquivar.
    */
-  async consultar(token: string, ref: string, ambiente: number): Promise<any> {
-    this.logger.log(`Consultando status da NF-e ref "${ref}" (ambiente: ${ambiente})`)
+  async consultar(token: string, recurso: RecursoFocus, ref: string, ambiente: number): Promise<any> {
+    this.logger.log(`Consultando status da ${recurso.toUpperCase()} ref "${ref}" (ambiente: ${ambiente})`)
     return this.requisitar(
-      `${this.getBaseUrl(ambiente)}/nfe/${this.encodeRef(ref)}`,
+      `${this.getBaseUrl(ambiente)}/${recurso}/${this.encodeRef(ref)}?completa=1`,
       { method: 'GET', headers: this.getHeaders(token) },
-      `consulta ref "${ref}"`,
+      `consulta ${recurso} ref "${ref}"`,
     )
   }
 
   /**
-   * Cancela uma NF-e já autorizada.
+   * Cancela uma nota já autorizada.
    */
-  async cancelar(token: string, ref: string, justificativa: string, ambiente: number): Promise<any> {
-    this.logger.log(`Cancelando NF-e ref "${ref}" (ambiente: ${ambiente})`)
+  async cancelar(token: string, recurso: RecursoFocus, ref: string, justificativa: string, ambiente: number): Promise<any> {
+    this.logger.log(`Cancelando ${recurso.toUpperCase()} ref "${ref}" (ambiente: ${ambiente})`)
     return this.requisitar(
-      `${this.getBaseUrl(ambiente)}/nfe/${this.encodeRef(ref)}/cancelamento`,
+      `${this.getBaseUrl(ambiente)}/${recurso}/${this.encodeRef(ref)}/cancelamento`,
       { method: 'POST', headers: this.getHeaders(token), body: JSON.stringify({ justificativa }) },
-      `cancelamento ref "${ref}"`,
+      `cancelamento ${recurso} ref "${ref}"`,
+    )
+  }
+
+  /**
+   * Inutiliza uma faixa de numeração.
+   *
+   * Não tem `ref`: a Focus identifica o evento pela própria faixa (CNPJ, série,
+   * número inicial e final). É por isso que a idempotência desta operação
+   * depende do cabeçalho enviado pelo ERP, e não da referência da nota como no
+   * resto do fiscal.
+   */
+  async inutilizar(
+    token: string,
+    recurso: RecursoFocus,
+    /**
+     * Campos extras (o `ano`, por exemplo) seguem junto sem tratamento: quem
+     * conhece o conjunto aceito é a Focus, e filtrar aqui é como o payload da
+     * emissão perdia campo obrigatório em silêncio.
+     */
+    dados: { cnpj: string; serie: number; numero_inicial: number; numero_final: number; justificativa: string } & Record<string, unknown>,
+    ambiente: number,
+  ): Promise<any> {
+    this.logger.log(`Inutilizando ${recurso.toUpperCase()} série ${dados.serie}, números ${dados.numero_inicial}-${dados.numero_final} (ambiente: ${ambiente})`)
+    return this.requisitar(
+      `${this.getBaseUrl(ambiente)}/${recurso}/inutilizacao`,
+      { method: 'POST', headers: this.getHeaders(token), body: JSON.stringify(dados) },
+      `inutilização ${recurso} série ${dados.serie}`,
     )
   }
 }

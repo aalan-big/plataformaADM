@@ -74,6 +74,22 @@ const CATALOGO = [
   { identificador: 'NFE', nome: 'NF-e', descricao: 'Nota Fiscal Eletrônica de mercadoria, via Focus NFe.', icone: 'FileText', ordem: 10, vincularATodos: false, incluidoPorPadrao: false, vincularAosPlanos: [] },
 
   /**
+   * NFC-e — módulo separado da NF-e, não um detalhe dela.
+   *
+   * Servem clientes diferentes: NF-e é de quem fatura para empresa, NFC-e é de
+   * quem vende no balcão. Um módulo "FISCAL" único obrigaria a entregar os dois
+   * a quem contratasse qualquer um, e faria uma NFC-e consumir a cota de NF-e do
+   * cliente — o identificador é também o `tipoDocumento` do contador.
+   *
+   * Sem esta linha o módulo NÃO EXISTE no catálogo, e aí não há o que vincular a
+   * plano nem o que conceder a uma licença: a claim nunca receberia `NFCE` e a
+   * rota `/erp/fiscal/nfce/*` ficaria inalcançável no dia em que
+   * `ENTITLEMENTS_ENFORCE` for ligado. O ERP local já nega por padrão, então na
+   * prática a NFC-e não sai antes disto rodar.
+   */
+  { identificador: 'NFCE', nome: 'NFC-e', descricao: 'Nota Fiscal de Consumidor Eletrônica (cupom), via Focus NFe.', icone: 'Receipt', ordem: 11, vincularATodos: false, incluidoPorPadrao: false, vincularAosPlanos: [] },
+
+  /**
    * FINANCEIRO — base. Visão Geral, Contas a Pagar, Contas a Receber, Extrato e
    * Plano de Contas. É o que toda loja já usa hoje.
    *

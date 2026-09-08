@@ -1,8 +1,22 @@
-import { Injectable, Logger, NotFoundException, BadRequestException, HttpException, HttpStatus } from '@nestjs/common'
-import { prisma, concederNotasExtras, resolverCotaModulo, MODULO_NFE } from '@startbig/database'
-import { FocusNfeService } from '../../common/focus-nfe/focus-nfe.service'
+import { Injectable, Logger, NotFoundException, BadRequestException, ConflictException, HttpException, HttpStatus } from '@nestjs/common'
+import { prisma, concederNotasExtras, resolverCotaModulo, MODULO_NFE, MODULO_NFCE } from '@startbig/database'
+import { FocusNfeService, RecursoFocus } from '../../common/focus-nfe/focus-nfe.service'
 
 const AMBIENTE_PRODUCAO = 1
+
+/** Tipos de documento que esta plataforma sabe emitir hoje. */
+export type TipoDocumentoEmissivel = typeof MODULO_NFE | typeof MODULO_NFCE
+
+/**
+ * Tipo de documento (que é também o identificador do módulo vendido) para o
+ * caminho correspondente na Focus. O mapa existe para que a tradução aconteça
+ * num lugar só: espalhada, um `'nfce'` escrito à mão em algum método mandaria
+ * NFC-e pelo endpoint de NF-e sem erro de compilação.
+ */
+const RECURSO_FOCUS: Record<TipoDocumentoEmissivel, RecursoFocus> = {
+  [MODULO_NFE]:  'nfe',
+  [MODULO_NFCE]: 'nfce',
+}
 
 /**
  * Competência ("2026-08") fechada no fuso de São Paulo.
@@ -19,17 +33,35 @@ function competenciaAtual(agora: Date = new Date()): string {
   }).format(agora).slice(0, 7)
 }
 
+/** "1" ou 1 viram 1; o que não for número vira null em vez de NaN. */
+function numeroOuNulo(valor: unknown): number | null {
+  if (valor === null || valor === undefined || valor === '') return null
+  const n = Number(valor)
+  return Number.isFinite(n) ? n : null
+}
+
+function nomeAmbiente(ambiente: number): 'Producao' | 'Homologacao' {
+  return ambiente === AMBIENTE_PRODUCAO ? 'Producao' : 'Homologacao'
+}
+
 /** Resposta da Focus já normalizada para o formato que o ERP e o painel leem. */
 type ResultadoNota = {
   status:         string
+  status_focus:   string
+  tipoDocumento:  string
+  ambiente:       number
+  ambienteNome:   string
   chave_acesso:   string | null
   protocolo:      string | null
   numero:         number | null
   serie:          number | null
   url_pdf:        string | null
   url_xml:        string | null
+  qrcode:         string | null
+  url_consulta:   string | null
   codigo_sefaz:   number | null
   mensagem_sefaz: string | null
+  erros:          unknown[] | null
 }
 
 @Injectable()
@@ -38,9 +70,19 @@ export class FiscalService {
 
   constructor(private readonly focusNfeService: FocusNfeService) {}
 
-  private mapResultado(data: any, ambiente: number): ResultadoNota {
+  /**
+   * Traduz a resposta da Focus para o contrato que o ERP consome.
+   *
+   * Os nomes lidos aqui são os que a Focus documenta HOJE — `caminho_danfe`,
+   * `status_sefaz`, e o protocolo dentro de `protocolo_nota_fiscal`. As grafias
+   * antigas ficam como alternativa porque este mapeamento já rodou lendo campos
+   * que não existiam (`caminho_danfe_pdf`, `codigo_sefaz`, `protocolo` na raiz)
+   * e devolvendo `null` sem acusar nada: aceitar as duas custa um `??` e evita
+   * que a próxima diferença de nome vire outro campo vazio silencioso.
+   */
+  private mapResultado(data: any, ambiente: number, tipoDocumento: TipoDocumentoEmissivel): ResultadoNota {
     let status = 'erro'
-    const statusFocus = data.status || ''
+    const statusFocus = data?.status || ''
 
     if (statusFocus === 'autorizado') {
       status = 'autorizado'
@@ -53,32 +95,72 @@ export class FiscalService {
       status = 'cancelado'
     }
 
-    const domain = ambiente === 1
+    const domain = ambiente === AMBIENTE_PRODUCAO
       ? 'https://api.focusnfe.com.br'
       : 'https://homologacao.focusnfe.com.br'
 
-    const urlPdf = data.caminho_danfe_pdf
-      ? (data.caminho_danfe_pdf.startsWith('http') ? data.caminho_danfe_pdf : `${domain}${data.caminho_danfe_pdf}`)
-      : null
-
-    const urlXml = data.caminho_xml_nota_fiscal
-      ? (data.caminho_xml_nota_fiscal.startsWith('http') ? data.caminho_xml_nota_fiscal : `${domain}${data.caminho_xml_nota_fiscal}`)
-      : null
+    const absoluta = (caminho: unknown): string | null => {
+      if (typeof caminho !== 'string' || !caminho) return null
+      return caminho.startsWith('http') ? caminho : `${domain}${caminho}`
+    }
 
     return {
       status,
-      chave_acesso: data.chave_nfe || data.chave || null,
-      protocolo: data.protocolo || null,
-      numero: data.numero ? Number(data.numero) : null,
-      serie: data.serie ? Number(data.serie) : null,
-      url_pdf: urlPdf,
-      url_xml: urlXml,
-      codigo_sefaz: data.codigo_sefaz ? Number(data.codigo_sefaz) : null,
-      mensagem_sefaz: data.mensagem_sefaz || null,
+      /**
+       * O status cru da Focus, ao lado do normalizado.
+       *
+       * `denegado` e `erro_autorizacao` viram os dois "erro" acima, e são coisas
+       * diferentes: denegada é uma nota que a SEFAZ registrou e recusou, e
+       * reenviar não adianta. Sem este campo o ERP não teria como separar as
+       * duas — e trocar o valor de `status` quebraria quem já lê os quatro.
+       */
+      status_focus:  statusFocus,
+      tipoDocumento,
+      ambiente,
+      ambienteNome:  nomeAmbiente(ambiente),
+      chave_acesso:  data?.chave_nfe || data?.chave || null,
+      protocolo:     data?.protocolo || data?.numero_protocolo || data?.protocolo_nota_fiscal?.numero_protocolo || null,
+      numero:        numeroOuNulo(data?.numero),
+      serie:         numeroOuNulo(data?.serie),
+      url_pdf:       absoluta(data?.caminho_danfe ?? data?.caminho_danfe_pdf),
+      url_xml:       absoluta(data?.caminho_xml_nota_fiscal ?? data?.caminho_xml),
+      /**
+       * QR Code e URL de consulta só existem em NFC-e, e sem eles o cupom não
+       * vale: é o que o consumidor lê para conferir a nota no portal da SEFAZ.
+       * Quem monta os dois é a Focus, a partir do CSC cadastrado na empresa —
+       * por isso nunca trafegam no payload nem passam por aqui de ida.
+       */
+      qrcode:        data?.qrcode_url || data?.qrcode || null,
+      url_consulta:  data?.url_consulta_nf || null,
+      codigo_sefaz:  numeroOuNulo(data?.status_sefaz ?? data?.codigo_sefaz),
+      mensagem_sefaz: data?.mensagem_sefaz || null,
+      erros:         Array.isArray(data?.erros) ? data.erros : null,
     }
   }
 
   private async getEmpresaConfig(licencaId: string) {
+    const config = await this.buscarEmpresaConfig(licencaId)
+
+    if (!config) {
+      throw new NotFoundException('Empresa não possui configuração fiscal ativa.')
+    }
+
+    if (!config.focusEmpresaToken) {
+      throw new BadRequestException('Token de emissão da Focus NFe pendente de configuração.')
+    }
+
+    return { ...config, focusEmpresaToken: config.focusEmpresaToken }
+  }
+
+  /**
+   * A mesma busca, sem exigir que exista.
+   *
+   * Serve às rotas que descrevem o estado (`/config` e `/consumo`) em vez de
+   * agirem sobre ele: para elas, "este cliente ainda não foi configurado" é uma
+   * resposta legítima, e transformar isso em 404 tiraria do ERP justamente a
+   * informação que ele precisa mostrar na tela.
+   */
+  private async buscarEmpresaConfig(licencaId: string) {
     const licenca = await prisma.licenca.findUnique({
       where: { id: licencaId },
       select: { clienteId: true },
@@ -92,15 +174,62 @@ export class FiscalService {
       where: { clienteId: licenca.clienteId },
     })
 
+    return config ? { ...config, clienteId: licenca.clienteId } : null
+  }
+
+  /**
+   * O que o ERP pode mostrar na tela fiscal antes de tentar emitir.
+   *
+   * Existe porque o ambiente é decidido AQUI, na configuração do cliente, e o
+   * ERP não tem como saber qual é. Sem esta rota, a tela dele só poderia exibir
+   * uma chave local — que ficaria dizendo "Homologação" enquanto a plataforma
+   * emite em produção. Nenhum segredo sai: nem o token da Focus, nem o CSC, que
+   * a plataforma nem guarda.
+   */
+  async configFiscal(licencaId: string) {
+    const config = await this.buscarEmpresaConfig(licencaId)
+
     if (!config) {
-      throw new NotFoundException('Empresa não possui configuração fiscal ativa.')
+      return {
+        configurado:       false,
+        cnpj:              null,
+        razaoSocial:       null,
+        inscricaoEstadual: null,
+        ambiente:          null,
+        ambienteNome:      null,
+        tokenConfigurado:  false,
+        cscConfigurado:    false,
+        certificadoStatus: null,
+        certificadoVencimento: null,
+        pendencias:        ['Nenhuma configuração fiscal vinculada a esta licença.'],
+      }
     }
 
-    if (!config.focusEmpresaToken) {
-      throw new BadRequestException('Token de emissão da Focus NFe pendente de configuração.')
-    }
+    /**
+     * A lista do que impede a emissão, pronta para a tela.
+     *
+     * O ERP poderia deduzir isso dos campos, mas cada integração deduziria à sua
+     * maneira e a mensagem no balcão seria diferente em cada loja.
+     */
+    const pendencias: string[] = []
+    if (!config.focusEmpresaToken)          pendencias.push('Token de emissão da Focus NFe não configurado.')
+    if (!config.cscConfigurado)             pendencias.push('CSC não cadastrado na Focus para este ambiente — a NFC-e sairá sem QR Code.')
+    if (config.certificadoStatus === 'VENCIDO') pendencias.push('Certificado digital vencido.')
+    if (config.certificadoStatus === 'AUSENTE') pendencias.push('Certificado digital não informado.')
 
-    return { ...config, focusEmpresaToken: config.focusEmpresaToken, clienteId: licenca.clienteId }
+    return {
+      configurado:       true,
+      cnpj:              config.cnpj,
+      razaoSocial:       config.razaoSocial,
+      inscricaoEstadual: config.inscricaoEstadual,
+      ambiente:          config.ambiente,
+      ambienteNome:      nomeAmbiente(config.ambiente),
+      tokenConfigurado:  !!config.focusEmpresaToken,
+      cscConfigurado:    config.cscConfigurado,
+      certificadoStatus: config.certificadoStatus,
+      certificadoVencimento: config.certificadoVencimento,
+      pendencias,
+    }
   }
 
   /**
@@ -113,7 +242,7 @@ export class FiscalService {
     ref:        string
     ambiente:   number
     tipoDocumento: string
-    acao:       'EMISSAO' | 'CANCELAMENTO'
+    acao:       'EMISSAO' | 'CANCELAMENTO' | 'INUTILIZACAO'
     resultado:  string
     httpStatus?: number | null
     mensagem?:  string | null
@@ -135,6 +264,68 @@ export class FiscalService {
       })
     } catch (err) {
       this.logger.error(`Falha ao gravar trilha da ref "${params.ref}": ${err instanceof Error ? err.message : err}`)
+    }
+  }
+
+  /**
+   * Resposta já dada para esta chave de idempotência, se houver.
+   *
+   * A chave reapresentada para OUTRA operação, ou para outra `ref`, é recusada
+   * em vez de respondida: as duas coisas significam que o chamador reusou a
+   * chave por engano, e repetir a primeira resposta faria a segunda venda
+   * desaparecer sem nenhum sinal — o oposto do que a idempotência existe para
+   * proteger.
+   */
+  private async consultarIdempotencia(
+    licencaId: string,
+    chave: string | undefined,
+    operacao: 'EMISSAO' | 'INUTILIZACAO',
+    ref: string | null,
+  ): Promise<ResultadoNota | null> {
+    if (!chave) return null
+
+    const registro = await prisma.idempotenciaFiscal.findUnique({
+      where: { licencaId_chave: { licencaId, chave } },
+    })
+    if (!registro) return null
+
+    if (registro.operacao !== operacao || (ref !== null && registro.ref !== ref)) {
+      this.logger.warn(`Chave de idempotência "${chave}" da licença ${licencaId} reapresentada para ${operacao}/${ref ?? '-'}, mas pertence a ${registro.operacao}/${registro.ref ?? '-'}.`)
+      throw new ConflictException(
+        'Esta chave de idempotência já foi usada para outra operação. Gere uma chave nova — repetir a anterior devolveria o resultado da operação errada.',
+      )
+    }
+
+    this.logger.log(`Chave de idempotência "${chave}" já respondida para a licença ${licencaId}: devolvendo o resultado original.`)
+    return registro.resultado as unknown as ResultadoNota
+  }
+
+  /**
+   * Best-effort, e de propósito: quando isto roda a nota já foi emitida. Falhar
+   * aqui e propagar o erro faria o ERP achar que a emissão falhou e tentar de
+   * novo — que é exatamente a nota duplicada que esta tabela existe para evitar.
+   * A `ref` continua sendo a trava principal; esta é a segunda camada.
+   */
+  private async gravarIdempotencia(params: {
+    licencaId: string
+    chave?:    string
+    operacao:  'EMISSAO' | 'INUTILIZACAO'
+    ref:       string | null
+    resultado: ResultadoNota
+  }) {
+    if (!params.chave) return
+    try {
+      await prisma.idempotenciaFiscal.create({
+        data: {
+          licencaId: params.licencaId,
+          chave:     params.chave,
+          operacao:  params.operacao,
+          ref:       params.ref,
+          resultado: params.resultado as unknown as object,
+        },
+      })
+    } catch (err) {
+      this.logger.error(`Falha ao gravar idempotência "${params.chave}" da licença ${params.licencaId}: ${err instanceof Error ? err.message : err}`)
     }
   }
 
@@ -173,15 +364,34 @@ export class FiscalService {
    *
    * Só produção entra. `cota: null` significa ilimitado — o estado de todo plano
    * até alguém preencher o campo.
+   *
+   * Devolve também o AMBIENTE vigente, porque quem decide isso é a configuração
+   * do cliente e o ERP não teria como saber: uma tela dizendo "Homologação"
+   * enquanto a plataforma emite em produção é pior do que não ter tela.
+   * `configurado: false` é resposta, não erro — cliente sem config fiscal ainda
+   * precisa conseguir abrir a tela para descobrir o que falta.
    */
-  async consumoMensal(licencaId: string, tipoDocumento: string = MODULO_NFE) {
+  async consumoMensal(
+    licencaId: string,
+    tipoDocumento: string = MODULO_NFE,
+    /**
+     * A config já carregada por quem chamou. A emissão a busca antes de tudo, e
+     * sem este parâmetro o caminho quente da nota faria a mesma consulta duas
+     * vezes só para preencher um campo informativo.
+     */
+    configConhecida?: { ambiente: number } | null,
+  ) {
     const competencia = competenciaAtual()
 
-    const licenca = await prisma.licenca.findUnique({
-      where:  { id: licencaId },
-      select: { id: true },
-    })
-    if (!licenca) throw new NotFoundException('Licença não encontrada no servidor.')
+    /**
+     * `buscarEmpresaConfig` já confere se a licença existe. Quando a config vem
+     * pronta, quem chamou passou por lá — repetir a checagem aqui seria uma
+     * consulta a mais no caminho de cada nota para reconfirmar o que acabou de
+     * ser confirmado.
+     */
+    const config = configConhecida !== undefined
+      ? configConhecida
+      : await this.buscarEmpresaConfig(licencaId)
 
     const consumo = await prisma.consumoFiscal.findUnique({
       where: { licencaId_competencia_ambiente_tipoDocumento: { licencaId, competencia, ambiente: AMBIENTE_PRODUCAO, tipoDocumento } },
@@ -211,6 +421,9 @@ export class FiscalService {
       cota,
       restantes:  cota === null ? null : Math.max(0, cota - emitidas),
       ilimitado:  cota === null,
+      configurado:  !!config,
+      ambiente:     config?.ambiente ?? null,
+      ambienteNome: config ? nomeAmbiente(config.ambiente) : null,
     }
   }
 
@@ -232,8 +445,25 @@ export class FiscalService {
     return this.consumoMensal(licencaId, tipoDocumento)
   }
 
-  async emitir(licencaId: string, ref: string, payload: any) {
-    const config = await this.getEmpresaConfig(licencaId)
+  async emitir(
+    licencaId: string,
+    ref: string,
+    payload: any,
+    tipoDocumento: TipoDocumentoEmissivel = MODULO_NFE,
+    chaveIdempotencia?: string,
+  ) {
+    const config  = await this.getEmpresaConfig(licencaId)
+    const recurso = RECURSO_FOCUS[tipoDocumento]
+
+    /**
+     * A chave de idempotência vem antes de tudo, inclusive da cota.
+     *
+     * Uma repetição não é uma venda nova: se a primeira passou, a segunda tem de
+     * devolver a mesma resposta mesmo que a cota tenha estourado no intervalo.
+     * Barrar aqui por cota deixaria o ERP sem a resposta de uma nota que existe.
+     */
+    const jaRespondido = await this.consultarIdempotencia(licencaId, chaveIdempotencia, 'EMISSAO', ref)
+    if (jaRespondido) return jaRespondido
 
     /**
      * O emitente da nota tem que ser o CNPJ desta licença.
@@ -243,27 +473,32 @@ export class FiscalService {
      * um ERP adulterado emitiria com o token de um CNPJ e os dados de outro, e a
      * única barreira seria a validação da Focus — a nossa autorização estaria
      * decidindo uma coisa e a emissão fazendo outra.
+     *
+     * A NFC-e traz o emitente em `cnpj_emitente`, a NF-e em `emitente.cnpj`.
+     * Vazio nos dois passa: é a Focus quem preenche o emitente a partir do
+     * token quando o ERP não manda, e exigir aqui um campo que ela dispensa
+     * recusaria nota correta.
      */
-    const cnpjEmitente = String(payload?.emitente?.cnpj ?? '').replace(/\D/g, '')
-    if (cnpjEmitente !== config.cnpj) {
-      this.logger.warn(`Emissão barrada: licença ${licencaId} está configurada para o CNPJ ${config.cnpj} e o payload veio com ${cnpjEmitente || '(vazio)'}.`)
+    const cnpjEmitente = String(payload?.emitente?.cnpj ?? payload?.cnpj_emitente ?? '').replace(/\D/g, '')
+    if (cnpjEmitente && cnpjEmitente !== config.cnpj) {
+      this.logger.warn(`Emissão barrada: licença ${licencaId} está configurada para o CNPJ ${config.cnpj} e o payload veio com ${cnpjEmitente}.`)
       throw new BadRequestException('O CNPJ do emitente não corresponde à configuração fiscal desta licença.')
     }
 
     /**
      * Cota mensal do plano.
      *
-     * Fica ANTES da idempotência de propósito: uma reemissão da mesma ref não
-     * pode ser barrada por cota, mas quem já estourou o teto também não pode
-     * gastar chamada na Focus para descobrir isso. Homologação passa direto —
-     * teste do cliente não consome o pacote que ele pagou.
+     * Fica ANTES da idempotência por `ref` de propósito: uma reemissão da mesma
+     * ref não pode ser barrada por cota, mas quem já estourou o teto também não
+     * pode gastar chamada na Focus para descobrir isso. Homologação passa
+     * direto — teste do cliente não consome o pacote que ele pagou.
      */
     if (config.ambiente === AMBIENTE_PRODUCAO) {
-      const uso = await this.consumoMensal(licencaId)
+      const uso = await this.consumoMensal(licencaId, tipoDocumento, config)
       if (!uso.ilimitado && uso.restantes === 0) {
-        this.logger.warn(`Emissão barrada por cota: licença ${licencaId} usou ${uso.emitidas}/${uso.cota} em ${uso.competencia}.`)
+        this.logger.warn(`Emissão barrada por cota: licença ${licencaId} usou ${uso.emitidas}/${uso.cota} de ${tipoDocumento} em ${uso.competencia}.`)
         throw new HttpException(
-          `Cota de ${uso.cota} notas fiscais deste mês esgotada (${uso.emitidas} emitidas). Contrate notas adicionais ou aguarde a virada do mês.`,
+          `Cota de ${uso.cota} documentos (${tipoDocumento}) deste mês esgotada (${uso.emitidas} emitidos). Contrate notas adicionais ou aguarde a virada do mês.`,
           HttpStatus.PAYMENT_REQUIRED,
         )
       }
@@ -274,6 +509,7 @@ export class FiscalService {
       this.logger.log(`Verificando se ref "${ref}" já existe na Focus NFe para garantir idempotência`)
       const notaExistente = await this.focusNfeService.consultar(
         config.focusEmpresaToken,
+        recurso,
         ref,
         config.ambiente
       )
@@ -285,7 +521,9 @@ export class FiscalService {
        */
       if (notaExistente?.status && notaExistente.status !== 'nao_encontrado') {
         this.logger.log(`Ref "${ref}" já emitida anteriormente. Retornando status existente.`)
-        return this.mapResultado(notaExistente, config.ambiente)
+        const jaEmitida = this.mapResultado(notaExistente, config.ambiente, tipoDocumento)
+        await this.gravarIdempotencia({ licencaId, chave: chaveIdempotencia, operacao: 'EMISSAO', ref, resultado: jaEmitida })
+        return jaEmitida
       }
     } catch (e) {
       /**
@@ -308,12 +546,13 @@ export class FiscalService {
 
     const res = await this.focusNfeService.emitir(
       config.focusEmpresaToken,
+      recurso,
       ref,
       payload,
       config.ambiente
     )
 
-    const resultado = this.mapResultado(res, config.ambiente)
+    const resultado = this.mapResultado(res, config.ambiente, tipoDocumento)
 
     /**
      * Contabiliza depois da resposta da Focus, e só o que ela aceitou.
@@ -323,14 +562,16 @@ export class FiscalService {
      * cota por tentativa que falhou seria cobrar pelo nosso problema.
      */
     if (resultado.status === 'autorizado' || resultado.status === 'processando') {
-      await this.incrementarConsumo(licencaId, config.ambiente, MODULO_NFE, 'emitidas')
+      await this.incrementarConsumo(licencaId, config.ambiente, tipoDocumento, 'emitidas')
     }
+
+    await this.gravarIdempotencia({ licencaId, chave: chaveIdempotencia, operacao: 'EMISSAO', ref, resultado })
 
     await this.registrarEvento({
       licencaId,
       ref,
       ambiente:  config.ambiente,
-      tipoDocumento: MODULO_NFE,
+      tipoDocumento,
       acao:      'EMISSAO',
       resultado: resultado.status,
       mensagem:  resultado.mensagem_sefaz,
@@ -345,17 +586,23 @@ export class FiscalService {
    * Não grava nada: quem tem o estado da nota é a Focus, e guardar uma cópia
    * aqui só criaria uma segunda versão da verdade para envelhecer sozinha.
    */
-  async consultar(licencaId: string, ref: string) {
+  async consultar(licencaId: string, ref: string, tipoDocumento: TipoDocumentoEmissivel = MODULO_NFE) {
     const config = await this.getEmpresaConfig(licencaId)
     const res = await this.focusNfeService.consultar(
       config.focusEmpresaToken,
+      RECURSO_FOCUS[tipoDocumento],
       ref,
       config.ambiente
     )
-    return this.mapResultado(res, config.ambiente)
+    return this.mapResultado(res, config.ambiente, tipoDocumento)
   }
 
-  async cancelar(licencaId: string, ref: string, justificativa: string) {
+  async cancelar(
+    licencaId: string,
+    ref: string,
+    justificativa: string,
+    tipoDocumento: TipoDocumentoEmissivel = MODULO_NFE,
+  ) {
     if (!justificativa || justificativa.trim().length < 15) {
       throw new BadRequestException('A justificativa de cancelamento deve conter no mínimo 15 caracteres.')
     }
@@ -363,25 +610,88 @@ export class FiscalService {
     const config = await this.getEmpresaConfig(licencaId)
     const res = await this.focusNfeService.cancelar(
       config.focusEmpresaToken,
+      RECURSO_FOCUS[tipoDocumento],
       ref,
       justificativa,
       config.ambiente
     )
 
-    const resultado = this.mapResultado(res, config.ambiente)
+    const resultado = this.mapResultado(res, config.ambiente, tipoDocumento)
 
     // Cancelar não devolve cota: a nota existiu na SEFAZ. O contador próprio
     // serve para o painel explicar a diferença entre emitidas e válidas.
     if (resultado.status === 'cancelado') {
-      await this.incrementarConsumo(licencaId, config.ambiente, MODULO_NFE, 'canceladas')
+      await this.incrementarConsumo(licencaId, config.ambiente, tipoDocumento, 'canceladas')
     }
 
     await this.registrarEvento({
       licencaId,
       ref,
       ambiente:  config.ambiente,
-      tipoDocumento: MODULO_NFE,
+      tipoDocumento,
       acao:      'CANCELAMENTO',
+      resultado: resultado.status,
+      mensagem:  resultado.mensagem_sefaz,
+    })
+
+    return resultado
+  }
+
+  /**
+   * Inutiliza uma faixa de numeração que não virou nota.
+   *
+   * O CNPJ vem da configuração da licença, nunca do corpo: é a mesma regra da
+   * emissão, e aqui vale ainda mais — inutilizar numeração de OUTRO emitente é
+   * um evento que a SEFAZ registra e ninguém desfaz.
+   *
+   * Não existe `ref` nesta operação, então a única proteção contra a repetição é
+   * a chave de idempotência do ERP. Sem ela a chamada é aceita, mas uma segunda
+   * tentativa chega inteira na SEFAZ.
+   */
+  async inutilizar(
+    licencaId: string,
+    dados: { serie: number; numero_inicial: number; numero_final: number; justificativa: string } & Record<string, unknown>,
+    tipoDocumento: TipoDocumentoEmissivel = MODULO_NFE,
+    chaveIdempotencia?: string,
+  ) {
+    const config = await this.getEmpresaConfig(licencaId)
+
+    /**
+     * A faixa faz o papel da `ref` na idempotência.
+     *
+     * Sem ela, a mesma chave reapresentada para OUTRA faixa devolveria o
+     * resultado da primeira e a segunda inutilização sumiria sem sinal — o ERP
+     * acharia que inutilizou uma numeração que continua aberta. Guardada, a
+     * repetição por engano vira 409 em vez de mentira.
+     */
+    const faixa = `s${dados.serie}-${dados.numero_inicial}-${dados.numero_final}${dados.ano ? `-${dados.ano}` : ''}`
+
+    const jaRespondido = await this.consultarIdempotencia(licencaId, chaveIdempotencia, 'INUTILIZACAO', faixa)
+    if (jaRespondido) return jaRespondido
+
+    if (!chaveIdempotencia) {
+      this.logger.warn(`Inutilização sem X-Idempotency-Key na licença ${licencaId} (série ${dados.serie}, ${dados.numero_inicial}-${dados.numero_final}): uma repetição desta chamada chegará inteira na SEFAZ.`)
+    }
+
+    const res = await this.focusNfeService.inutilizar(
+      config.focusEmpresaToken,
+      RECURSO_FOCUS[tipoDocumento],
+      { cnpj: config.cnpj, ...dados },
+      config.ambiente,
+    )
+
+    const resultado = this.mapResultado(res, config.ambiente, tipoDocumento)
+
+    await this.gravarIdempotencia({ licencaId, chave: chaveIdempotencia, operacao: 'INUTILIZACAO', ref: faixa, resultado })
+
+    // A faixa no lugar da ref: é o que identifica o evento, e é o que alguém vai
+    // procurar no log quando o cliente perguntar por uma numeração sumida.
+    await this.registrarEvento({
+      licencaId,
+      ref:       `inutilizacao-${faixa}`,
+      ambiente:  config.ambiente,
+      tipoDocumento,
+      acao:      'INUTILIZACAO',
       resultado: resultado.status,
       mensagem:  resultado.mensagem_sefaz,
     })

@@ -310,6 +310,7 @@ model Licenca {
   cobrancas     CobrancaRenovacao[]
   consumoFiscal ConsumoFiscal[]
   emissaoLogs   EmissaoLog[]
+  idempotenciaFiscal IdempotenciaFiscal[]
   modulosExtras LicencaModuloExtra[]
 
   @@index([clienteId])
@@ -614,6 +615,23 @@ model EmpresaFiscalConfig {
   focusEmpresaId    String? // ID ou código identificador da empresa na Focus NFe
   focusEmpresaToken String? // Token gerado pela Focus exclusivo para este emitente
 
+  /// O CSC (Código de Segurança do Contribuinte) desta empresa já está cadastrado
+  /// na Focus, para o ambiente configurado acima?
+  ///
+  /// É um MARCADOR, não o segredo: o CSC em si fica no cadastro da empresa na
+  /// Focus, junto do certificado, e a plataforma nunca o transporta nem o
+  /// guarda. Duas razões. A Focus pede o CSC uma única vez por empresa e monta
+  /// sozinha o hash do QR Code — não é campo de nota, então ninguém precisa
+  /// dele em trânsito. E CSC somado à chave de acesso permite forjar QR Code de
+  /// NFC-e: um segredo com esse alcance a menos no nosso banco é ganho, ainda
+  /// mais enquanto `focusEmpresaToken` estiver sem criptografia em repouso.
+  ///
+  /// Serve para o suporte enxergar, ANTES do primeiro cupom, por que o QR Code
+  /// não sairia. O CSC é por ambiente — o de homologação não vale em produção —,
+  /// então trocar `ambiente` derruba este marcador: o que estava cadastrado lá
+  /// não vale mais aqui, e afirmar o contrário seria pior do que não saber.
+  cscConfigurado Boolean @default(false)
+
   criadoEm     DateTime @default(now())
   atualizadoEm DateTime @updatedAt
 
@@ -705,6 +723,46 @@ model EmissaoLog {
   @@index([licencaId, criadoEm])
   @@index([ref])
   @@map("emissao_log")
+}
+
+// ── IdempotenciaFiscal ────────────────────────────────────────────────────────
+/// Resposta já dada para um `X-Idempotency-Key`, para repeti-la em vez de emitir
+/// de novo.
+///
+/// A emissão já tem uma trava natural — a `ref`, que a Focus recusa duas vezes.
+/// Esta tabela cobre o que aquela não alcança: o ERP que perdeu a resposta na
+/// queda da rede, tentou de novo e, por acidente, gerou uma `ref` NOVA para a
+/// mesma venda. Aí a chave é a única coisa que liga as duas tentativas, e sem
+/// ela saem duas notas — problema que não se resolve com deploy, se resolve com
+/// contador e SEFAZ.
+///
+/// Para a inutilização ela não é reforço, é a única proteção: aquela operação
+/// não tem `ref`, e uma faixa inutilizada duas vezes é evento recusado pela
+/// SEFAZ na segunda com a numeração já perdida.
+///
+/// Escopo por licença de propósito: a chave é gerada no ERP do cliente, e duas
+/// lojas podem sortear a mesma sem que uma deva jamais ver a resposta da outra.
+model IdempotenciaFiscal {
+  id        String @id @default(uuid())
+  licencaId String
+  /// O valor exato do cabeçalho `X-Idempotency-Key` enviado pelo ERP.
+  chave     String
+  /// EMISSAO | INUTILIZACAO — a mesma chave reusada para outra operação é
+  /// engano do chamador, e responder a primeira resposta seria mentir.
+  operacao  String
+  /// A `ref` daquela tentativa, quando a operação tem uma. Guardada para poder
+  /// recusar a mesma chave reapresentada com ref diferente: são duas notas
+  /// distintas pedindo para virar uma só.
+  ref       String?
+  /// A resposta normalizada devolvida na primeira vez, repetida na íntegra.
+  resultado Json
+  criadoEm  DateTime @default(now())
+
+  licenca Licenca @relation(fields: [licencaId], references: [id], onDelete: Cascade)
+
+  @@unique([licencaId, chave])
+  @@index([criadoEm])
+  @@map("idempotencia_fiscal")
 }
 
 // ── Modulo ────────────────────────────────────────────────────────────────────

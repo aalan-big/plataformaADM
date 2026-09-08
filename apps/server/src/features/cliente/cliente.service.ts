@@ -351,6 +351,29 @@ export class ClienteService {
       : dados.focusEmpresaToken    ? { focusEmpresaToken: dados.focusEmpresaToken }
       : {}
 
+    const atual = await prisma.empresaFiscalConfig.findUnique({
+      where:  { clienteId },
+      select: { ambiente: true },
+    })
+
+    /**
+     * Trocar de ambiente derruba o marcador de CSC.
+     *
+     * O CSC é por ambiente — o de homologação não vale em produção, e
+     * vice-versa. Manter o "sim" ao migrar o cliente para produção diria ao
+     * suporte que está tudo pronto enquanto a primeira NFC-e real sairia sem QR
+     * Code, que é o defeito mais caro de descobrir no balcão: o cupom já foi
+     * impresso e entregue.
+     *
+     * Marcar explicitamente na MESMA gravação vence — é o admin dizendo que já
+     * cadastrou o CSC do ambiente novo, e discordar dele aqui seria teimosia.
+     */
+    const ambienteMudou = !!atual && atual.ambiente !== dados.ambiente
+    const cscPatch =
+      dados.cscConfigurado !== undefined ? { cscConfigurado: dados.cscConfigurado }
+      : ambienteMudou                    ? { cscConfigurado: false }
+      : {}
+
     const comuns = {
       cnpj:              dados.cnpj,
       razaoSocial:       dados.razaoSocial,
@@ -361,11 +384,12 @@ export class ClienteService {
     try {
       const config = await prisma.empresaFiscalConfig.upsert({
         where:  { clienteId },
-        update: { ...comuns, ...tokenPatch },
+        update: { ...comuns, ...tokenPatch, ...cscPatch },
         create: {
           clienteId,
           ...comuns,
           ...tokenPatch,
+          ...cscPatch,
           certificadoStatus: 'AUSENTE',
         },
       })
