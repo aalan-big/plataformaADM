@@ -178,6 +178,57 @@ export class FocusNfeService {
    * `requisitar` só registra o campo de erro da resposta, e a linha de log abaixo
    * não toca em `dados`.
    */
+  /**
+   * Acha a empresa no cadastro da Focus pelo CNPJ.
+   *
+   * Existe para o `focusEmpresaId` deixar de ser digitação. Ele é um dado
+   * DERIVÁVEL — temos o CNPJ na ficha e o token de parceiro no ambiente —, e
+   * pedir que um humano copie um número de um painel para outro só cria uma
+   * forma nova de errar: enquanto ele faltava, o upload de certificado
+   * respondia 501 e o lojista lia "a plataforma ainda não recebe certificado",
+   * que aponta para o lado errado do cano.
+   *
+   * A Focus filtra por CNPJ na própria query, então não há paginação a
+   * percorrer nem lista inteira a trazer. Devolve `null` quando não existe
+   * empresa com esse CNPJ — que é resposta legítima, e diferente de erro: quer
+   * dizer que o cadastro ainda precisa ser feito no painel da Focus.
+   *
+   * Como todo o cadastro de empresas, isto vive em `api.focusnfe.com.br`
+   * mesmo quando o cliente emite em homologação.
+   */
+  async buscarEmpresaPorCnpj(tokenDaConta: string, cnpj: string): Promise<any | null> {
+    const digitos = String(cnpj || '').replace(/\D/g, '')
+    if (digitos.length !== 14) return null
+
+    this.logger.log(`Procurando empresa de CNPJ ${digitos} no cadastro da Focus NFe`)
+
+    const resposta = await this.requisitar(
+      `https://api.focusnfe.com.br/v2/empresas?cnpj=${encodeURIComponent(digitos)}`,
+      { method: 'GET', headers: this.getHeaders(tokenDaConta) },
+      `busca da empresa de CNPJ ${digitos}`,
+    )
+
+    // A rota devolve um ARRAY (até 50 por página). Aceitamos objeto solto
+    // também: custa uma linha e evita que uma mudança de formato lá vire um
+    // "empresa não encontrada" aqui, que mandaria o admin cadastrar de novo uma
+    // empresa que já existe.
+    const lista = Array.isArray(resposta) ? resposta : resposta ? [resposta] : []
+
+    /**
+     * Conferimos o CNPJ de novo, mesmo tendo filtrado por ele.
+     *
+     * O que volta daqui decide em qual empresa o certificado do cliente vai ser
+     * gravado. Confiar no filtro remoto e pegar `lista[0]` significaria que uma
+     * mudança de comportamento na Focus — filtro ignorado, por exemplo — grava
+     * o certificado de um cliente na empresa de outro.
+     */
+    const empresa = lista.find(
+      (e: any) => String(e?.cnpj || '').replace(/\D/g, '') === digitos,
+    )
+
+    return empresa ?? null
+  }
+
   async atualizarEmpresa(
     tokenDaConta: string,
     empresaId: string,

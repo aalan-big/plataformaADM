@@ -299,30 +299,78 @@ export class FiscalService {
     }
 
     /**
-     * Sem `focusEmpresaId` não há o que atualizar.
+     * O `focusEmpresaId`, descoberto sozinho quando a ficha não o tem.
      *
-     * Criar a empresa daqui exigiria endereço completo e regime tributário, que
-     * esta ficha não guarda — e uma empresa criada pela metade na Focus é pior
-     * do que nenhuma: ela passa a existir, some da lista de pendências e falha
-     * só na primeira nota. O cadastro inicial continua sendo feito no painel da
-     * Focus, e o id colado na ficha do cliente.
+     * Ele é DERIVÁVEL: temos o CNPJ aqui e o token de parceiro no ambiente, e a
+     * Focus filtra empresa por CNPJ. Exigir que um humano copiasse esse número
+     * de um painel para o outro só criava uma forma nova de errar — e quando
+     * faltava, a resposta era 501 e o lojista lia "a plataforma ainda não
+     * recebe certificado", procurando defeito no deploy, no `.env` e na Focus,
+     * que era exatamente onde o problema não estava.
+     *
+     * O que continua NÃO sendo automático é CRIAR a empresa: isso exige
+     * endereço completo e regime tributário, que esta ficha não guarda, e
+     * empresa criada pela metade na Focus é pior do que nenhuma — passa a
+     * existir, some da lista de pendências e falha só na primeira nota.
      */
-    if (!config.focusEmpresaId) {
-      this.logger.error(
-        `Cliente ${config.clienteId} enviou certificado, mas a ficha fiscal está sem focusEmpresaId.`,
-      )
-      throw new HttpException(
-        {
-          codigo: 'EMPRESA_SEM_CADASTRO_NA_EMISSORA',
-          mensagem: 'A empresa ainda não está cadastrada na emissora.',
-        },
-        HttpStatus.NOT_IMPLEMENTED,
+    let empresaId = config.focusEmpresaId
+
+    if (!empresaId) {
+      let encontrada: any = null
+      try {
+        encontrada = await this.focusNfeService.buscarEmpresaPorCnpj(tokenDaConta, config.cnpj)
+      } catch (erro) {
+        // Mesma conversão do envio abaixo: 401/403 aqui é o NOSSO token, e
+        // deixá-lo passar cru faria o lojista mexer no certificado dele.
+        if (erro instanceof HttpException && [401, 403].includes(erro.getStatus())) {
+          this.logger.error('A Focus recusou o token de parceiro ao procurar a empresa pelo CNPJ.')
+          throw new HttpException(
+            {
+              codigo: 'PLATAFORMA_SEM_TOKEN_DA_CONTA',
+              mensagem: 'O envio de certificado ainda não está habilitado nesta plataforma.',
+            },
+            HttpStatus.NOT_IMPLEMENTED,
+          )
+        }
+        throw erro
+      }
+
+      if (!encontrada?.id) {
+        this.logger.error(
+          `Cliente ${config.clienteId}: nenhuma empresa de CNPJ ${config.cnpj} no cadastro da Focus.`,
+        )
+        throw new HttpException(
+          {
+            codigo: 'EMPRESA_SEM_CADASTRO_NA_EMISSORA',
+            mensagem: 'A empresa ainda não está cadastrada na emissora.',
+          },
+          HttpStatus.NOT_IMPLEMENTED,
+        )
+      }
+
+      empresaId = String(encontrada.id)
+
+      /**
+       * Gravado ANTES de enviar o certificado, de propósito.
+       *
+       * Se o envio falhar por outro motivo — senha errada, Focus fora do ar —,
+       * o id descoberto continua correto e a próxima tentativa não repete a
+       * consulta. Guardar só depois do sucesso jogaria fora um dado válido por
+       * causa de uma falha que não tem relação com ele.
+       */
+      await prisma.empresaFiscalConfig.update({
+        where: { clienteId: config.clienteId },
+        data:  { focusEmpresaId: empresaId },
+      })
+
+      this.logger.log(
+        `Empresa ${empresaId} descoberta na Focus pelo CNPJ ${config.cnpj} e vinculada ao cliente ${config.clienteId}.`,
       )
     }
 
     let empresa: any
     try {
-      empresa = await this.focusNfeService.atualizarEmpresa(tokenDaConta, config.focusEmpresaId, {
+      empresa = await this.focusNfeService.atualizarEmpresa(tokenDaConta, empresaId, {
         arquivo_certificado_base64: arquivoBase64,
         senha_certificado: senha,
         /**
