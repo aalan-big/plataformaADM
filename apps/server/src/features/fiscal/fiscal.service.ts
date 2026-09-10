@@ -850,7 +850,34 @@ export class FiscalService {
       ref,
       config.ambiente
     )
-    return this.mapResultado(res, config.ambiente, tipoDocumento)
+
+    const resultado = this.mapResultado(res, config.ambiente, tipoDocumento)
+
+    /**
+     * O desfecho REAL de uma nota chega aqui, e não na emissão.
+     *
+     * A emissão devolve "processando": a Focus aceitou o XML e a SEFAZ ainda
+     * não decidiu. Quem traz autorização ou rejeição é esta consulta, feita
+     * pelo ERP em seguida. Logar só a emissão — como estava — deixava sem
+     * rastro justamente o momento em que a resposta aparece: o log dizia "em
+     * processamento" e nunca mais tocava no assunto, enquanto o operador via
+     * uma rejeição na tela.
+     *
+     * `processando` não vira linha: o ERP repete esta consulta em intervalos
+     * curtos até a SEFAZ responder, e uma linha por tentativa afogaria o log
+     * com a única informação que não mudou.
+     */
+    if (resultado.status === 'autorizado') {
+      this.logger.log(`${tipoDocumento} ref "${ref}" AUTORIZADA pela SEFAZ (protocolo ${resultado.protocolo ?? 'não informado'}).`)
+    } else if (resultado.status !== 'processando') {
+      this.logger.warn(
+        `${tipoDocumento} ref "${ref}" com status "${resultado.status}" na consulta:` +
+        ` status_focus="${resultado.status_focus}" codigo_sefaz=${resultado.codigo_sefaz ?? 'nenhum'}` +
+        ` — ${resultado.mensagem_sefaz ?? 'sem mensagem'}`,
+      )
+    }
+
+    return resultado
   }
 
   async cancelar(
