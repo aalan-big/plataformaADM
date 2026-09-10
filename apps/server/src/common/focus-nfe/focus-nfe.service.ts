@@ -1,4 +1,5 @@
 import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common'
+import { traduzirPayloadParaFocus } from './focus-payload.mapper'
 
 /**
  * Teto de espera por resposta da Focus. O `fetch` do Node não tem timeout
@@ -75,16 +76,28 @@ export class FocusNfeService {
   /**
    * Envia o payload da nota para a Focus NFe autorizar.
    *
-   * O corpo vai como veio do ERP, sem poda: a Focus é quem conhece o conjunto
-   * completo de campos da SEFAZ, e filtrar aqui significaria derrubar campo
-   * obrigatório em silêncio — a nota seria rejeitada lá e o motivo apontaria
-   * para o payload de quem não tirou nada.
+   * O corpo é TRADUZIDO, nunca podado. O ERP fala em objetos aninhados
+   * (`emitente{}`, `destinatario{}`, `totais{}`) e a Focus só entende o formato
+   * plano (`cnpj_emitente`, `nome_destinatario`, `valor_total`); sem a tradução
+   * ela recebe três objetos desconhecidos e nenhum campo de emitente,
+   * destinatário ou totais. Fora esse rearranjo, tudo o que o ERP mandou segue
+   * adiante: a Focus é quem conhece o conjunto completo de campos da SEFAZ, e
+   * filtrar aqui derrubaria campo obrigatório em silêncio — a nota seria
+   * rejeitada lá e o motivo apontaria para o payload de quem não tirou nada.
+   *
+   * A tradução mora AQUI, na fronteira com a Focus, e não no `FiscalService`:
+   * assim nenhum caminho de emissão consegue passar por fora dela, e o dia em
+   * que trocarmos de emissora este é o arquivo que muda.
    */
   async emitir(token: string, recurso: RecursoFocus, ref: string, payload: any, ambiente: number): Promise<any> {
     this.logger.log(`Enviando ${recurso.toUpperCase()} ref "${ref}" para a Focus NFe (ambiente: ${ambiente})`)
     return this.requisitar(
       `${this.getBaseUrl(ambiente)}/${recurso}?ref=${this.encodeRef(ref)}`,
-      { method: 'POST', headers: this.getHeaders(token), body: JSON.stringify(payload) },
+      {
+        method: 'POST',
+        headers: this.getHeaders(token),
+        body: JSON.stringify(traduzirPayloadParaFocus(payload)),
+      },
       `emissão ${recurso} ref "${ref}"`,
     )
   }
@@ -141,6 +154,40 @@ export class FocusNfeService {
       `${this.getBaseUrl(ambiente)}/${recurso}/inutilizacao`,
       { method: 'POST', headers: this.getHeaders(token), body: JSON.stringify(dados) },
       `inutilização ${recurso} série ${dados.serie}`,
+    )
+  }
+
+  /**
+   * Grava o certificado A1 no cadastro da empresa dentro da Focus.
+   *
+   * Duas coisas separam este método de todos os acima.
+   *
+   * PRIMEIRA: o token. Emitir, consultar, cancelar e inutilizar usam o token DA
+   * EMPRESA (`focusEmpresaToken`). O cadastro de empresas é da CONTA — é o token
+   * do painel da Focus, o mesmo que lista todas as empresas. Mandar o token da
+   * empresa aqui devolve 401, e um 401 solto chega ao lojista parecendo recusa
+   * do certificado dele.
+   *
+   * SEGUNDA: o host. As notas vão para `homologacao.focusnfe.com.br` quando o
+   * ambiente é 2, mas o CADASTRO da empresa vive em `api.focusnfe.com.br`. A
+   * empresa é uma só, e é ela que devolve os dois tokens — `token_producao` e
+   * `token_homologacao` —, que é como o ambiente se escolhe depois, na emissão.
+   * Por isso `getBaseUrl(ambiente)` não aparece aqui.
+   *
+   * O corpo carrega o certificado e a senha. Nada dele entra em log: o
+   * `requisitar` só registra o campo de erro da resposta, e a linha de log abaixo
+   * não toca em `dados`.
+   */
+  async atualizarEmpresa(
+    tokenDaConta: string,
+    empresaId: string,
+    dados: Record<string, unknown>,
+  ): Promise<any> {
+    this.logger.log(`Atualizando cadastro da empresa ${empresaId} na Focus NFe`)
+    return this.requisitar(
+      `https://api.focusnfe.com.br/v2/empresas/${encodeURIComponent(empresaId)}`,
+      { method: 'PUT', headers: this.getHeaders(tokenDaConta), body: JSON.stringify(dados) },
+      `atualização da empresa ${empresaId}`,
     )
   }
 }
