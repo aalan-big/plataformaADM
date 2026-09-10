@@ -57,6 +57,30 @@ export class FocusNfeService {
       // destinatário da nota (nome, CPF/CNPJ, endereço) e log não é lugar disso.
       const motivo = data?.mensagem ?? data?.erro ?? data?.codigo ?? 'sem detalhe'
       this.logger.warn(`Focus NFe recusou (${contexto}): HTTP ${response.status} - ${motivo}`)
+
+      /**
+       * O `erros` também vai para o log, e é o unico pedaço do corpo que vai.
+       *
+       * A recusa de schema da Focus diz "verifique o detalhamento dos erros" e
+       * o detalhamento é justamente este array — sem ele, o log manda conferir
+       * uma coisa que ele mesmo descartou, e o suporte fica adivinhando qual
+       * campo do payload está errado.
+       *
+       * É a lista de validação da emissora: nomes de campo e o que há de errado
+       * com eles. Não é o corpo da nota — o destinatário e os valores continuam
+       * fora do log, que é o que a regra acima protege.
+       */
+      if (Array.isArray(data?.erros) && data.erros.length > 0) {
+        const detalhe = data.erros
+          .map((e: any) =>
+            typeof e === 'string'
+              ? e
+              : [e?.campo, e?.mensagem ?? e?.erro].filter(Boolean).join(': ') || JSON.stringify(e),
+          )
+          .join(' | ')
+        this.logger.warn(`Focus NFe detalhou (${contexto}): ${detalhe}`)
+      }
+
       throw new HttpException(data ?? { message: 'Erro desconhecido ao chamar Focus NFe' }, response.status)
     }
 
