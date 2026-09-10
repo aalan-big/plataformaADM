@@ -787,6 +787,30 @@ export class FiscalService {
     const resultado = this.mapResultado(res, config.ambiente, tipoDocumento)
 
     /**
+     * O desfecho da nota vai para o log, autorizada ou não.
+     *
+     * Sem isto, uma nota AUTORIZADA e uma REJEITADA pela SEFAZ deixam o mesmo
+     * rastro: a linha "Enviando..." e mais nada. Só a recusa da própria Focus
+     * (HTTP 4xx) aparecia, porque quem registrava era o tratamento de erro. Uma
+     * rejeição da SEFAZ chega em HTTP 200 — a Focus aceitou e transmitiu, a
+     * receita estadual é que recusou — e passava em silêncio absoluto.
+     *
+     * O `codigo_sefaz` é o que importa mais que o texto: a rejeição da SEFAZ é
+     * numerada, e o número diz sem ambiguidade qual regra falhou. A mensagem
+     * descreve, o código identifica.
+     */
+    if (resultado.status === 'autorizado') {
+      this.logger.log(`${tipoDocumento} ref "${ref}" AUTORIZADA pela SEFAZ (protocolo ${resultado.protocolo ?? 'não informado'}).`)
+    } else if (resultado.status === 'processando') {
+      this.logger.log(`${tipoDocumento} ref "${ref}" em processamento na SEFAZ.`)
+    } else {
+      this.logger.warn(
+        `${tipoDocumento} ref "${ref}" NÃO autorizada: status_focus="${resultado.status_focus}"` +
+        ` codigo_sefaz=${resultado.codigo_sefaz ?? 'nenhum'} — ${resultado.mensagem_sefaz ?? 'sem mensagem'}`,
+      )
+    }
+
+    /**
      * Contabiliza depois da resposta da Focus, e só o que ela aceitou.
      *
      * "processando" conta: a nota entrou na fila da SEFAZ e vai virar documento.
