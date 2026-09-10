@@ -233,6 +233,190 @@ export class FiscalService {
   }
 
   /**
+   * Recebe o certificado A1 do ERP e o entrega ao cadastro da empresa na Focus.
+   *
+   * É a peça que faltava do onboarding fiscal. Sem ela o ERP conferia o arquivo
+   * na máquina do lojista — senha e validade — e não tinha para onde mandá-lo:
+   * gravava `VALIDADO_LOCAL` e dizia na tela que o certificado não havia chegado
+   * à emissora. Ele estava certo.
+   *
+   * Os códigos de status aqui são CONTRATO, não decoração. O ERP separa três
+   * desfechos e reage diferente a cada um:
+   *
+   *   404/405/501 → "a plataforma ainda não recebe certificado". O cadastro fica
+   *                 `VALIDADO_LOCAL` e o lojista NÃO é mandado procurar defeito
+   *                 no arquivo dele. É o slot certo para o que falta do NOSSO
+   *                 lado.
+   *   demais 4xx  → recusa explícita. A `message` daqui aparece para o lojista.
+   *   2xx         → `CONECTADO_NUVEM`, e a tela passa a dizer "Conectado".
+   *
+   * Por isso token da conta ausente e empresa sem `focusEmpresaId` saem como 501
+   * e não como 500: os dois são configuração nossa pendente. Um 500 viraria
+   * "a plataforma recusou o seu certificado", que é acusar o cliente de um
+   * problema que é nosso.
+   */
+  async enviarCertificado(licencaId: string, arquivoBase64: string, senha: string) {
+    const config = await this.buscarEmpresaConfig(licencaId)
+
+    if (!config) {
+      throw new NotFoundException('Nenhuma configuração fiscal vinculada a esta licença.')
+    }
+
+    /**
+     * O token da CONTA na Focus (o "token de parceiro"), não o da empresa.
+     *
+     * Fica em variável de ambiente e não no banco porque vale para todos os
+     * clientes: é a credencial do painel, a mesma que cria e altera qualquer
+     * empresa da nossa conta. Guardá-la por cliente seria N cópias do mesmo
+     * segredo esperando divergir.
+     *
+     * DOIS NOMES ACEITOS, e isso é deliberado. `FOCUS_NFE_PARTNER_TOKEN` é o
+     * nome que a Focus usa e o que está no `.env` da VPS; `FOCUS_CONTA_TOKEN`
+     * foi o nome com que esta rota nasceu. Aceitar os dois custa uma linha e
+     * mata um modo de falha caro: com o nome trocado, o token está presente e
+     * correto e mesmo assim a rota devolve 501 — indistinguível de "a
+     * plataforma não foi configurada". O lojista lê "ainda não recebemos
+     * certificado" e ninguém suspeita do `.env`.
+     *
+     * Ausente NÃO derruba o boot de propósito — `validarSegredosProducao` não a
+     * exige. Faltar aqui desabilita o upload de certificado; faltar lá derrubaria
+     * a API inteira, licença e renovação junto, por causa do fiscal.
+     */
+    const tokenDaConta =
+      process.env.FOCUS_NFE_PARTNER_TOKEN?.trim() || process.env.FOCUS_CONTA_TOKEN?.trim()
+
+    if (!tokenDaConta) {
+      this.logger.error(
+        'FOCUS_NFE_PARTNER_TOKEN ausente: o certificado do cliente não pôde ser enviado à Focus.',
+      )
+      throw new HttpException(
+        {
+          codigo: 'PLATAFORMA_SEM_TOKEN_DA_CONTA',
+          mensagem: 'O envio de certificado ainda não está habilitado nesta plataforma.',
+        },
+        HttpStatus.NOT_IMPLEMENTED,
+      )
+    }
+
+    /**
+     * Sem `focusEmpresaId` não há o que atualizar.
+     *
+     * Criar a empresa daqui exigiria endereço completo e regime tributário, que
+     * esta ficha não guarda — e uma empresa criada pela metade na Focus é pior
+     * do que nenhuma: ela passa a existir, some da lista de pendências e falha
+     * só na primeira nota. O cadastro inicial continua sendo feito no painel da
+     * Focus, e o id colado na ficha do cliente.
+     */
+    if (!config.focusEmpresaId) {
+      this.logger.error(
+        `Cliente ${config.clienteId} enviou certificado, mas a ficha fiscal está sem focusEmpresaId.`,
+      )
+      throw new HttpException(
+        {
+          codigo: 'EMPRESA_SEM_CADASTRO_NA_EMISSORA',
+          mensagem: 'A empresa ainda não está cadastrada na emissora.',
+        },
+        HttpStatus.NOT_IMPLEMENTED,
+      )
+    }
+
+    let empresa: any
+    try {
+      empresa = await this.focusNfeService.atualizarEmpresa(tokenDaConta, config.focusEmpresaId, {
+        arquivo_certificado_base64: arquivoBase64,
+        senha_certificado: senha,
+        /**
+         * Empresa cadastrada e não habilitada não emite, e o erro só aparece na
+         * primeira nota. Reafirmar aqui é barato e fecha esse buraco.
+         *
+         * São DUAS flags, não uma: `habilita_nfce` é independente na Focus.
+         * Mandar só a primeira deixava a loja que comprou NFC-e com o
+         * certificado aceito, o painel todo verde e a Focus recusando o
+         * primeiro cupom — o pior desfecho, porque acontece no balcão.
+         *
+         * As duas vão sempre, para todo cliente, e isso NÃO é dar módulo de
+         * graça: quem decide o que a loja pode emitir é o `ModuloGuard`, aqui
+         * do nosso lado, e ele barra `/erp/fiscal/nfce/*` sem o módulo NFCE.
+         * Estas flags são capacidade na emissora, não licença. Amarrá-las ao
+         * módulo criaria uma segunda trava, invisível e fora do nosso banco,
+         * que só se manifesta na primeira nota depois da venda do módulo.
+         *
+         * Não condicionamos `habilita_nfce` ao `cscConfigurado` pela mesma
+         * razão: o CSC costuma ser cadastrado DEPOIS do certificado, e nada
+         * reenvia esta chamada quando ele chega — a loja ficaria presa até
+         * alguém reenviar o certificado à mão para destravar o cupom.
+         */
+        habilita_nfe:  true,
+        habilita_nfce: true,
+      })
+    } catch (erro) {
+      /**
+       * 401/403 da Focus é o NOSSO token, nunca o certificado do cliente.
+       *
+       * Deixar passar cru mandaria o lojista trocar a senha de um certificado
+       * que está perfeito. Vira 501 pela mesma razão dos casos acima: o que
+       * falta é da plataforma.
+       */
+      if (erro instanceof HttpException && [401, 403].includes(erro.getStatus())) {
+        this.logger.error('A Focus recusou o token de parceiro (FOCUS_NFE_PARTNER_TOKEN) ao enviar certificado.')
+        throw new HttpException(
+          {
+            codigo: 'PLATAFORMA_SEM_TOKEN_DA_CONTA',
+            mensagem: 'O envio de certificado ainda não está habilitado nesta plataforma.',
+          },
+          HttpStatus.NOT_IMPLEMENTED,
+        )
+      }
+      // O resto sobe como veio: senha errada e CNPJ divergente são justamente o
+      // que o lojista precisa ler, e quem sabe dizer isso é a emissora.
+      throw erro
+    }
+
+    /**
+     * A empresa devolve os DOIS tokens; guardamos o do ambiente desta ficha.
+     *
+     * `getBaseUrl` escolhe o host pelo `ambiente`, então gravar o token de
+     * produção numa ficha de homologação faria toda emissão bater em 401 no host
+     * de teste. Token vazio na resposta não apaga o que já está lá: o admin pode
+     * tê-lo colado à mão, e limpar por omissão desligaria a emissão em silêncio.
+     */
+    const tokenDoAmbiente = config.ambiente === AMBIENTE_PRODUCAO
+      ? empresa?.token_producao
+      : empresa?.token_homologacao
+
+    const validoAte = empresa?.certificado_valido_ate
+      ? new Date(empresa.certificado_valido_ate)
+      : null
+    const vencimento = validoAte && !Number.isNaN(validoAte.getTime()) ? validoAte : null
+
+    await prisma.empresaFiscalConfig.update({
+      where: { clienteId: config.clienteId },
+      data: {
+        certificadoStatus: 'ATIVO',
+        ...(vencimento ? { certificadoVencimento: vencimento } : {}),
+        ...(typeof tokenDoAmbiente === 'string' && tokenDoAmbiente
+          ? { focusEmpresaToken: tokenDoAmbiente }
+          : {}),
+      },
+    })
+
+    this.logger.log(`Certificado do cliente ${config.clienteId} cadastrado na Focus NFe.`)
+
+    /**
+     * A resposta que o ERP lê. Nenhum segredo sai daqui — nem a senha, nem o
+     * token da empresa, nem o arquivo. O `valido_ate` é o que a tela do Centro
+     * Fiscal mostra ao lojista.
+     */
+    return {
+      status: 'ATIVO',
+      habilitado: true,
+      cnpj: config.cnpj,
+      valido_ate: vencimento ? vencimento.toISOString() : null,
+      mensagem: 'Certificado cadastrado na emissora.',
+    }
+  }
+
+  /**
    * Trilha de suporte. Best-effort: quando isto roda a Focus já respondeu, e
    * estourar aqui devolveria erro ao ERP para uma operação que deu certo — o
    * operador emitiria de novo. Falha vira log, não exceção.

@@ -6,7 +6,7 @@ import { ModuloGuard } from '../../core/guards/modulo.guard'
 import { Public } from '../../core/decorators/public.decorator'
 import { RequerModulo } from '../../core/decorators/requer-modulo.decorator'
 import { MODULO_NFE, MODULO_NFCE } from '@startbig/database'
-import { refNotaSchema, chaveIdempotenciaSchema, emitirNotaSchema, cancelarNotaSchema, inutilizarSchema } from '@startbig/schemas'
+import { refNotaSchema, chaveIdempotenciaSchema, emitirNotaSchema, cancelarNotaSchema, inutilizarSchema, enviarCertificadoSchema } from '@startbig/schemas'
 import { ZodError } from 'zod'
 
 type ReqErp = Request & { erp: { licencaId: string } }
@@ -183,5 +183,46 @@ export class FiscalConfigController {
   @Get('config')
   config(@Req() req: ReqErp) {
     return this.fiscalService.configFiscal(req.erp.licencaId)
+  }
+
+  /**
+   * O certificado A1 do lojista, a caminho da emissora.
+   *
+   * Vive neste controller, e não nos de emissão, pelo mesmo motivo do `/config`:
+   * quem ainda não emite é exatamente quem precisa desta rota. Sob `RequerModulo`
+   * ela devolveria 403 ao cliente que acabou de comprar o módulo e ainda não teve
+   * a licença remoída — e esse 403 chegaria ao ERP como recusa do certificado.
+   *
+   * O corpo traz a `senha` e o `.pfx` inteiro. Nenhum dos dois pode aparecer em
+   * log, em mensagem de erro ou na resposta.
+   */
+  @Post('certificado')
+  certificado(@Req() req: ReqErp, @Body() body: unknown) {
+    let dados: { arquivo_base64: string; senha: string }
+    try {
+      dados = enviarCertificadoSchema.parse(body)
+    } catch (e) {
+      if (e instanceof ZodError) {
+        /**
+         * `detalhes` leva o CAMPO e a mensagem, nunca o valor recebido — que
+         * aqui seria a senha do certificado. O `parse` da classe-base faz o
+         * mesmo; está repetido porque este controller não a herda.
+         */
+        throw new BadRequestException({
+          erro: 'Estrutura JSON inválida',
+          detalhes: e.issues.map(issue => ({
+            campo: issue.path.join('.'),
+            mensagem: issue.message,
+          })),
+        })
+      }
+      throw e
+    }
+
+    return this.fiscalService.enviarCertificado(
+      req.erp.licencaId,
+      dados.arquivo_base64,
+      dados.senha,
+    )
   }
 }

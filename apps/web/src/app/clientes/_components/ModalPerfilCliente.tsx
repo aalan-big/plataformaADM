@@ -1061,6 +1061,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
   const [inscricaoEstadual, setInscricaoEstadual] = useState('')
   const [ambiente, setAmbiente] = useState(2)
   const [focusToken, setFocusToken] = useState('')
+  const [focusEmpresaId, setFocusEmpresaId] = useState('')
   const [cscConfigurado, setCscConfigurado] = useState(false)
   const [salvandoFiscal, setSalvandoFiscal] = useState(false)
   const [erroFiscal, setErroFiscal] = useState('')
@@ -1072,6 +1073,9 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
       setInscricaoEstadual(cliente.configuracaoFiscal.inscricaoEstadual || '')
       setAmbiente(cliente.configuracaoFiscal.ambiente || 2)
       setCscConfigurado(!!cliente.configuracaoFiscal.cscConfigurado)
+      // O id da empresa na Focus não é segredo e volta na leitura, ao contrário
+      // do token: carregar o valor real é o que permite editar sem reapagar.
+      setFocusEmpresaId(cliente.configuracaoFiscal.focusEmpresaId || '')
       // Campo de token começa vazio de propósito — vazio significa "mantém o
       // que já está gravado". O valor real nunca chega até aqui.
       setFocusToken('')
@@ -1097,6 +1101,10 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
           // Só vai quando o admin digitou algo. Mandar string vazia faria o
           // servidor entender que é para apagar o token e desligaria a emissão.
           ...(focusToken.trim() ? { focusEmpresaToken: focusToken.trim() } : {}),
+          // Este vai sempre, inclusive vazio: o campo carrega o valor gravado,
+          // então apagá-lo é intenção explícita de limpar — e não a omissão que
+          // o token precisa tratar.
+          focusEmpresaId: focusEmpresaId.trim(),
           cscConfigurado,
         })
       })
@@ -1325,6 +1333,20 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                           <option value={1}>Produção (Real)</option>
                         </select>
                       </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] text-slate-400 block mb-1.5">ID da Empresa (Focus NFe)</label>
+                      <input
+                        type="text"
+                        value={focusEmpresaId}
+                        onChange={e => setFocusEmpresaId(e.target.value)}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500/40 text-xs font-mono"
+                        placeholder="Id da empresa no painel da Focus"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        Sem ele o certificado enviado pelo ERP não tem para onde ir e o cliente fica com o aviso de &quot;validado, não enviado&quot;.
+                      </p>
                     </div>
 
                     <div>

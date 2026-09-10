@@ -374,6 +374,19 @@ export class ClienteService {
       : ambienteMudou                    ? { cscConfigurado: false }
       : {}
 
+    /**
+     * Mesma regra do token: campo ausente no corpo não mexe no que está gravado.
+     *
+     * Não dá para juntar isto ao `comuns` — lá, `undefined` chegaria ao Prisma e
+     * seria ignorado no update, mas um chamador antigo que nunca ouviu falar
+     * deste campo passaria a apagá-lo no dia em que alguém trocasse o `upsert`
+     * por um `update` com `??`. Explícito aqui, a intenção fica no código e não
+     * na sorte. Vazio é o admin querendo limpar de verdade.
+     */
+    const empresaIdPatch =
+      dados.focusEmpresaId === undefined ? {}
+      : { focusEmpresaId: dados.focusEmpresaId || null }
+
     const comuns = {
       cnpj:              dados.cnpj,
       razaoSocial:       dados.razaoSocial,
@@ -384,12 +397,13 @@ export class ClienteService {
     try {
       const config = await prisma.empresaFiscalConfig.upsert({
         where:  { clienteId },
-        update: { ...comuns, ...tokenPatch, ...cscPatch },
+        update: { ...comuns, ...tokenPatch, ...cscPatch, ...empresaIdPatch },
         create: {
           clienteId,
           ...comuns,
           ...tokenPatch,
           ...cscPatch,
+          ...empresaIdPatch,
           certificadoStatus: 'AUSENTE',
         },
       })

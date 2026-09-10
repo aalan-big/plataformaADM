@@ -28,6 +28,21 @@ export const configuracaoFiscalSchema = z.object({
 
   focusEmpresaToken: z.string().trim().min(1).optional(),
 
+  /**
+   * O id desta empresa DENTRO da Focus, colado do painel dela.
+   *
+   * Não é segredo — é um identificador, e ele volta na leitura do cliente. Está
+   * aqui porque o upload de certificado do ERP precisa dele: `PUT /v2/empresas/
+   * {id}` é o que grava o .pfx na emissora, e sem o id a rota não tem o que
+   * atualizar. Até este campo existir, o cadastro do lojista ficava parado em
+   * `VALIDADO_LOCAL` e ninguém tinha onde informar o número.
+   *
+   * Ausente significa "não mexe", como no token. String vazia é intenção
+   * explícita de limpar — o painel sempre manda o valor que carregou, então
+   * apagar o campo é o admin dizendo que quer apagar.
+   */
+  focusEmpresaId: z.string().trim().optional(),
+
   removerToken: z.boolean().optional(),
 
   /**
@@ -139,4 +154,31 @@ export const inutilizarSchema = z.looseObject({
 }).refine(d => d.numero_final >= d.numero_inicial, {
   message: 'O número final não pode ser menor que o inicial.',
   path:    ['numero_final'],
+})
+
+/**
+ * Certificado A1 chegando do ERP para ser cadastrado na emissora.
+ *
+ * O ERP nunca fala com a Focus: ele confere o arquivo na máquina do lojista
+ * (senha e validade) e manda para cá, porque a conta na Focus é nossa. Enquanto
+ * esta rota não existiu, o cadastro do lojista ficava `VALIDADO_LOCAL` — arquivo
+ * conferido aqui, nunca entregue lá — e a primeira emissão era quem contava a
+ * novidade.
+ *
+ * `senha` NÃO leva `.trim()`. Senha de certificado pode legitimamente começar ou
+ * terminar com espaço, e aparar em silêncio produziria o pior desfecho possível:
+ * a Focus recusa por senha errada, e o lojista jura que digitou a certa — porque
+ * digitou.
+ *
+ * Nem a senha nem o arquivo podem ir para log em lugar nenhum deste caminho.
+ */
+export const enviarCertificadoSchema = z.object({
+  arquivo_base64: z.string()
+    .trim()
+    .min(1, 'O arquivo do certificado é obrigatório.')
+    // Um .pfx A1 tem alguns KB; em base64 raramente passa de 15 mil caracteres.
+    // O teto existe para um corpo absurdo não atravessar a API até a Focus.
+    .max(200_000, 'Arquivo de certificado acima do tamanho aceito.'),
+
+  senha: z.string().min(1, 'A senha do certificado é obrigatória.'),
 })
