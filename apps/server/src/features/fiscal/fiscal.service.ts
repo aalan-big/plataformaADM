@@ -142,7 +142,10 @@ export class FiscalService {
     const config = await this.buscarEmpresaConfig(licencaId)
 
     if (!config) {
-      throw new NotFoundException('Empresa não possui configuração fiscal ativa.')
+      throw new NotFoundException({
+        codigo:   'SEM_CONFIGURACAO_FISCAL',
+        mensagem: 'Empresa não possui configuração fiscal ativa.',
+      })
     }
 
     if (!config.focusEmpresaToken) {
@@ -167,7 +170,10 @@ export class FiscalService {
     })
 
     if (!licenca) {
-      throw new NotFoundException('Licença não encontrada no servidor.')
+      throw new NotFoundException({
+        codigo:   'LICENCA_NAO_ENCONTRADA',
+        mensagem: 'Licença não encontrada no servidor.',
+      })
     }
 
     const config = await prisma.empresaFiscalConfig.findUnique({
@@ -259,7 +265,10 @@ export class FiscalService {
     const config = await this.buscarEmpresaConfig(licencaId)
 
     if (!config) {
-      throw new NotFoundException('Nenhuma configuração fiscal vinculada a esta licença.')
+      throw new NotFoundException({
+        codigo:   'SEM_CONFIGURACAO_FISCAL',
+        mensagem: 'Nenhuma configuração fiscal vinculada a esta licença.',
+      })
     }
 
     /**
@@ -669,7 +678,10 @@ export class FiscalService {
    */
   async concederExtras(licencaId: string, quantidade: number, motivo?: string, tipoDocumento: string = MODULO_NFE) {
     const licenca = await prisma.licenca.findUnique({ where: { id: licencaId }, select: { id: true } })
-    if (!licenca) throw new NotFoundException('Licença não encontrada.')
+    if (!licenca) throw new NotFoundException({
+      codigo:   'LICENCA_NAO_ENCONTRADA',
+      mensagem: 'Licença não encontrada.',
+    })
 
     await concederNotasExtras(licencaId, quantidade, tipoDocumento)
     this.logger.log(`[fiscal] ${quantidade} nota(s) avulsa(s) concedida(s) à licença ${licencaId}${motivo ? ` — ${motivo}` : ''}.`)
@@ -844,12 +856,44 @@ export class FiscalService {
    */
   async consultar(licencaId: string, ref: string, tipoDocumento: TipoDocumentoEmissivel = MODULO_NFE) {
     const config = await this.getEmpresaConfig(licencaId)
-    const res = await this.focusNfeService.consultar(
-      config.focusEmpresaToken,
-      RECURSO_FOCUS[tipoDocumento],
-      ref,
-      config.ambiente
-    )
+
+    let res: any
+    try {
+      res = await this.focusNfeService.consultar(
+        config.focusEmpresaToken,
+        RECURSO_FOCUS[tipoDocumento],
+        ref,
+        config.ambiente
+      )
+    } catch (erro) {
+      /**
+       * O 404 da emissora ganha código próprio, porque 404 aqui já significava
+       * três coisas.
+       *
+       * Antes desta distinção, o ERP recebia o mesmo 404 para "esta nota não
+       * existe na emissora", "licença não encontrada" e "cliente sem
+       * configuração fiscal" — e os dois últimos acontecem ANTES de qualquer
+       * pergunta à Focus, então não afirmam nada sobre a nota.
+       *
+       * A consequência era real e cara: o ERP que marcasse a nota como não
+       * transmitida ao ver 404 marcaria também durante um soluço de
+       * configuração nosso. Isso libera a venda para reemissão e produz nota
+       * duplicada — duas autorizadas para a mesma venda, que não se resolve com
+       * deploy, se resolve com contador e SEFAZ.
+       *
+       * Só ESTE código autoriza o chamador a concluir que a nota não chegou à
+       * emissora.
+       */
+      if (erro instanceof HttpException && erro.getStatus() === 404) {
+        const corpo = erro.getResponse() as any
+        throw new NotFoundException({
+          codigo:   'NOTA_NAO_ENCONTRADA_NA_EMISSORA',
+          mensagem: corpo?.mensagem ?? 'Nota fiscal não encontrada na emissora.',
+          ref,
+        })
+      }
+      throw erro
+    }
 
     const resultado = this.mapResultado(res, config.ambiente, tipoDocumento)
 
