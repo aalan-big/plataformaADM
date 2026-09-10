@@ -1446,21 +1446,23 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                           </p>
                         </div>
                         {/*
-                          O id da empresa na Focus PRECISA aparecer aqui.
-                          Sem ele, `POST /erp/fiscal/certificado` devolve 501 e o
-                          lojista lê "a plataforma ainda não recebe certificado"
-                          — e este resumo mostrava CNPJ, token e ambiente todos
-                          certos, apontando para todo lado menos para o campo que
-                          estava vazio. Não é segredo: é identificador, e volta
-                          na leitura do cliente ao contrário do token.
+                          O id da empresa na Focus aparece aqui porque este
+                          resumo mostrava CNPJ, token e ambiente todos certos e
+                          escondia justamente o campo que faltava.
+
+                          Vazio NÃO é mais bloqueio: desde a descoberta
+                          automática, o envio do certificado acha a empresa pelo
+                          CNPJ e vincula sozinho. Dizer "bloqueia" aqui seria a
+                          tela alarmando por um problema que ela mesma resolve —
+                          o inverso do defeito que este campo veio corrigir.
                         */}
                         <div>
                           <p className="text-slate-500 text-[11px] mb-1">ID da Empresa (Focus)</p>
                           {cliente.configuracaoFiscal.focusEmpresaId ? (
                             <p className="text-slate-300 font-mono">{cliente.configuracaoFiscal.focusEmpresaId}</p>
                           ) : (
-                            <span className="inline-block font-semibold px-1.5 py-0.5 rounded text-[10px] bg-amber-500/15 text-amber-400">
-                              FALTANDO — BLOQUEIA O CERTIFICADO
+                            <span className="inline-block font-semibold px-1.5 py-0.5 rounded text-[10px] bg-blue-500/15 text-blue-400">
+                              SERÁ BUSCADO PELO CNPJ
                             </span>
                           )}
                         </div>
