@@ -262,120 +262,10 @@ export class FiscalService {
    * problema que é nosso.
    */
   async enviarCertificado(licencaId: string, arquivoBase64: string, senha: string) {
-    const config = await this.buscarEmpresaConfig(licencaId)
-
-    if (!config) {
-      throw new NotFoundException({
-        codigo:   'SEM_CONFIGURACAO_FISCAL',
-        mensagem: 'Nenhuma configuração fiscal vinculada a esta licença.',
-      })
-    }
-
-    /**
-     * O token da CONTA na Focus (o "token de parceiro"), não o da empresa.
-     *
-     * Fica em variável de ambiente e não no banco porque vale para todos os
-     * clientes: é a credencial do painel, a mesma que cria e altera qualquer
-     * empresa da nossa conta. Guardá-la por cliente seria N cópias do mesmo
-     * segredo esperando divergir.
-     *
-     * DOIS NOMES ACEITOS, e isso é deliberado. `FOCUS_NFE_PARTNER_TOKEN` é o
-     * nome que a Focus usa e o que está no `.env` da VPS; `FOCUS_CONTA_TOKEN`
-     * foi o nome com que esta rota nasceu. Aceitar os dois custa uma linha e
-     * mata um modo de falha caro: com o nome trocado, o token está presente e
-     * correto e mesmo assim a rota devolve 501 — indistinguível de "a
-     * plataforma não foi configurada". O lojista lê "ainda não recebemos
-     * certificado" e ninguém suspeita do `.env`.
-     *
-     * Ausente NÃO derruba o boot de propósito — `validarSegredosProducao` não a
-     * exige. Faltar aqui desabilita o upload de certificado; faltar lá derrubaria
-     * a API inteira, licença e renovação junto, por causa do fiscal.
-     */
-    const tokenDaConta =
-      process.env.FOCUS_NFE_PARTNER_TOKEN?.trim() || process.env.FOCUS_CONTA_TOKEN?.trim()
-
-    if (!tokenDaConta) {
-      this.logger.error(
-        'FOCUS_NFE_PARTNER_TOKEN ausente: o certificado do cliente não pôde ser enviado à Focus.',
-      )
-      throw new HttpException(
-        {
-          codigo: 'PLATAFORMA_SEM_TOKEN_DA_CONTA',
-          mensagem: 'O envio de certificado ainda não está habilitado nesta plataforma.',
-        },
-        HttpStatus.NOT_IMPLEMENTED,
-      )
-    }
-
-    /**
-     * O `focusEmpresaId`, descoberto sozinho quando a ficha não o tem.
-     *
-     * Ele é DERIVÁVEL: temos o CNPJ aqui e o token de parceiro no ambiente, e a
-     * Focus filtra empresa por CNPJ. Exigir que um humano copiasse esse número
-     * de um painel para o outro só criava uma forma nova de errar — e quando
-     * faltava, a resposta era 501 e o lojista lia "a plataforma ainda não
-     * recebe certificado", procurando defeito no deploy, no `.env` e na Focus,
-     * que era exatamente onde o problema não estava.
-     *
-     * O que continua NÃO sendo automático é CRIAR a empresa: isso exige
-     * endereço completo e regime tributário, que esta ficha não guarda, e
-     * empresa criada pela metade na Focus é pior do que nenhuma — passa a
-     * existir, some da lista de pendências e falha só na primeira nota.
-     */
-    let empresaId = config.focusEmpresaId
-
-    if (!empresaId) {
-      let encontrada: any = null
-      try {
-        encontrada = await this.focusNfeService.buscarEmpresaPorCnpj(tokenDaConta, config.cnpj)
-      } catch (erro) {
-        // Mesma conversão do envio abaixo: 401/403 aqui é o NOSSO token, e
-        // deixá-lo passar cru faria o lojista mexer no certificado dele.
-        if (erro instanceof HttpException && [401, 403].includes(erro.getStatus())) {
-          this.logger.error('A Focus recusou o token de parceiro ao procurar a empresa pelo CNPJ.')
-          throw new HttpException(
-            {
-              codigo: 'PLATAFORMA_SEM_TOKEN_DA_CONTA',
-              mensagem: 'O envio de certificado ainda não está habilitado nesta plataforma.',
-            },
-            HttpStatus.NOT_IMPLEMENTED,
-          )
-        }
-        throw erro
-      }
-
-      if (!encontrada?.id) {
-        this.logger.error(
-          `Cliente ${config.clienteId}: nenhuma empresa de CNPJ ${config.cnpj} no cadastro da Focus.`,
-        )
-        throw new HttpException(
-          {
-            codigo: 'EMPRESA_SEM_CADASTRO_NA_EMISSORA',
-            mensagem: 'A empresa ainda não está cadastrada na emissora.',
-          },
-          HttpStatus.NOT_IMPLEMENTED,
-        )
-      }
-
-      empresaId = String(encontrada.id)
-
-      /**
-       * Gravado ANTES de enviar o certificado, de propósito.
-       *
-       * Se o envio falhar por outro motivo — senha errada, Focus fora do ar —,
-       * o id descoberto continua correto e a próxima tentativa não repete a
-       * consulta. Guardar só depois do sucesso jogaria fora um dado válido por
-       * causa de uma falha que não tem relação com ele.
-       */
-      await prisma.empresaFiscalConfig.update({
-        where: { clienteId: config.clienteId },
-        data:  { focusEmpresaId: empresaId },
-      })
-
-      this.logger.log(
-        `Empresa ${empresaId} descoberta na Focus pelo CNPJ ${config.cnpj} e vinculada ao cliente ${config.clienteId}.`,
-      )
-    }
+    const { config, tokenDaConta, empresaId } = await this.prepararCadastroNaFocus(
+      licencaId,
+      'O envio de certificado ainda não está habilitado nesta plataforma.',
+    )
 
     let empresa: any
     try {
@@ -471,6 +361,211 @@ export class FiscalService {
       valido_ate: vencimento ? vencimento.toISOString() : null,
       mensagem: 'Certificado cadastrado na emissora.',
     }
+  }
+
+  /**
+   * Recebe o CSC (Código de Segurança do Contribuinte) do ERP e o grava na ficha
+   * da empresa na Focus, no ambiente vigente desta licença.
+   *
+   * Fecha o buraco que o certificado deixou aberto: o lojista digitava o CSC no
+   * ERP, o cartão dizia "Configurado", e o código ficava cifrado no SQLite da
+   * loja sem caminho nenhum até a emissora. O `/config` respondia
+   * `cscConfigurado: false` — corretamente — e o cupom saía sem QR Code. Até
+   * aqui, o único caminho era o painel da plataforma, e nem ele: a caixa de lá é
+   * um MARCADOR, não recebe o código. Quem tinha de digitar o CSC era o admin,
+   * direto no painel da Focus.
+   *
+   * O CSC NÃO fica no nosso banco, de propósito. Somado à chave de acesso, ele
+   * permite forjar QR Code de NFC-e em nome da loja; guardá-lo aqui seria um
+   * segredo a mais em repouso sem criptografia, e a Focus só precisa dele uma
+   * vez por empresa — é ela quem monta o hash do QR Code em cada cupom. O que
+   * gravamos é o `cscConfigurado`, que já existia para o suporte enxergar.
+   *
+   * O código nunca entra em log — mesma regra da senha do certificado. A linha
+   * de log abaixo cita cliente e ambiente, nunca o token; e a resposta da Focus
+   * (que ecoa `csc_nfce_*`) não é registrada.
+   *
+   * Os status são contrato com o ERP, idênticos aos do certificado: 404/405/501
+   * é "a plataforma ainda não recebe", demais 4xx é recusa com `mensagem`, 2xx
+   * gravou. Por isso token da conta ausente sai como 501 e não como 500.
+   */
+  async cadastrarCsc(licencaId: string, cscId: string, cscToken: string) {
+    const { config, tokenDaConta, empresaId } = await this.prepararCadastroNaFocus(
+      licencaId,
+      'O cadastro de CSC ainda não está habilitado nesta plataforma.',
+    )
+
+    /**
+     * O CSC é POR AMBIENTE, e a Focus tem um par de campos para cada um. A
+     * ficha decide qual: gravar o de produção enquanto a licença emite em
+     * homologação deixaria a Focus sem CSC no ambiente em uso e o marcador
+     * dizendo "sim" — exatamente a mentira que `cscConfigurado` existe para
+     * evitar.
+     *
+     * O `id_token` é inteiro na Focus; o ERP manda a grafia da SEFAZ
+     * ("000001"). `Number` faz a conversão e o schema já garantiu só dígitos.
+     */
+    const producao = config.ambiente === AMBIENTE_PRODUCAO
+    const dados = producao
+      ? { id_token_nfce_producao:    Number(cscId), csc_nfce_producao:    cscToken }
+      : { id_token_nfce_homologacao: Number(cscId), csc_nfce_homologacao: cscToken }
+
+    try {
+      await this.focusNfeService.atualizarEmpresa(tokenDaConta, empresaId, dados)
+    } catch (erro) {
+      // 401/403 da Focus é o NOSSO token de parceiro, nunca o CSC do lojista.
+      // Cru, chegaria como "a plataforma recusou o seu CSC".
+      if (erro instanceof HttpException && [401, 403].includes(erro.getStatus())) {
+        this.logger.error('A Focus recusou o token de parceiro (FOCUS_NFE_PARTNER_TOKEN) ao cadastrar CSC.')
+        throw new HttpException(
+          {
+            codigo: 'PLATAFORMA_SEM_TOKEN_DA_CONTA',
+            mensagem: 'O cadastro de CSC ainda não está habilitado nesta plataforma.',
+          },
+          HttpStatus.NOT_IMPLEMENTED,
+        )
+      }
+      throw erro
+    }
+
+    await prisma.empresaFiscalConfig.update({
+      where: { clienteId: config.clienteId },
+      data:  { cscConfigurado: true },
+    })
+
+    this.logger.log(
+      `CSC do cliente ${config.clienteId} cadastrado na Focus NFe (${nomeAmbiente(config.ambiente)}, id ${cscId}).`,
+    )
+
+    // Só o que a tela do ERP precisa; o código não volta.
+    return {
+      cscConfigurado: true,
+      ambiente:       config.ambiente,
+      ambienteNome:   nomeAmbiente(config.ambiente),
+      mensagem:       `CSC cadastrado na emissora para ${nomeAmbiente(config.ambiente).toLowerCase()}.`,
+    }
+  }
+
+  /**
+   * O que toda escrita no cadastro da empresa na Focus precisa antes de começar:
+   * a ficha fiscal da licença, o token da conta e o id da empresa lá.
+   *
+   * Compartilhado entre certificado e CSC porque os dois gravam na MESMA ficha,
+   * com o MESMO token, e têm o mesmo contrato de status com o ERP — 501 para o
+   * que falta do nosso lado. Duas cópias disto divergiriam na primeira
+   * correção; a mensagem do 501 é o único pedaço que muda entre elas.
+   */
+  private async prepararCadastroNaFocus(licencaId: string, mensagemIndisponivel: string) {
+    const config = await this.buscarEmpresaConfig(licencaId)
+
+    if (!config) {
+      throw new NotFoundException({
+        codigo:   'SEM_CONFIGURACAO_FISCAL',
+        mensagem: 'Nenhuma configuração fiscal vinculada a esta licença.',
+      })
+    }
+
+    /**
+     * O token da CONTA na Focus (o "token de parceiro"), não o da empresa.
+     *
+     * Fica em variável de ambiente e não no banco porque vale para todos os
+     * clientes: é a credencial do painel, a mesma que cria e altera qualquer
+     * empresa da nossa conta. Guardá-la por cliente seria N cópias do mesmo
+     * segredo esperando divergir.
+     *
+     * DOIS NOMES ACEITOS, e isso é deliberado. `FOCUS_NFE_PARTNER_TOKEN` é o
+     * nome que a Focus usa e o que está no `.env` da VPS; `FOCUS_CONTA_TOKEN`
+     * foi o nome com que esta rota nasceu. Aceitar os dois custa uma linha e
+     * mata um modo de falha caro: com o nome trocado, o token está presente e
+     * correto e mesmo assim a rota devolve 501 — indistinguível de "a
+     * plataforma não foi configurada". O lojista lê "ainda não recebemos
+     * certificado" e ninguém suspeita do `.env`.
+     *
+     * Ausente NÃO derruba o boot de propósito — `validarSegredosProducao` não a
+     * exige. Faltar aqui desabilita certificado e CSC; faltar lá derrubaria a
+     * API inteira, licença e renovação junto, por causa do fiscal.
+     */
+    const tokenDaConta =
+      process.env.FOCUS_NFE_PARTNER_TOKEN?.trim() || process.env.FOCUS_CONTA_TOKEN?.trim()
+
+    if (!tokenDaConta) {
+      this.logger.error(
+        'FOCUS_NFE_PARTNER_TOKEN ausente: nada pode ser gravado no cadastro da empresa na Focus.',
+      )
+      throw new HttpException(
+        { codigo: 'PLATAFORMA_SEM_TOKEN_DA_CONTA', mensagem: mensagemIndisponivel },
+        HttpStatus.NOT_IMPLEMENTED,
+      )
+    }
+
+    /**
+     * O `focusEmpresaId`, descoberto sozinho quando a ficha não o tem.
+     *
+     * Ele é DERIVÁVEL: temos o CNPJ aqui e o token de parceiro no ambiente, e a
+     * Focus filtra empresa por CNPJ. Exigir que um humano copiasse esse número
+     * de um painel para o outro só criava uma forma nova de errar — e quando
+     * faltava, a resposta era 501 e o lojista lia "a plataforma ainda não
+     * recebe certificado", procurando defeito no deploy, no `.env` e na Focus,
+     * que era exatamente onde o problema não estava.
+     *
+     * O que continua NÃO sendo automático é CRIAR a empresa: isso exige
+     * endereço completo e regime tributário, que esta ficha não guarda, e
+     * empresa criada pela metade na Focus é pior do que nenhuma — passa a
+     * existir, some da lista de pendências e falha só na primeira nota.
+     */
+    let empresaId = config.focusEmpresaId
+
+    if (!empresaId) {
+      let encontrada: any = null
+      try {
+        encontrada = await this.focusNfeService.buscarEmpresaPorCnpj(tokenDaConta, config.cnpj)
+      } catch (erro) {
+        // Mesma conversão que o chamador faz no envio: 401/403 aqui é o NOSSO
+        // token, e deixá-lo passar cru faria o lojista mexer no que ele mandou.
+        if (erro instanceof HttpException && [401, 403].includes(erro.getStatus())) {
+          this.logger.error('A Focus recusou o token de parceiro ao procurar a empresa pelo CNPJ.')
+          throw new HttpException(
+            { codigo: 'PLATAFORMA_SEM_TOKEN_DA_CONTA', mensagem: mensagemIndisponivel },
+            HttpStatus.NOT_IMPLEMENTED,
+          )
+        }
+        throw erro
+      }
+
+      if (!encontrada?.id) {
+        this.logger.error(
+          `Cliente ${config.clienteId}: nenhuma empresa de CNPJ ${config.cnpj} no cadastro da Focus.`,
+        )
+        throw new HttpException(
+          {
+            codigo: 'EMPRESA_SEM_CADASTRO_NA_EMISSORA',
+            mensagem: 'A empresa ainda não está cadastrada na emissora.',
+          },
+          HttpStatus.NOT_IMPLEMENTED,
+        )
+      }
+
+      empresaId = String(encontrada.id)
+
+      /**
+       * Gravado ANTES da escrita que o chamador vai fazer, de propósito.
+       *
+       * Se ela falhar por outro motivo — senha errada, Focus fora do ar —,
+       * o id descoberto continua correto e a próxima tentativa não repete a
+       * consulta. Guardar só depois do sucesso jogaria fora um dado válido por
+       * causa de uma falha que não tem relação com ele.
+       */
+      await prisma.empresaFiscalConfig.update({
+        where: { clienteId: config.clienteId },
+        data:  { focusEmpresaId: empresaId },
+      })
+
+      this.logger.log(
+        `Empresa ${empresaId} descoberta na Focus pelo CNPJ ${config.cnpj} e vinculada ao cliente ${config.clienteId}.`,
+      )
+    }
+
+    return { config, tokenDaConta, empresaId }
   }
 
   /**

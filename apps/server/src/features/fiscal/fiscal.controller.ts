@@ -6,7 +6,7 @@ import { ModuloGuard } from '../../core/guards/modulo.guard'
 import { Public } from '../../core/decorators/public.decorator'
 import { RequerModulo } from '../../core/decorators/requer-modulo.decorator'
 import { MODULO_NFE, MODULO_NFCE } from '@startbig/database'
-import { refNotaSchema, chaveIdempotenciaSchema, emitirNotaSchema, cancelarNotaSchema, inutilizarSchema, enviarCertificadoSchema } from '@startbig/schemas'
+import { refNotaSchema, chaveIdempotenciaSchema, emitirNotaSchema, cancelarNotaSchema, inutilizarSchema, enviarCertificadoSchema, cadastrarCscSchema } from '@startbig/schemas'
 import { ZodError } from 'zod'
 
 type ReqErp = Request & { erp: { licencaId: string } }
@@ -196,18 +196,19 @@ export class FiscalConfigController {
    * O corpo traz a `senha` e o `.pfx` inteiro. Nenhum dos dois pode aparecer em
    * log, em mensagem de erro ou na resposta.
    */
-  @Post('certificado')
-  certificado(@Req() req: ReqErp, @Body() body: unknown) {
-    let dados: { arquivo_base64: string; senha: string }
+  /**
+   * Validação que devolve o CAMPO e a mensagem, nunca o valor recebido.
+   *
+   * Tudo o que entra por este controller é segredo — a senha do certificado, o
+   * `.pfx`, o CSC. O `parse` da classe-base já faz o mesmo; está repetido aqui
+   * porque este controller não a herda, e é um método (não uma cópia por rota)
+   * para que a próxima rota de segredo não nasça ecoando o que recebeu.
+   */
+  private parse<T>(schema: { parse: (x: unknown) => T }, valor: unknown): T {
     try {
-      dados = enviarCertificadoSchema.parse(body)
+      return schema.parse(valor)
     } catch (e) {
       if (e instanceof ZodError) {
-        /**
-         * `detalhes` leva o CAMPO e a mensagem, nunca o valor recebido — que
-         * aqui seria a senha do certificado. O `parse` da classe-base faz o
-         * mesmo; está repetido porque este controller não a herda.
-         */
         throw new BadRequestException({
           erro: 'Estrutura JSON inválida',
           detalhes: e.issues.map(issue => ({
@@ -218,11 +219,36 @@ export class FiscalConfigController {
       }
       throw e
     }
+  }
 
+  @Post('certificado')
+  certificado(@Req() req: ReqErp, @Body() body: unknown) {
+    const dados = this.parse(enviarCertificadoSchema, body)
     return this.fiscalService.enviarCertificado(
       req.erp.licencaId,
       dados.arquivo_base64,
       dados.senha,
+    )
+  }
+
+  /**
+   * O CSC do lojista, a caminho da ficha da empresa na Focus.
+   *
+   * Mesma casa e mesmas razões do certificado: sem `RequerModulo`, porque o
+   * lojista cadastra o CSC ANTES de conseguir emitir o primeiro cupom, e um 403
+   * aqui chegaria ao ERP como "a plataforma recusou o seu CSC".
+   *
+   * O `csc_token` é o segredo que monta o QR Code da NFC-e. Não entra em log,
+   * em mensagem de erro nem na resposta — a plataforma o repassa à Focus e não
+   * o guarda. O que fica aqui é só o marcador `cscConfigurado`.
+   */
+  @Post('csc')
+  csc(@Req() req: ReqErp, @Body() body: unknown) {
+    const dados = this.parse(cadastrarCscSchema, body)
+    return this.fiscalService.cadastrarCsc(
+      req.erp.licencaId,
+      dados.csc_id,
+      dados.csc_token,
     )
   }
 }

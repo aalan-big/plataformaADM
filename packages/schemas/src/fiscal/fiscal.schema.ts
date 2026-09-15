@@ -182,3 +182,26 @@ export const enviarCertificadoSchema = z.object({
 
   senha: z.string().min(1, 'A senha do certificado é obrigatória.'),
 })
+
+/**
+ * Corpo do `POST /erp/fiscal/csc`: o CSC que o lojista digitou no ERP, a
+ * caminho da ficha da empresa na Focus.
+ *
+ * O `csc_id` é o "ID do token" que a SEFAZ entrega junto do código
+ * ("000001"): só dígitos, porque na Focus ele é inteiro e é assim que a
+ * plataforma o converte. O `csc_token` é o SEGREDO — 36 caracteres na maioria
+ * dos estados, mas o teto é folgado de propósito: quem sabe o formato exato é a
+ * SEFAZ de cada UF, e recusar aqui um código que ela aceitaria deixaria o
+ * cupom sem QR Code por causa de uma regra nossa. Como a senha do
+ * certificado, este valor nunca pode aparecer em log nem em mensagem de erro.
+ */
+export const cadastrarCscSchema = z.object({
+  csc_id: z.string()
+    .trim()
+    .regex(/^\d{1,6}$/, 'O ID do CSC deve conter apenas dígitos (ex.: 000001).'),
+
+  csc_token: z.string()
+    .trim()
+    .min(1,   'O código do CSC é obrigatório.')
+    .max(200, 'O código do CSC está acima do tamanho aceito.'),
+})
