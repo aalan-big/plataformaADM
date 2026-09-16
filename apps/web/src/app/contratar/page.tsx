@@ -19,6 +19,14 @@ const SITE = 'https://startbig.com.br'
 
 const reais = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
+/**
+ * Compara nome de plano vindo da URL com o do catálogo sem depender de caixa,
+ * acento ou do prefixo "Plano": o botão do site manda `?plano=business` ou
+ * `?plano=start`, e "Plano Start" tem que casar com "start".
+ */
+const chavePlano = (s: string) =>
+  s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/^plano\s+/, '').trim()
+
 // Tokens do site: borda #E9E9E9, texto #334155, foco no azul da marca.
 const campo =
   'w-full bg-white border border-[#E9E9E9] text-[#151515] placeholder-[#94A3B8] text-sm rounded-xl px-4 py-3 ' +
@@ -86,6 +94,10 @@ function ContratarConteudo() {
   // O ERP manda o cliente para cá já com o e-mail dele na URL
   // (?email=...), então ele não redigita o que o sistema já sabe.
   const emailDoLink = params.get('email') ?? ''
+  // O site manda o cliente para cá já com o plano que ele clicou (?plano=business).
+  // Sem isso, quem escolheu o mais caro no site caía na lista e via o mais barato
+  // marcado primeiro — e achava que tinha errado o botão.
+  const planoDoLink = params.get('plano') ?? ''
   const [email, setEmail]           = useState(emailDoLink)
   const [senha, setSenha]           = useState('')
   const [verificando, setVerificando] = useState(false)
@@ -101,11 +113,20 @@ function ContratarConteudo() {
       try {
         const res  = await fetch('/api/publico/planos')
         const json = await res.json()
-        const lista: PlanoPublico[] = Array.isArray(json.data) ? json.data : []
+        let lista: PlanoPublico[] = Array.isArray(json.data) ? json.data : []
+
+        // Plano vindo da URL sobe para o topo e já entra marcado; os outros
+        // continuam visíveis logo abaixo, para quem quiser comparar.
+        const doLink = planoDoLink
+          ? lista.find(p => p.id === planoDoLink || chavePlano(p.nome) === chavePlano(planoDoLink))
+          : undefined
+        if (doLink) lista = [doLink, ...lista.filter(p => p.id !== doLink.id)]
+
         setPlanos(lista)
-        if (lista.length === 1) {
-          setPlano(lista[0])
-          setMeses(lista[0].opcoes[0]?.meses ?? null)
+        const inicial = doLink ?? (lista.length === 1 ? lista[0] : undefined)
+        if (inicial) {
+          setPlano(inicial)
+          setMeses(inicial.opcoes[0]?.meses ?? null)
         }
       } catch {
         setPlanos([])
@@ -113,6 +134,7 @@ function ContratarConteudo() {
         setCarregando(false)
       }
     })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const set = (k: keyof typeof camposVazios, v: string) => setForm(prev => ({ ...prev, [k]: v }))
