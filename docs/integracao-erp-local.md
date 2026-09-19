@@ -929,7 +929,7 @@ X-Idempotency-Key: <uuid>            (opcional — mas leia abaixo)
 
 - **Não mande `cnpj`.** Ele sai da configuração fiscal da licença, e o corpo é ignorado nesse ponto. Inutilizar numeração de outro emitente é evento que a SEFAZ registra e ninguém desfaz — por isso a plataforma não aceita um CNPJ vindo de fora.
 - **Não existe `modelo`.** O modelo vem do caminho: `/nfe` é 55, `/nfce` é 65. Cada um vai para a rota correspondente na emissora.
-- **`ano` é opcional, mas mande.** Sem ele a emissora assume o ano corrente — e inutilizar em janeiro uma faixa de dezembro registraria o evento no ano errado.
+- **`ano`: a plataforma repassa como veio, mas a emissora não documenta o campo.** O evento de inutilização da SEFAZ tem ano (é obrigatório no layout), e a Focus o preenche sozinha — de onde, ela não diz; o mais provável é a data do envio. Se ela ler o `ano` do payload, mandar é o que protege a faixa de dezembro inutilizada em janeiro; se ignorar, nada muda. **Até o suporte da Focus confirmar, a orientação segura é inutilizar dentro do mesmo ano em que a faixa foi aberta.** O primeiro teste em homologação também responde se a Focus recusa o campo desconhecido (`requisicao_invalida`) — se recusar, avisem: passamos a filtrá-lo aqui.
 - `justificativa` com no mínimo 15 caracteres, como no cancelamento.
 
 Resposta `200` — a operação é síncrona, o veredito da SEFAZ já vem junto:
