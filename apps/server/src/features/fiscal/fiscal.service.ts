@@ -92,6 +92,11 @@ export class FiscalService {
    * que não existiam (`caminho_danfe_pdf`, `codigo_sefaz`, `protocolo` na raiz)
    * e devolvendo `null` sem acusar nada: aceitar as duas custa um `??` e evita
    * que a próxima diferença de nome vire outro campo vazio silencioso.
+   *
+   * O mesmo mapeamento serve à inutilização, cuja resposta tem nomes próprios
+   * (`protocolo_sefaz`, `caminho_xml` na raiz). Eles entram como alternativas
+   * pelo mesmo motivo — e foi assim que o protocolo da inutilização chegou
+   * nulo desde que a rota nasceu, sem ninguém acusar.
    */
   private mapResultado(data: any, ambiente: number, tipoDocumento: TipoDocumentoEmissivel): ResultadoNota {
     let status = 'erro'
@@ -125,7 +130,13 @@ export class FiscalService {
       ambiente,
       ambienteNome:  nomeAmbiente(ambiente),
       chave_acesso:  data?.chave_nfe || data?.chave || null,
-      protocolo:     data?.protocolo || data?.numero_protocolo || data?.protocolo_nota_fiscal?.numero_protocolo || null,
+      /**
+       * `protocolo_sefaz` é o nome na INUTILIZAÇÃO — a única rota em que a Focus
+       * chama o protocolo assim. Sem esta alternativa a inutilização voltava
+       * `protocolo: null` para o ERP, e o protocolo é justamente o que o
+       * contador precisa para homologar a lacuna na SEFAZ.
+       */
+      protocolo:     data?.protocolo || data?.numero_protocolo || data?.protocolo_nota_fiscal?.numero_protocolo || data?.protocolo_sefaz || null,
       numero:        numeroOuNulo(data?.numero),
       serie:         numeroOuNulo(data?.serie),
       url_pdf:       absoluta(data?.caminho_danfe ?? data?.caminho_danfe_pdf),

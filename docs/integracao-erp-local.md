@@ -401,6 +401,8 @@ O conteúdo (payload) do token contém: `licencaId`, `hwid`, `plano`, `limite`, 
 | Consultar NF-e | GET | `/erp/fiscal/nfe/consultar?ref=` | Para acompanhar `processando` até o status final |
 | Cancelar NF-e | POST | `/erp/fiscal/nfe/cancelar` | Quando o usuário cancela uma nota autorizada |
 | Carta de correção | POST | `/erp/fiscal/nfe/carta-correcao` | Para corrigir texto de uma NF-e autorizada, sem cancelar |
+| Inutilizar numeração NF-e | POST | `/erp/fiscal/nfe/inutilizar` | Quando uma faixa reservada não virou nota |
+| Inutilizar numeração NFC-e | POST | `/erp/fiscal/nfce/inutilizar` | Idem, para o modelo 65 |
 | Cota fiscal do mês | GET | `/erp/fiscal/nfe/consumo` | Ao abrir a tela de emissão |
 
 ---
@@ -905,6 +907,58 @@ Regras da SEFAZ que valem a pena conhecer:
 - **Máximo de 20 cartas por nota.**
 - **Não envie data do evento.** A plataforma não aceita esse campo, e a emissora usa o relógio dela — um relógio de loja adiantado seria rejeição por data futura.
 
+### 13.3.2. Inutilizar numeração
+
+Quando o ERP reserva um número e a nota não sai (falha definitiva, rejeição), a numeração fica com um buraco que a SEFAZ exige homologar. É para isso que existe:
+
+```
+POST /erp/fiscal/nfe/inutilizar     (modelo 55)
+POST /erp/fiscal/nfce/inutilizar    (modelo 65)
+
+Authorization:     Bearer <token>
+X-Idempotency-Key: <uuid>            (opcional — mas leia abaixo)
+
+{
+  "serie": 1,
+  "numero_inicial": 105,
+  "numero_final": 108,
+  "justificativa": "Quebra de sequencia por falha de conexao e rejeicao definitiva",
+  "ano": 2026
+}
+```
+
+- **Não mande `cnpj`.** Ele sai da configuração fiscal da licença, e o corpo é ignorado nesse ponto. Inutilizar numeração de outro emitente é evento que a SEFAZ registra e ninguém desfaz — por isso a plataforma não aceita um CNPJ vindo de fora.
+- **Não existe `modelo`.** O modelo vem do caminho: `/nfe` é 55, `/nfce` é 65. Cada um vai para a rota correspondente na emissora.
+- **`ano` é opcional, mas mande.** Sem ele a emissora assume o ano corrente — e inutilizar em janeiro uma faixa de dezembro registraria o evento no ano errado.
+- `justificativa` com no mínimo 15 caracteres, como no cancelamento.
+
+Resposta `200` — a operação é síncrona, o veredito da SEFAZ já vem junto:
+
+```json
+{
+  "status": "autorizado",
+  "codigo_sefaz": 102,
+  "mensagem_sefaz": "Inutilizacao de numero homologado",
+  "protocolo": "135210002233889",
+  "url_xml": "https://api.focusnfe.com.br/arquivos/.../inutilizacao-105-108.xml",
+  "url_pdf": null,
+  "ambiente": 1,
+  "ambienteNome": "Producao"
+}
+```
+
+> **É `url_xml`, absoluta — não `caminho_xml` relativo.** O ERP não tem como montar
+> essa URL sozinho: o host depende de a licença estar em produção ou homologação, e
+> quem sabe isso é a plataforma. Baixe o XML direto dessa URL e guarde-o junto do
+> `protocolo`: os dois são o que o contador precisa para a homologação da lacuna.
+
+Valores de `status`: `autorizado` (102 = homologada) ou `erro` — nesse caso `codigo_sefaz` e `mensagem_sefaz` dizem por quê (ex.: 241, número já usado). Não repita sem mudar a faixa.
+
+**Idempotência.** Esta é a única operação fiscal **sem `ref`**: a faixa é o que identifica o evento. Por isso o `X-Idempotency-Key` é a única proteção contra repetição — sem ele, uma segunda chamada com a mesma faixa chega inteira na SEFAZ. Regras:
+
+- mesma chave + mesma faixa → a mesma resposta de antes, sem nova transmissão;
+- mesma chave + **outra** faixa → `409`. A chave foi reusada por engano; gere outra.
+
 ### 13.4. Cota mensal
 
 Planos podem ter teto de notas por mês. Quem consulta:
@@ -943,7 +997,8 @@ Esta rota é **conveniência, não trava**: sirva para avisar o operador antes d
 | `401` | Token ausente, inválido ou expirado | Chamar `validar` e repetir |
 | `403` | Licença não tem o módulo do documento (`NFE`, `NFCE`, `NFSE`) | Esconder a função. Não repetir |
 | `402` | Cota do mês esgotada | Avisar o operador. **Não repetir** — só resolve com virada do mês ou concessão do admin |
-| `404` | Cliente sem configuração fiscal cadastrada | Avisar que falta configurar. Não repetir |
+| `404` | Ver a tabela de `codigo` abaixo — **um 404 com `codigo` no corpo é a plataforma respondendo**, não rota inexistente | Depende do `codigo` |
+| `409` | `X-Idempotency-Key` reusada para outra operação ou outra `ref`/faixa | Gerar outra chave. Não repetir com a mesma |
 | `400` | Dados inválidos, ou CNPJ do emitente não confere | Corrigir. Não repetir sem mudar o corpo |
 | `503` | Não foi possível confirmar na Focus se a nota já existe | **Nenhuma nota foi emitida.** Repetir com a MESMA `ref` |
 | `502` | Focus fora do ar ou sem resposta | Repetir com a MESMA `ref` |
@@ -951,6 +1006,19 @@ Esta rota é **conveniência, não trava**: sirva para avisar o operador antes d
 > ⚠️ **Em `502` e `503`, reenvie sempre com a mesma `ref`.** Gerar uma `ref` nova
 > na repetição é o caminho para a nota duplicada — e nota duplicada não se
 > resolve com atualização, se resolve com contador e SEFAZ.
+
+**Os três 404 das rotas fiscais** — separe pelo `codigo`, nunca pelo status:
+
+| `codigo` | O que significa | O que fazer |
+|---|---|---|
+| `SEM_CONFIGURACAO_FISCAL` | A licença existe, mas o cliente não tem ficha fiscal cadastrada no painel. **Nada foi perguntado à emissora.** | Avisar que falta configurar. Não concluir nada sobre a nota |
+| `LICENCA_NAO_ENCONTRADA` | O token aponta para uma licença que não existe mais. **Nada foi perguntado à emissora.** | Reconectar (`validar`). Não concluir nada sobre a nota |
+| `NOTA_NAO_ENCONTRADA_NA_EMISSORA` | Só na consulta: a emissora respondeu que essa `ref` não existe lá | Este é o único que autoriza marcar a nota como não transmitida |
+
+> Um 404 **sem `codigo`** e com `message: "Cannot POST /erp/..."` é rota inexistente
+> — versão antiga da plataforma. Todos os outros 404 têm `codigo`. Se o ERP tratar
+> qualquer 404 como "a plataforma ainda não tem essa rota", ele vai esconder do
+> operador um cliente sem ficha fiscal, que é o caso mais comum.
 
 ### 13.6. Checklist para o ERP
 
@@ -960,7 +1028,8 @@ Esta rota é **conveniência, não trava**: sirva para avisar o operador antes d
 - [ ] Conferir que o CNPJ do emitente é o da licença antes de enviar
 - [ ] Tratar `processando` como sucesso, com consulta posterior
 - [ ] Chamar `/consumo` ao abrir a tela de emissão, e esconder o aviso quando `ilimitado`
-- [ ] Tratar cada erro pelo código HTTP, nunca pelo texto da mensagem
+- [ ] Tratar cada erro pelo código HTTP **e pelo `codigo` do corpo**, nunca pelo texto da mensagem
+- [ ] Mandar `X-Idempotency-Key` na inutilização — é a única trava contra repetir o evento
 - [ ] Não repetir automaticamente em `400`, `402`, `403` ou `404`
 
 ---
