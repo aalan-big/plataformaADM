@@ -6,7 +6,7 @@ import { ModuloGuard } from '../../core/guards/modulo.guard'
 import { Public } from '../../core/decorators/public.decorator'
 import { RequerModulo } from '../../core/decorators/requer-modulo.decorator'
 import { MODULO_NFE, MODULO_NFCE } from '@startbig/database'
-import { refNotaSchema, chaveIdempotenciaSchema, emitirNotaSchema, cancelarNotaSchema, inutilizarSchema, enviarCertificadoSchema, cadastrarCscSchema } from '@startbig/schemas'
+import { refNotaSchema, chaveIdempotenciaSchema, emitirNotaSchema, cancelarNotaSchema, inutilizarSchema, enviarCertificadoSchema, cadastrarCscSchema, cartaCorrecaoSchema } from '@startbig/schemas'
 import { ZodError } from 'zod'
 
 type ReqErp = Request & { erp: { licencaId: string } }
@@ -145,6 +145,21 @@ abstract class FiscalErpControllerBase {
 export class FiscalController extends FiscalErpControllerBase {
   constructor(fiscalService: FiscalService) { super(fiscalService) }
   protected get tipoDocumento(): TipoDocumentoEmissivel { return MODULO_NFE }
+
+  /**
+   * Carta de correção de uma nota já autorizada.
+   *
+   * Está AQUI, e não na classe-base, de propósito: NFC-e não tem carta de
+   * correção na legislação. Na base, o controller de NFC-e herdaria um
+   * `/erp/fiscal/nfce/carta-correcao` que a Focus responderia com 404 — e o
+   * ERP leria esse 404 como "a plataforma ainda não recebe carta", que é
+   * mentira.
+   */
+  @Post('carta-correcao')
+  cartaCorrecao(@Req() req: ReqErp, @Body() body: unknown) {
+    const dados = this.parse(cartaCorrecaoSchema, body)
+    return this.fiscalService.cartaCorrecao(req.erp.licencaId, dados.ref, dados.correcao)
+  }
 }
 
 /**

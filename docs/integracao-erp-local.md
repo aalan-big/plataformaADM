@@ -400,6 +400,7 @@ O conteúdo (payload) do token contém: `licencaId`, `hwid`, `plano`, `limite`, 
 | Emitir NF-e | POST | `/erp/fiscal/nfe/emitir` | Ao fechar uma venda que gera nota |
 | Consultar NF-e | GET | `/erp/fiscal/nfe/consultar?ref=` | Para acompanhar `processando` até o status final |
 | Cancelar NF-e | POST | `/erp/fiscal/nfe/cancelar` | Quando o usuário cancela uma nota autorizada |
+| Carta de correção | POST | `/erp/fiscal/nfe/carta-correcao` | Para corrigir texto de uma NF-e autorizada, sem cancelar |
 | Cota fiscal do mês | GET | `/erp/fiscal/nfe/consumo` | Ao abrir a tela de emissão |
 
 ---
@@ -864,6 +865,45 @@ POST /erp/fiscal/nfe/cancelar     { "ref": "...", "justificativa": "..." }
 ```
 
 A `justificativa` exige no mínimo 15 caracteres — é regra da SEFAZ, não nossa.
+
+### 13.3.1. Carta de correção (só NF-e)
+
+```
+POST /erp/fiscal/nfe/carta-correcao   { "ref": "...", "correcao": "texto de 15 a 1000 caracteres" }
+```
+
+Corrige erros de texto de uma nota **já autorizada** sem cancelá-la (endereço, observação, descrição). Não corrige valor, imposto, quantidade, emitente/destinatário nem data — para isso é cancelar e emitir de novo.
+
+Não existe para NFC-e: a rota é só de NF-e.
+
+Resposta `200` — a Focus é síncrona aqui, então o veredito da SEFAZ já vem junto:
+
+```json
+{
+  "status": "autorizado",
+  "numero_carta_correcao": 1,
+  "codigo_sefaz": 135,
+  "mensagem_sefaz": "Evento registrado e vinculado a NF-e",
+  "protocolo": null,
+  "url_pdf": "https://.../carta_correcao.pdf",
+  "url_xml": "https://.../carta_correcao.xml",
+  "ambiente": 1,
+  "ambienteNome": "Producao"
+}
+```
+
+Valores de `status`: `autorizado` ou `erro_autorizacao` (a SEFAZ rejeitou — `codigo_sefaz` e `mensagem_sefaz` dizem por quê; não reenvie o mesmo texto).
+
+Como ler um erro:
+
+- **`4xx` sem `codigo_sefaz`** — nada foi transmitido. O corpo traz `codigo` e `message` (parâmetro inválido, nota não autorizada, nota não encontrada). Corrija e pode tentar de novo.
+- **`codigo_sefaz` presente** — a SEFAZ respondeu. Não é caso de reenviar.
+
+Regras da SEFAZ que valem a pena conhecer:
+
+- **Só a última carta vale.** Cada carta substitui a anterior por inteiro. Se corrigir uma segunda coisa, repita a primeira correção no texto da segunda carta.
+- **Máximo de 20 cartas por nota.**
+- **Não envie data do evento.** A plataforma não aceita esse campo, e a emissora usa o relógio dela — um relógio de loja adiantado seria rejeição por data futura.
 
 ### 13.4. Cota mensal
 

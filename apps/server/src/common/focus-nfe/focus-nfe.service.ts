@@ -155,6 +155,32 @@ export class FocusNfeService {
   }
 
   /**
+   * Emite uma carta de correção para uma NF-e autorizada.
+   *
+   * Sem `recurso`, ao contrário dos métodos acima: carta de correção é evento
+   * de NF-e, e NFC-e não tem esse evento na legislação. Receber o recurso aqui
+   * só abriria a porta para um `/nfce/{ref}/carta_correcao` que a Focus não
+   * atende.
+   *
+   * O corpo é só `{ correcao }`. A Focus aceita `data_evento`, e é de propósito
+   * que ele NÃO vai: sem ele a Focus carimba o evento com o relógio dela, e um
+   * relógio de loja adiantado produziria uma data futura — que a SEFAZ rejeita.
+   *
+   * Síncrono: a resposta já traz o veredito da SEFAZ. Rejeição chega em HTTP
+   * 200 com `status: "erro_autorizacao"` e `status_sefaz`; os 4xx desta rota
+   * são falhas ANTES da transmissão (parâmetro inválido, nota não autorizada,
+   * nota não encontrada) e nunca trazem `status_sefaz`.
+   */
+  async cartaCorrecao(token: string, ref: string, correcao: string, ambiente: number): Promise<any> {
+    this.logger.log(`Enviando carta de correção da NFE ref "${ref}" para a Focus NFe (ambiente: ${ambiente})`)
+    return this.requisitar(
+      `${this.getBaseUrl(ambiente)}/nfe/${this.encodeRef(ref)}/carta_correcao`,
+      { method: 'POST', headers: this.getHeaders(token), body: JSON.stringify({ correcao }) },
+      `carta de correção nfe ref "${ref}"`,
+    )
+  }
+
+  /**
    * Inutiliza uma faixa de numeração.
    *
    * Não tem `ref`: a Focus identifica o evento pela própria faixa (CNPJ, série,

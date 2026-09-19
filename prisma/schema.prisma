@@ -708,7 +708,7 @@ model EmissaoLog {
   /// NFE | NFCE | NFSE. Sem isto, investigar "não saiu nota na terça" obrigaria
   /// a adivinhar de qual documento o cliente está falando.
   tipoDocumento String   @default("NFE")
-  /// EMISSAO | CANCELAMENTO
+  /// EMISSAO | CANCELAMENTO | INUTILIZACAO | CARTA_CORRECAO
   acao          String
   /// Status normalizado devolvido ao ERP, ou "falha" quando nem chegou lá.
   resultado     String

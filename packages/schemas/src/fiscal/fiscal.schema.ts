@@ -205,3 +205,25 @@ export const cadastrarCscSchema = z.object({
     .min(1,   'O código do CSC é obrigatório.')
     .max(200, 'O código do CSC está acima do tamanho aceito.'),
 })
+
+/**
+ * Corpo do `POST /erp/fiscal/nfe/carta-correcao`.
+ *
+ * Só NF-e: NFC-e não tem carta de correção na legislação, e é por isso que a
+ * rota vive no controller de NF-e e não na base compartilhada.
+ *
+ * Os limites de 15 a 1000 caracteres são os da Focus (que são os da SEFAZ).
+ * O teto é folgado de propósito no lado do ERP: a SEFAZ só considera vigente
+ * a ÚLTIMA carta, então quem corrige duas coisas precisa repetir a primeira
+ * correção na segunda carta — e 1000 caracteres é o que cabe essa consolidação.
+ *
+ * Sem `data_evento`: a Focus usa o relógio dela, e uma data à frente do
+ * relógio da SEFAZ é rejeição garantida.
+ */
+export const cartaCorrecaoSchema = z.object({
+  ref: refNotaSchema,
+  correcao: z.string()
+    .trim()
+    .min(15,   'A correção deve conter no mínimo 15 caracteres.')
+    .max(1000, 'A correção deve conter no máximo 1000 caracteres.'),
+})

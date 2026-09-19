@@ -44,6 +44,19 @@ function nomeAmbiente(ambiente: number): 'Producao' | 'Homologacao' {
   return ambiente === AMBIENTE_PRODUCAO ? 'Producao' : 'Homologacao'
 }
 
+/**
+ * A Focus devolve os caminhos de PDF e XML relativos ao host dela
+ * (`/arquivos/...`), e o host depende do ambiente. O ERP recebe a URL pronta.
+ */
+function urlAbsolutaFocus(caminho: unknown, ambiente: number): string | null {
+  if (typeof caminho !== 'string' || !caminho) return null
+  if (caminho.startsWith('http')) return caminho
+  const domain = ambiente === AMBIENTE_PRODUCAO
+    ? 'https://api.focusnfe.com.br'
+    : 'https://homologacao.focusnfe.com.br'
+  return `${domain}${caminho}`
+}
+
 /** Resposta da Focus já normalizada para o formato que o ERP e o painel leem. */
 type ResultadoNota = {
   status:         string
@@ -95,14 +108,7 @@ export class FiscalService {
       status = 'cancelado'
     }
 
-    const domain = ambiente === AMBIENTE_PRODUCAO
-      ? 'https://api.focusnfe.com.br'
-      : 'https://homologacao.focusnfe.com.br'
-
-    const absoluta = (caminho: unknown): string | null => {
-      if (typeof caminho !== 'string' || !caminho) return null
-      return caminho.startsWith('http') ? caminho : `${domain}${caminho}`
-    }
+    const absoluta = (caminho: unknown) => urlAbsolutaFocus(caminho, ambiente)
 
     return {
       status,
@@ -578,7 +584,7 @@ export class FiscalService {
     ref:        string
     ambiente:   number
     tipoDocumento: string
-    acao:       'EMISSAO' | 'CANCELAMENTO' | 'INUTILIZACAO'
+    acao:       'EMISSAO' | 'CANCELAMENTO' | 'INUTILIZACAO' | 'CARTA_CORRECAO'
     resultado:  string
     httpStatus?: number | null
     mensagem?:  string | null
@@ -1052,6 +1058,79 @@ export class FiscalService {
       ambiente:  config.ambiente,
       tipoDocumento,
       acao:      'CANCELAMENTO',
+      resultado: resultado.status,
+      mensagem:  resultado.mensagem_sefaz,
+    })
+
+    return resultado
+  }
+
+  /**
+   * Carta de correção de uma NF-e autorizada.
+   *
+   * Só NF-e, e sem `tipoDocumento`: NFC-e não tem esse evento. Não consome
+   * cota — a nota já foi contada quando saiu — e não passa pelo
+   * `mapResultado`, porque a resposta da Focus aqui é outra: não há chave,
+   * número nem série; há o número sequencial da carta e os arquivos DELA, não
+   * os da nota.
+   *
+   * O contrato com o ERP tem um discriminador que importa mais que o resto:
+   * `codigo_sefaz` só existe quando a SEFAZ de fato respondeu. É assim que o
+   * ERP separa "rejeitada" (não reenviar) de "nem chegou a transmitir" (pode
+   * tentar de novo). Como a Focus é síncrona nesta rota, a resposta 200 SEMPRE
+   * traz o veredito da SEFAZ — autorizada ou rejeitada —, e os 4xx dela
+   * (parâmetro inválido, nota não autorizada, nota não encontrada) vêm sem
+   * `status_sefaz`. Eles seguem para o ERP como HttpException, pelo filtro
+   * global, que repassa `codigo` e `message` e não inventa `codigo_sefaz`.
+   *
+   * Não há idempotência: a Focus numera cada carta e a SEFAZ considera vigente
+   * só a última. Uma repetição por engano gera uma segunda carta com o mesmo
+   * texto — inconveniente, não incorreto — e não há como distingui-la de uma
+   * correção legítima idêntica.
+   */
+  async cartaCorrecao(licencaId: string, ref: string, correcao: string) {
+    const config = await this.getEmpresaConfig(licencaId)
+
+    const data = await this.focusNfeService.cartaCorrecao(
+      config.focusEmpresaToken,
+      ref,
+      correcao,
+      config.ambiente,
+    )
+
+    const statusFocus: string = data?.status || ''
+    const resultado = {
+      // Em 200 a Focus já transmitiu: o que não é "autorizado" é rejeição.
+      status:         statusFocus === 'autorizado' ? 'autorizado' : 'erro_autorizacao',
+      status_focus:   statusFocus,
+      tipoDocumento:  MODULO_NFE,
+      ambiente:       config.ambiente,
+      ambienteNome:   nomeAmbiente(config.ambiente),
+      numero_carta_correcao: numeroOuNulo(data?.numero_carta_correcao ?? data?.sequencia),
+      protocolo:      data?.protocolo || data?.numero_protocolo || null,
+      // Os arquivos da CARTA, não os da nota; as grafias da nota ficam como
+      // alternativa pela mesma razão do `mapResultado`.
+      url_pdf:        urlAbsolutaFocus(data?.caminho_pdf_carta_correcao ?? data?.caminho_danfe, config.ambiente),
+      url_xml:        urlAbsolutaFocus(data?.caminho_xml_carta_correcao ?? data?.caminho_xml_nota_fiscal, config.ambiente),
+      codigo_sefaz:   numeroOuNulo(data?.status_sefaz ?? data?.codigo_sefaz),
+      mensagem_sefaz: (data?.mensagem_sefaz as string | undefined) || null,
+    }
+
+    if (resultado.status === 'autorizado') {
+      this.logger.log(`Carta de correção nº ${resultado.numero_carta_correcao ?? '?'} da NFE ref "${ref}" AUTORIZADA pela SEFAZ.`)
+    } else {
+      this.logger.warn(
+        `Carta de correção da NFE ref "${ref}" NÃO autorizada: status_focus="${statusFocus}"` +
+        ` codigo_sefaz=${resultado.codigo_sefaz ?? 'nenhum'} — ${resultado.mensagem_sefaz ?? 'sem mensagem'}`,
+      )
+    }
+
+    await this.registrarEvento({
+      licencaId,
+      ref,
+      ambiente:  config.ambiente,
+      tipoDocumento: MODULO_NFE,
+      acao:      'CARTA_CORRECAO',
       resultado: resultado.status,
       mensagem:  resultado.mensagem_sefaz,
     })
