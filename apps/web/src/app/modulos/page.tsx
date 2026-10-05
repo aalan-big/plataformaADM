@@ -42,6 +42,7 @@ const ONDE_TRAVA: Record<string, 'plataforma' | 'erp'> = {
   NFSE:           'plataforma',
   FINANCEIRO:     'erp',
   FINANCEIRO_PRO: 'erp',
+  COMPRAS:        'erp',
 }
 
 const SELO_TRAVA = {

@@ -117,6 +117,23 @@ const CATALOGO = [
    * nada — ver o pré-voo em `main()`.
    */
   { identificador: 'FINANCEIRO_PRO', nome: 'Financeiro PRO', descricao: 'Análise, fluxo de caixa e conciliação bancária.', icone: 'ChartLine', ordem: 21, vincularATodos: false, incluidoPorPadrao: false, vincularAosPlanos: ['PRO', 'Business'] },
+
+  /**
+   * COMPRAS — fornecedores por produto, pedido de compra, recebimento e a nota
+   * de entrada conferida com o pedido. A trava é no ERP local
+   * (`requer_modulo("COMPRAS")`); nada passa por esta API.
+   *
+   * Nasce SEM vínculo, ao contrário do FINANCEIRO_PRO, e de propósito. Aquele
+   * vinculava no mesmo comando porque o recorte já existia na base: entre semear
+   * e vincular, quem pagava o plano de cima ficaria sem ele. Aqui não há acesso
+   * a perder — o ERP nega COMPRAS quando a claim não o traz, inclusive com lista
+   * vazia. Então dá para fazer em etapas: semear, dar como cortesia a uma loja
+   * canário, ver liberar e revogar, e só então vincular ao Business no painel.
+   *
+   * Vincular aqui com `['Business']` pularia o canário: o módulo chegaria a toda
+   * loja Business em minutos, no primeiro `conectar`.
+   */
+  { identificador: 'COMPRAS', nome: 'Compras', descricao: 'Fornecedores por produto, pedido de compra, recebimento e conferência da nota com o pedido.', icone: 'ShoppingCart', ordem: 30, vincularATodos: false, incluidoPorPadrao: false, vincularAosPlanos: [] },
 ]
 
 async function main() {

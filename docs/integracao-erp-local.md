@@ -795,6 +795,16 @@ Cada tipo de documento fiscal é um módulo próprio, com cota própria:
 
 São separados porque atendem clientes diferentes — quem vende mercadoria não emite NFS-e, e quem presta serviço não emite NFC-e. Um cliente pode ter um, dois ou os três, e cada um conta a própria cota: emitir NFC-e **não** consome a cota de NF-e.
 
+Há também módulos que **não passam por esta API** — a trava é só no ERP local, que lê a mesma claim:
+
+| Identificador | O que libera | Situação |
+|---|---|---|
+| `FINANCEIRO` | Contas a pagar e a receber, extrato, plano de contas | base: entra na claim de toda licença |
+| `FINANCEIRO_PRO` | Análise, fluxo de caixa, conciliação | planos PRO e Business |
+| `COMPRAS` | Fornecedores por produto, pedido de compra, recebimento, nota × pedido | cadastrado sem plano; liberado por loja, canário primeiro |
+
+`COMPRAS` é vendido à parte (Business e avulso) e, como `NFE`/`NFCE`, o ERP trata claim ausente ou vazia como **não contratado**. O identificador é literal — maiúsculas, sem acento — e não muda depois do primeiro token emitido com ele.
+
 Está no token assinado de propósito: é um campo que libera acesso, e campo que libera acesso não pode trafegar fora da assinatura, senão vira o único elo forjável entre a API e o ERP.
 
 ```json
@@ -820,7 +830,7 @@ Está no token assinado de propósito: é um campo que libera acesso, e campo qu
 >
 > Lista **presente e vazia** é diferente de ausente: significa "nenhum módulo liberado".
 
-A lista é reavaliada a cada `validar`. Uma mudança feita no painel aparece para o cliente na próxima revalidação — em até 24 h, não na hora. Não guarde os módulos em disco separado do token: quem manda é sempre o token corrente.
+A lista é reavaliada a cada chamada: `conectar`, `validar` e o auto-cadastro assinam um token **novo**, com os módulos daquele momento — não devolvem o anterior até `proximaValidacaoEm`. Uma mudança feita no painel (contratar, conceder, revogar) aparece para o cliente no próximo `conectar` ou `validar`; com o ERP chamando `conectar` a cada 5 minutos, isso é questão de minutos. Loja offline só sente ao reconectar. Não guarde os módulos em disco separado do token: quem manda é sempre o token corrente.
 
 ### 13.2. Emitir NF-e
 
