@@ -184,6 +184,29 @@ export const enviarCertificadoSchema = z.object({
 })
 
 /**
+ * Corpo do `POST /erp/fiscal/ativacao`: o emitente do ERP, o contato e o
+ * certificado, para a plataforma cadastrar (ou atualizar) a empresa na Focus
+ * num passo só (06/10/2026).
+ *
+ * `emitente` é o MESMO bloco das notas e passa solto (`looseObject`): quem
+ * confere o que falta para criar a empresa é `camposFaltandoParaCriar`, com a
+ * frase de tela; recusar aqui devolveria "Estrutura JSON inválida". Certificado
+ * e senha seguem as regras de `enviarCertificadoSchema` — senha sem `.trim()`.
+ */
+export const ativarEmissaoSchema = z.object({
+  emitente: z.looseObject({
+    cnpj: z.string().trim().min(1, 'O CNPJ do emitente é obrigatório.'),
+  }),
+  email:    z.string().trim().max(255).optional().nullable(),
+  telefone: z.string().trim().max(30).optional().nullable(),
+  arquivo_base64: z.string()
+    .trim()
+    .min(1, 'O arquivo do certificado é obrigatório.')
+    .max(200_000, 'Arquivo de certificado acima do tamanho aceito.'),
+  senha: z.string().min(1, 'A senha do certificado é obrigatória.'),
+})
+
+/**
  * Corpo do `POST /erp/fiscal/csc`: o CSC que o lojista digitou no ERP, a
  * caminho da ficha da empresa na Focus.
  *

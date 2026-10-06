@@ -78,20 +78,21 @@ async function main() {
 
     const alertas: string[] = []
     if (f.ambiente !== 1) alertas.push('em homologação')
-    if (!f.focusEmpresaToken) alertas.push('SEM TOKEN (não emite)')
+    const temToken = !!(f.focusEmpresaToken || (f.ambiente === 1 ? f.focusTokenProducao : f.focusTokenHomologacao))
+    if (!temToken) alertas.push('SEM TOKEN (não emite)')
     if (!f.focusEmpresaId) alertas.push('sem id da Focus (certificado/CSC vão procurar pelo CNPJ)')
     if (f.certificadoStatus !== 'ATIVO') alertas.push(`certificado ${f.certificadoStatus}`)
     if (f.certificadoVencimento && f.certificadoVencimento.getTime() - Date.now() < 30 * DIA) alertas.push('certificado vence em < 30 dias')
     if (!ultimaAutorizada) alertas.push('nenhuma nota autorizada ainda')
 
     f.ambiente === 1 ? resumo.producao++ : resumo.homologacao++
-    if (!f.focusEmpresaToken) resumo.semToken++
+    if (!temToken) resumo.semToken++
     if (!f.focusEmpresaId) resumo.semEmpresaFocus++
     if (f.certificadoStatus !== 'ATIVO') resumo.certificadoRuim++
     if (!ultimaAutorizada) resumo.semNotaAutorizada++
 
     console.log(`■ ${f.razaoSocial}  (CNPJ ${f.cnpj})  cliente ${f.clienteId}`)
-    console.log(`  ambiente ${AMBIENTE(f.ambiente)} | token ${f.focusEmpresaToken ? 'sim' : 'NÃO'} | id Focus ${f.focusEmpresaId ?? '—'} | CSC ${f.cscConfigurado ? 'sim' : 'não'}`)
+    console.log(`  ambiente ${AMBIENTE(f.ambiente)} | token ${temToken ? (f.focusEmpresaToken ? 'sim' : 'sim (cifrado)') : 'NÃO'} | id Focus ${f.focusEmpresaId ?? '—'} | CSC ${f.cscConfigurado ? 'sim' : 'não'}`)
     console.log(`  certificado ${f.certificadoStatus}, vence ${quando(f.certificadoVencimento)} (${diasAte(f.certificadoVencimento)})`)
     console.log(`  licenças: ${licencas.map(l => `${l.id.slice(0, 8)}(${l.status})`).join(', ') || 'nenhuma'}`)
     console.log(`  última autorizada: ${ultimaAutorizada ? `${quando(ultimaAutorizada.criadoEm)} ${ultimaAutorizada.tipoDocumento} em ${AMBIENTE(ultimaAutorizada.ambiente)}` : '—'}`)

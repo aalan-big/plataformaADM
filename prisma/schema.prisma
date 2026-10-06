@@ -618,6 +618,16 @@ model EmpresaFiscalConfig {
   focusEmpresaId    String? // ID ou código identificador da empresa na Focus NFe
   focusEmpresaToken String? // Token gerado pela Focus exclusivo para este emitente
 
+  /// Os DOIS tokens que a Focus devolve para a empresa, CIFRADOS
+  /// (`common/cripto/segredo-fiscal.ts`). Gravados pela ativação da emissão
+  /// (06/10/2026): trocar homologação ↔ produção passa a ser só mudar o
+  /// `ambiente`, sem reenviar certificado nem colar token.
+  ///
+  /// Precedência na emissão: `focusEmpresaToken` (colado à mão pelo admin, é
+  /// intenção explícita) vence; sem ele, vale o cifrado do ambiente vigente.
+  focusTokenProducao    String?
+  focusTokenHomologacao String?
+
   /// O CSC (Código de Segurança do Contribuinte) desta empresa já está cadastrado
   /// na Focus, para o ambiente configurado acima?
   ///

@@ -6,10 +6,10 @@ import { ModuloGuard } from '../../core/guards/modulo.guard'
 import { Public } from '../../core/decorators/public.decorator'
 import { RequerModulo } from '../../core/decorators/requer-modulo.decorator'
 import { MODULO_NFE, MODULO_NFCE } from '@startbig/database'
-import { refNotaSchema, chaveIdempotenciaSchema, emitirNotaSchema, cancelarNotaSchema, inutilizarSchema, enviarCertificadoSchema, cadastrarCscSchema, cartaCorrecaoSchema } from '@startbig/schemas'
+import { refNotaSchema, chaveIdempotenciaSchema, emitirNotaSchema, cancelarNotaSchema, inutilizarSchema, enviarCertificadoSchema, cadastrarCscSchema, cartaCorrecaoSchema, ativarEmissaoSchema } from '@startbig/schemas'
 import { ZodError } from 'zod'
 
-type ReqErp = Request & { erp: { licencaId: string } }
+type ReqErp = Request & { erp: { licencaId: string; modulos?: string[] } }
 
 /**
  * Parte comum das rotas fiscais do ERP.
@@ -244,6 +244,24 @@ export class FiscalConfigController {
       dados.arquivo_base64,
       dados.senha,
     )
+  }
+
+  /**
+   * Ativa a emissão num passo só: empresa na Focus (cria se faltar),
+   * certificado, habilitação e tokens. Sem `RequerModulo` pelo mesmo motivo do
+   * certificado; a trava de custo (só cria ficha com NFE/NFCE explícito na
+   * licença) está no serviço. Corpo com certificado e senha: nada em log.
+   */
+  @Post('ativacao')
+  ativacao(@Req() req: ReqErp, @Body() body: unknown) {
+    const dados = this.parse(ativarEmissaoSchema, body)
+    return this.fiscalService.ativarEmissao(req.erp.licencaId, req.erp.modulos, {
+      emitente:       dados.emitente as any,
+      email:          dados.email,
+      telefone:       dados.telefone,
+      arquivo_base64: dados.arquivo_base64,
+      senha:          dados.senha,
+    })
   }
 
   /**

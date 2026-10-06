@@ -409,8 +409,12 @@ export class ClienteService {
       })
 
       // O token não volta na resposta — ele entra por aqui, mas nunca sai.
-      const { focusEmpresaToken, ...seguro } = config
-      return { ...seguro, tokenConfigurado: !!focusEmpresaToken }
+      // Nenhum dos três tokens sai daqui — nem os cifrados.
+      const { focusEmpresaToken, focusTokenProducao, focusTokenHomologacao, ...seguro } = config
+      return {
+        ...seguro,
+        tokenConfigurado: !!(focusEmpresaToken || (config.ambiente === 1 ? focusTokenProducao : focusTokenHomologacao)),
+      }
     } catch (err) {
       // `cnpj` é único global: dois clientes com o mesmo CNPJ estouram P2002 e
       // virariam um 500 sem explicação na tela do admin.

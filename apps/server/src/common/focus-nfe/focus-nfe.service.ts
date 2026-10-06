@@ -279,6 +279,26 @@ export class FocusNfeService {
     return empresa ?? null
   }
 
+  /**
+   * Cria a empresa no cadastro da Focus (`POST /v2/empresas`).
+   *
+   * Até 06/10/2026 isto não existia, e o primeiro cliente em produção só emitiu
+   * depois de alguém cadastrar a empresa à mão no painel da Focus. Mesmo host e
+   * mesmo token de CONTA do `atualizarEmpresa`; a resposta traz o `id` e os
+   * tokens de produção e homologação.
+   *
+   * O corpo leva certificado e senha: nada dele entra em log (o `requisitar` só
+   * registra o campo de erro e o array `erros`, que é validação de campo).
+   */
+  async criarEmpresa(tokenDaConta: string, dados: Record<string, unknown>): Promise<any> {
+    this.logger.log('Criando empresa no cadastro da Focus NFe')
+    return this.requisitar(
+      'https://api.focusnfe.com.br/v2/empresas',
+      { method: 'POST', headers: this.getHeaders(tokenDaConta), body: JSON.stringify(dados) },
+      'criação de empresa',
+    )
+  }
+
   async atualizarEmpresa(
     tokenDaConta: string,
     empresaId: string,

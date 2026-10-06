@@ -47,6 +47,7 @@ export class FocusFalsa {
   inutilizar(...a: any[])           { return this.responder('inutilizar', a) }
   buscarEmpresaPorCnpj(...a: any[]) { return this.responder('buscarEmpresaPorCnpj', a) }
   atualizarEmpresa(...a: any[])     { return this.responder('atualizarEmpresa', a) }
+  criarEmpresa(...a: any[])         { return this.responder('criarEmpresa', a) }
 }
 
 /**
@@ -69,6 +70,8 @@ export function prepararCenario(ficha: Record<string, any> | null = {}) {
       certificadoVencimento: null,
       focusEmpresaId: null,
       focusEmpresaToken: null,
+      focusTokenProducao: null,
+      focusTokenHomologacao: null,
       cscConfigurado: false,
       ...ficha,
     })

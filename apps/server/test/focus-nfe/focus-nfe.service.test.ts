@@ -115,6 +115,14 @@ describe('FocusNfeService', () => {
     })
   })
 
+  it('criarEmpresa faz POST em /v2/empresas no host de produção, com o token da conta', async () => {
+    rede.responder(201, { id: 1 })
+    await focus.criarEmpresa('conta', { cnpj: '1' })
+    assert.equal(rede.chamadas[0].method, 'POST')
+    assert.equal(rede.chamadas[0].url, 'https://api.focusnfe.com.br/v2/empresas')
+    assert.equal(rede.chamadas[0].headers['Authorization'], 'Basic ' + Buffer.from('conta:').toString('base64'))
+  })
+
   it('atualizarEmpresa faz PUT no host de produção com o id codificado', async () => {
     rede.responder(200, { id: 10 })
     await focus.atualizarEmpresa('conta', '10', { habilita_nfe: true })

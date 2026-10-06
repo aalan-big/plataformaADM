@@ -56,8 +56,17 @@ export async function findClienteById(id: string) {
    * "pendente". Um count responde isso sem que o valor saia do banco — é uma
    * consulta a mais, mas só na abertura do perfil de um cliente, nunca na lista.
    */
+  // O token pode estar colado (texto) ou gravado pela ativação (cifrado, um
+  // por ambiente) — conta o do ambiente vigente da ficha.
+  const producao = cliente.configuracaoFiscal.ambiente === 1
   const comToken = await prisma.empresaFiscalConfig.count({
-    where: { clienteId: id, focusEmpresaToken: { not: null } },
+    where: {
+      clienteId: id,
+      OR: [
+        { focusEmpresaToken: { not: null } },
+        producao ? { focusTokenProducao: { not: null } } : { focusTokenHomologacao: { not: null } },
+      ],
+    },
   })
 
   return {

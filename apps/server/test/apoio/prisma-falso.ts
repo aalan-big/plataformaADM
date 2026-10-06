@@ -57,6 +57,21 @@ export const prismaFalso = {
   empresaFiscalConfig: {
     findUnique: async ({ where }: Linha) =>
       copia(tabelas.empresaFiscalConfig.find(c => c.clienteId === where.clienteId)),
+    create: async ({ data }: Linha) => {
+      // `cnpj` e `clienteId` são únicos no schema: o Prisma estoura P2002.
+      if (tabelas.empresaFiscalConfig.some(c => c.cnpj === data.cnpj || c.clienteId === data.clienteId)) {
+        throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
+      }
+      const linha = {
+        id: `cfg-${tabelas.empresaFiscalConfig.length + 1}`,
+        ambiente: 1, certificadoStatus: 'ATIVO', certificadoVencimento: null,
+        focusEmpresaId: null, focusEmpresaToken: null,
+        focusTokenProducao: null, focusTokenHomologacao: null, cscConfigurado: false,
+        ...data,
+      }
+      tabelas.empresaFiscalConfig.push(linha)
+      return copia(linha)
+    },
     update: async ({ where, data }: Linha) => {
       const linha = tabelas.empresaFiscalConfig.find(c => c.clienteId === where.clienteId)
       if (!linha) throw new Error(`empresaFiscalConfig ${where.clienteId} não existe`)

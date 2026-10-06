@@ -1,6 +1,8 @@
 import { Injectable, Logger, NotFoundException, BadRequestException, ConflictException, HttpException, HttpStatus } from '@nestjs/common'
 import { prisma, concederNotasExtras, resolverCotaModulo, MODULO_NFE, MODULO_NFCE } from '@startbig/database'
 import { FocusNfeService, RecursoFocus } from '../../common/focus-nfe/focus-nfe.service'
+import { camposFaltandoParaCriar, emitenteParaCadastroFocus, EmitenteErp } from '../../common/focus-nfe/focus-empresa.mapper'
+import { cifraDisponivel, cifrar, decifrar } from '../../common/cripto/segredo-fiscal'
 
 const AMBIENTE_PRODUCAO = 1
 
@@ -31,6 +33,33 @@ function competenciaAtual(agora: Date = new Date()): string {
     year:     'numeric',
     month:    '2-digit',
   }).format(agora).slice(0, 7)
+}
+
+/**
+ * O token que a emissão usa, para o ambiente vigente da ficha.
+ *
+ * `focusEmpresaToken` (texto, colado pelo admin ou gravado pelo envio antigo de
+ * certificado) VENCE: colar um token é intenção explícita de alguém. Sem ele,
+ * vale o cifrado do ambiente — o que a ativação grava (06/10/2026). Fichas
+ * anteriores à ativação não têm os cifrados e seguem exatamente como antes.
+ */
+export function tokenDeEmissao(config: {
+  ambiente: number
+  focusEmpresaToken?: string | null
+  focusTokenProducao?: string | null
+  focusTokenHomologacao?: string | null
+}): string | null {
+  if (config.focusEmpresaToken) return config.focusEmpresaToken
+  return decifrar(config.ambiente === AMBIENTE_PRODUCAO ? config.focusTokenProducao : config.focusTokenHomologacao)
+}
+
+/** O que o ERP manda para ativar a emissão (`POST /erp/fiscal/ativacao`). */
+export type DadosAtivacao = {
+  emitente:       EmitenteErp
+  email?:         string | null
+  telefone?:      string | null
+  arquivo_base64: string
+  senha:          string
 }
 
 /** "1" ou 1 viram 1; o que não for número vira null em vez de NaN. */
@@ -165,11 +194,12 @@ export class FiscalService {
       })
     }
 
-    if (!config.focusEmpresaToken) {
+    const token = tokenDeEmissao(config)
+    if (!token) {
       throw new BadRequestException('Token de emissão da Focus NFe pendente de configuração.')
     }
 
-    return { ...config, focusEmpresaToken: config.focusEmpresaToken }
+    return { ...config, focusEmpresaToken: token }
   }
 
   /**
@@ -235,7 +265,8 @@ export class FiscalService {
      * maneira e a mensagem no balcão seria diferente em cada loja.
      */
     const pendencias: string[] = []
-    if (!config.focusEmpresaToken)          pendencias.push('Token de emissão da Focus NFe não configurado.')
+    const temToken = !!tokenDeEmissao(config)
+    if (!temToken)                          pendencias.push('Token de emissão da Focus NFe não configurado.')
     if (!config.cscConfigurado)             pendencias.push('CSC não cadastrado na Focus para este ambiente — a NFC-e sairá sem QR Code.')
     if (config.certificadoStatus === 'VENCIDO') pendencias.push('Certificado digital vencido.')
     if (config.certificadoStatus === 'AUSENTE') pendencias.push('Certificado digital não informado.')
@@ -247,7 +278,7 @@ export class FiscalService {
       inscricaoEstadual: config.inscricaoEstadual,
       ambiente:          config.ambiente,
       ambienteNome:      nomeAmbiente(config.ambiente),
-      tokenConfigurado:  !!config.focusEmpresaToken,
+      tokenConfigurado:  temToken,
       cscConfigurado:    config.cscConfigurado,
       certificadoStatus: config.certificadoStatus,
       certificadoVencimento: config.certificadoVencimento,
@@ -377,6 +408,222 @@ export class FiscalService {
       cnpj: config.cnpj,
       valido_ate: vencimento ? vencimento.toISOString() : null,
       mensagem: 'Certificado cadastrado na emissora.',
+    }
+  }
+
+  /**
+   * Ativa a emissão de um cliente num passo só: empresa na Focus (cria se não
+   * existe), certificado, habilitação e os dois tokens. F2 do plano de
+   * refatoração do fiscal.
+   *
+   * Antes disto (06/10/2026), o primeiro cliente em produção precisou de quatro
+   * passos em três lugares: cadastrar a empresa no painel da Focus, criar a
+   * ficha no admin, colar o id e o token, e reenviar o certificado pelo ERP.
+   *
+   * O ERP manda o MESMO bloco `emitente{}` das notas — o ERP é a fonte da
+   * verdade do emitente; a plataforma guarda credenciais e política.
+   *
+   * Regras que não podem afrouxar:
+   *   - o CNPJ do emitente tem de ser o da ficha (nunca grava em empresa alheia);
+   *   - sem ficha, ela só nasce se a licença trouxer EXPLICITAMENTE NFE ou NFCE —
+   *     criar empresa na Focus pode custar dinheiro, e a claim vazia (licença
+   *     antiga) não autoriza isso; aí o admin cria a ficha com o CNPJ;
+   *   - 401/403 da Focus é o NOSSO token de parceiro → 501, nunca "recusamos o
+   *     seu certificado".
+   */
+  async ativarEmissao(licencaId: string, modulosDaLicenca: string[] | undefined, dados: DadosAtivacao) {
+    const emitente = dados.emitente ?? {}
+    const cnpj = String(emitente.cnpj ?? '').replace(/\D/g, '')
+    if (cnpj.length !== 14) {
+      throw new BadRequestException({ codigo: 'EMITENTE_SEM_CNPJ', mensagem: 'O CNPJ da empresa não foi informado em Dados da Empresa.' })
+    }
+
+    let config = await this.buscarEmpresaConfig(licencaId)
+
+    if (!config) {
+      const contratou = Array.isArray(modulosDaLicenca) &&
+        (modulosDaLicenca.includes(MODULO_NFE) || modulosDaLicenca.includes(MODULO_NFCE))
+      if (!contratou) {
+        this.logger.warn(`Licença ${licencaId}: ativação fiscal sem ficha e sem NFE/NFCE na licença (claim: ${modulosDaLicenca?.join(', ') || 'vazia'}).`)
+        throw new NotFoundException({
+          codigo:   'SEM_CONFIGURACAO_FISCAL',
+          mensagem: 'Nenhuma configuração fiscal vinculada a esta licença.',
+        })
+      }
+
+      const licenca = await prisma.licenca.findUnique({ where: { id: licencaId }, select: { clienteId: true } })
+      try {
+        await prisma.empresaFiscalConfig.create({
+          data: {
+            clienteId:         licenca!.clienteId,
+            cnpj,
+            razaoSocial:       String(emitente.razao_social ?? emitente.nome ?? '').trim() || cnpj,
+            inscricaoEstadual: emitente.inscricao_estadual || null,
+            ambiente:          AMBIENTE_PRODUCAO,
+            certificadoStatus: 'AUSENTE',
+          },
+        })
+      } catch (err) {
+        if ((err as { code?: string })?.code === 'P2002') {
+          throw new ConflictException({ codigo: 'CNPJ_DE_OUTRO_CLIENTE', mensagem: 'Este CNPJ já está configurado para outro cliente. Fale com o suporte StartBig.' })
+        }
+        throw err
+      }
+      this.logger.log(`Ficha fiscal criada pela ativação para a licença ${licencaId} (CNPJ ${cnpj}, produção).`)
+      config = await this.buscarEmpresaConfig(licencaId)
+    }
+
+    if (config!.cnpj !== cnpj) {
+      this.logger.warn(`Ativação barrada: licença ${licencaId} tem ficha do CNPJ ${config!.cnpj} e o ERP mandou ${cnpj}.`)
+      throw new HttpException({
+        codigo:   'CNPJ_DIVERGENTE',
+        mensagem: 'O CNPJ em Dados da Empresa é diferente do cadastrado para esta licença. Fale com o suporte StartBig.',
+      }, HttpStatus.UNPROCESSABLE_ENTITY)
+    }
+    const ficha = config!
+
+    const tokenDaConta =
+      process.env.FOCUS_NFE_PARTNER_TOKEN?.trim() || process.env.FOCUS_CONTA_TOKEN?.trim()
+    if (!tokenDaConta) {
+      this.logger.error('FOCUS_NFE_PARTNER_TOKEN ausente: ativação fiscal impossível.')
+      throw new HttpException(
+        { codigo: 'PLATAFORMA_SEM_TOKEN_DA_CONTA', mensagem: 'A ativação da emissão ainda não está habilitada nesta plataforma.' },
+        HttpStatus.NOT_IMPLEMENTED,
+      )
+    }
+
+    const semPermissao = (erro: unknown) =>
+      erro instanceof HttpException && [401, 403].includes(erro.getStatus())
+    const erroDeToken = () => {
+      this.logger.error('A Focus recusou o token de parceiro (FOCUS_NFE_PARTNER_TOKEN) na ativação.')
+      return new HttpException(
+        { codigo: 'PLATAFORMA_SEM_TOKEN_DA_CONTA', mensagem: 'A ativação da emissão ainda não está habilitada nesta plataforma.' },
+        HttpStatus.NOT_IMPLEMENTED,
+      )
+    }
+
+    let empresaId = ficha.focusEmpresaId
+    if (!empresaId) {
+      try {
+        const achada = await this.focusNfeService.buscarEmpresaPorCnpj(tokenDaConta, cnpj)
+        empresaId = achada?.id ? String(achada.id) : null
+      } catch (erro) {
+        if (semPermissao(erro)) throw erroDeToken()
+        throw erro
+      }
+    }
+
+    // Conferido ANTES de chamar a Focus: ela recusa um campo por vez.
+    if (!empresaId) {
+      const faltam = camposFaltandoParaCriar(emitente)
+      if (faltam.length) {
+        throw new HttpException({
+          codigo:   'DADOS_INCOMPLETOS',
+          mensagem: `Para cadastrar a empresa na emissora, preencha em Dados da Empresa: ${faltam.join(', ')}.`,
+        }, HttpStatus.UNPROCESSABLE_ENTITY)
+      }
+    }
+
+    const corpo = {
+      ...emitenteParaCadastroFocus(emitente, { email: dados.email, telefone: dados.telefone }),
+      arquivo_certificado_base64: dados.arquivo_base64,
+      senha_certificado:          dados.senha,
+      // As duas, sempre — ver o comentário em `enviarCertificado`.
+      habilita_nfe:  true,
+      habilita_nfce: true,
+    }
+
+    let empresa: any
+    let acao: 'CRIADA' | 'ATUALIZADA'
+    try {
+      if (empresaId) {
+        empresa = await this.focusNfeService.atualizarEmpresa(tokenDaConta, empresaId, corpo)
+        acao = 'ATUALIZADA'
+      } else {
+        empresa = await this.focusNfeService.criarEmpresa(tokenDaConta, corpo)
+        acao = 'CRIADA'
+        empresaId = empresa?.id ? String(empresa.id) : null
+      }
+    } catch (erro) {
+      if (semPermissao(erro)) throw erroDeToken()
+      if (erro instanceof HttpException && [400, 422].includes(erro.getStatus())) {
+        // Recusa de validação da Focus: senha do certificado, CNPJ do .pfx,
+        // município... É o que o lojista precisa ler. Só a lista de mensagens
+        // sai daqui — nunca o corpo enviado, que tem certificado e senha.
+        const r = erro.getResponse() as any
+        const detalhes: string[] = Array.isArray(r?.erros)
+          ? r.erros.map((e: any) => e?.mensagem).filter(Boolean)
+          : []
+        const lista = detalhes.length ? detalhes : [r?.mensagem].filter(Boolean)
+        const motivo = [...new Set<string>(lista)].join(' ')
+        throw new HttpException({
+          codigo:   'EMISSORA_RECUSOU',
+          mensagem: `A emissora recusou o cadastro${motivo ? `: ${motivo}` : '.'}`,
+        }, HttpStatus.UNPROCESSABLE_ENTITY)
+      }
+      throw erro
+    }
+
+    if (!empresaId) {
+      this.logger.error(`Ativação da licença ${licencaId}: a Focus não devolveu o id da empresa.`)
+      throw new HttpException({ codigo: 'EMISSORA_SEM_ID', mensagem: 'A emissora não confirmou o cadastro. Tente de novo em instantes.' }, HttpStatus.BAD_GATEWAY)
+    }
+
+    /**
+     * Tokens: os dois, cifrados, quando há chave. Com o do ambiente vigente
+     * presente, o texto puro sai (o segredo passa a morar só cifrado). Sem
+     * chave, o comportamento antigo: o token do ambiente em texto.
+     */
+    const tokenProducao    = typeof empresa?.token_producao === 'string' ? empresa.token_producao : null
+    const tokenHomologacao = typeof empresa?.token_homologacao === 'string' ? empresa.token_homologacao : null
+    const tokenDoAmbiente  = ficha.ambiente === AMBIENTE_PRODUCAO ? tokenProducao : tokenHomologacao
+    let patchTokens: Record<string, string | null> = {}
+    if (cifraDisponivel() && tokenDoAmbiente) {
+      patchTokens = {
+        ...(tokenProducao    ? { focusTokenProducao:    cifrar(tokenProducao) }    : {}),
+        ...(tokenHomologacao ? { focusTokenHomologacao: cifrar(tokenHomologacao) } : {}),
+        focusEmpresaToken: null,
+      }
+    } else if (tokenDoAmbiente) {
+      patchTokens = { focusEmpresaToken: tokenDoAmbiente }
+    }
+
+    const validoAte  = empresa?.certificado_valido_ate ? new Date(empresa.certificado_valido_ate) : null
+    const vencimento = validoAte && !Number.isNaN(validoAte.getTime()) ? validoAte : null
+
+    await prisma.empresaFiscalConfig.update({
+      where: { clienteId: ficha.clienteId },
+      data: {
+        focusEmpresaId:    empresaId,
+        certificadoStatus: 'ATIVO',
+        ...(vencimento ? { certificadoVencimento: vencimento } : {}),
+        razaoSocial:       String(emitente.razao_social ?? emitente.nome ?? '').trim() || ficha.razaoSocial,
+        inscricaoEstadual: emitente.inscricao_estadual || ficha.inscricaoEstadual,
+        ...patchTokens,
+      },
+    })
+
+    const atualizada = await this.buscarEmpresaConfig(licencaId)
+    const temToken = !!(atualizada && tokenDeEmissao(atualizada))
+
+    this.logger.log(
+      `Emissão ativada para o cliente ${ficha.clienteId}: empresa ${empresaId} ${acao.toLowerCase()} na Focus` +
+      ` (${nomeAmbiente(ficha.ambiente)}, token ${temToken ? 'ok' : 'AUSENTE'}, cifra ${cifraDisponivel() ? 'sim' : 'não'}).`,
+    )
+
+    return {
+      status:           'ATIVO',
+      habilitado:       true,
+      empresa:          acao,
+      cnpj,
+      valido_ate:       vencimento ? vencimento.toISOString() : null,
+      ambiente:         ficha.ambiente,
+      ambienteNome:     nomeAmbiente(ficha.ambiente),
+      tokenConfigurado: temToken,
+      cscConfigurado:   !!atualizada?.cscConfigurado,
+      mensagem: acao === 'CRIADA'
+        ? 'Empresa cadastrada na emissora e certificado enviado. A emissão está ativa.'
+        : 'Cadastro da empresa atualizado na emissora e certificado enviado. A emissão está ativa.',
     }
   }
 
