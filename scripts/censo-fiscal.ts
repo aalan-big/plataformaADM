@@ -28,15 +28,20 @@ function diasAte(data: Date | null): string {
   return dias < 0 ? `VENCIDO há ${-dias}d` : `${dias}d`
 }
 
+/** Data e hora de Brasília: em UTC, a nota das 13:06 aparecia como "16:06". */
 function quando(data: Date | null | undefined): string {
-  return data ? data.toISOString().slice(0, 16).replace('T', ' ') : '—'
+  if (!data) return '—'
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).format(data)
 }
 
 async function main() {
   const fichas = await prisma.empresaFiscalConfig.findMany({ orderBy: { criadoEm: 'asc' } })
   const seteDiasAtras = new Date(Date.now() - 7 * DIA)
 
-  console.log(`\nCenso fiscal — ${fichas.length} ficha(s) — ${new Date().toISOString()}\n`)
+  console.log(`\nCenso fiscal — ${fichas.length} ficha(s) — ${quando(new Date())}\n`)
 
   const resumo = { producao: 0, homologacao: 0, semToken: 0, semEmpresaFocus: 0, certificadoRuim: 0, semNotaAutorizada: 0 }
 
