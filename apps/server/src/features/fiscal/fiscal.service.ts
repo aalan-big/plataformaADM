@@ -476,6 +476,13 @@ export class FiscalService {
     const config = await this.buscarEmpresaConfig(licencaId)
 
     if (!config) {
+      /**
+       * Logado de propósito. Foi o que aconteceu com o primeiro cliente em
+       * produção (06/10/2026): o certificado saiu do ERP antes de existir a
+       * ficha, o ERP mostrou "validado só localmente" e a VPS não tinha uma
+       * linha sequer para dizer por quê.
+       */
+      this.logger.warn(`Licença ${licencaId}: cadastro na Focus pedido sem ficha fiscal no admin (404 SEM_CONFIGURACAO_FISCAL).`)
       throw new NotFoundException({
         codigo:   'SEM_CONFIGURACAO_FISCAL',
         mensagem: 'Nenhuma configuração fiscal vinculada a esta licença.',

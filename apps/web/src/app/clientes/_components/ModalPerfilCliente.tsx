@@ -1059,7 +1059,9 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
   const [cnpj, setCnpj] = useState('')
   const [razaoSocial, setRazaoSocial] = useState('')
   const [inscricaoEstadual, setInscricaoEstadual] = useState('')
-  const [ambiente, setAmbiente] = useState(2)
+  // Ficha nova nasce em PRODUÇÃO: cliente que assina já emite nota de verdade.
+  // Homologação é escolha explícita, só para teste (plano fiscal F1.1).
+  const [ambiente, setAmbiente] = useState(1)
   const [focusToken, setFocusToken] = useState('')
   const [focusEmpresaId, setFocusEmpresaId] = useState('')
   const [cscConfigurado, setCscConfigurado] = useState(false)
@@ -1071,7 +1073,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
       setCnpj(cliente.configuracaoFiscal.cnpj || '')
       setRazaoSocial(cliente.configuracaoFiscal.razaoSocial || '')
       setInscricaoEstadual(cliente.configuracaoFiscal.inscricaoEstadual || '')
-      setAmbiente(cliente.configuracaoFiscal.ambiente || 2)
+      setAmbiente(cliente.configuracaoFiscal.ambiente || 1)
       setCscConfigurado(!!cliente.configuracaoFiscal.cscConfigurado)
       // O id da empresa na Focus não é segredo e volta na leitura, ao contrário
       // do token: carregar o valor real é o que permite editar sem reapagar.
@@ -1329,8 +1331,8 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                           }}
                           className="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500/40 text-xs"
                         >
-                          <option value={2}>Homologação (Testes)</option>
                           <option value={1}>Produção (Real)</option>
+                          <option value={2}>Homologação (teste — sem valor fiscal)</option>
                         </select>
                       </div>
                     </div>

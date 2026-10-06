@@ -606,7 +606,10 @@ model EmpresaFiscalConfig {
   cnpj              String  @unique
   razaoSocial       String
   inscricaoEstadual String?
-  ambiente          Int     @default(2) // 1 = Produção, 2 = Homologação
+  /// 1 = Produção, 2 = Homologação. Nasce em PRODUÇÃO desde 06/10/2026: quem
+  /// assina já emite nota de verdade, e homologação é escolha explícita de
+  /// teste. Mudar o padrão não toca nas fichas que já existem.
+  ambiente          Int     @default(1)
 
   certificadoNome       String?
   certificadoVencimento DateTime?
