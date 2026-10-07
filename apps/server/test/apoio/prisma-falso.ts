@@ -41,6 +41,32 @@ function aplicarDados(linha: Linha, dados: Linha) {
   }
 }
 
+/**
+ * O pedaço do `where` do Prisma que o fiscal usa: igualdade, `{ in }`, `{ not }`
+ * e `{ gte }`. Operador desconhecido estoura, pela mesma razão do topo do arquivo.
+ */
+function casa(linha: Linha, where: Linha = {}): boolean {
+  return Object.entries(where).every(([campo, cond]) => {
+    const v = linha[campo]
+    if (cond && typeof cond === 'object' && !(cond instanceof Date)) {
+      return Object.entries(cond).every(([op, alvo]: [string, any]) => {
+        if (op === 'in')  return alvo.includes(v)
+        if (op === 'not') return v !== alvo
+        if (op === 'gte') return v >= alvo
+        throw new TypeError(`prisma falso: operador "${op}" não simulado`)
+      })
+    }
+    return v === cond
+  })
+}
+
+/** `orderBy: { campo: 'desc' }`, o único formato que o fiscal usa. */
+function ordenar(linhas: Linha[], orderBy?: Linha) {
+  if (!orderBy) return linhas
+  const [campo, dir] = Object.entries(orderBy)[0]
+  return [...linhas].sort((a, b) => (a[campo] < b[campo] ? -1 : a[campo] > b[campo] ? 1 : 0) * (dir === 'desc' ? -1 : 1))
+}
+
 const chaveConsumo = (w: Linha) =>
   (l: Linha) =>
     l.licencaId === w.licencaId &&
@@ -52,6 +78,8 @@ export const prismaFalso = {
   licenca: {
     findUnique: async ({ where }: Linha) =>
       copia(tabelas.licenca.find(l => l.id === where.id)),
+    findMany: async ({ where }: Linha) =>
+      tabelas.licenca.filter(l => casa(l, where)).map(copia),
   },
 
   empresaFiscalConfig: {
@@ -82,9 +110,14 @@ export const prismaFalso = {
 
   emissaoLog: {
     create: async ({ data }: Linha) => {
-      tabelas.emissaoLog.push({ ...data })
-      return { ...data }
+      const linha = { codigoSefaz: null, criadoEm: new Date(), ...data }
+      tabelas.emissaoLog.push(linha)
+      return { ...linha }
     },
+    findFirst: async ({ where, orderBy }: Linha) =>
+      copia(ordenar(tabelas.emissaoLog.filter(l => casa(l, where)), orderBy)[0]),
+    findMany: async ({ where, orderBy }: Linha) =>
+      ordenar(tabelas.emissaoLog.filter(l => casa(l, where)), orderBy).map(copia),
   },
 
   idempotenciaFiscal: {

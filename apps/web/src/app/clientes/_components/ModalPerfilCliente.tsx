@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   X, Pencil, PowerOff, AlertCircle,
   Monitor, CreditCard, Loader2, Unlock, Lock, Trash2,
-  KeyRound, Copy, ExternalLink, RefreshCw, History, AlertTriangle, Save, FileText, Plus, Boxes
+  KeyRound, Copy, ExternalLink, RefreshCw, History, AlertTriangle, Save, FileText, Plus, Boxes, Activity
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -676,6 +676,136 @@ function PainelCotaFiscal({ licencaId }: { licencaId: string }) {
                   Notas avulsas valem só neste mês e somem na virada. Homologação não consome cota.
                 </p>
               )}
+            </>
+          )}
+
+          {erro && (
+            <p className="text-[11px] text-red-400 flex items-center gap-1.5">
+              <AlertCircle size={11} /> {erro}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Saúde fiscal (F4) ────────────────────────────────────────────────────────
+
+type EstadoSaude = 'ok' | 'atencao' | 'problema' | 'desconhecido'
+
+type SaudeFiscal = {
+  conferidoEm:     string
+  geral:           EstadoSaude
+  focusConsultada: boolean
+  itens:           { chave: string; titulo: string; estado: EstadoSaude; detalhe: string }[]
+  rejeicoes:       { codigoSefaz: number | null; motivo: string; quantidade: number; ultimaEm: string }[]
+}
+
+const COR_SAUDE: Record<EstadoSaude, { ponto: string; texto: string; rotulo: string }> = {
+  ok:           { ponto: 'bg-emerald-400', texto: 'text-emerald-400', rotulo: 'TUDO CERTO' },
+  atencao:      { ponto: 'bg-amber-400',   texto: 'text-amber-400',   rotulo: 'ATENÇÃO' },
+  problema:     { ponto: 'bg-red-400',     texto: 'text-red-400',     rotulo: 'COM PROBLEMA' },
+  desconhecido: { ponto: 'bg-slate-500',   texto: 'text-slate-400',   rotulo: 'NÃO CONFERIDO' },
+}
+
+/**
+ * Saúde fiscal do cliente: o que a Focus e o nosso banco dizem, item a item.
+ *
+ * É o que o suporte abre quando o lojista liga dizendo que a nota não sai. Só
+ * leitura: "Rodar conferência" refaz a mesma consulta, não emite nem grava nada.
+ * Carrega sob demanda pela mesma razão da cota — cada abertura lê a Focus.
+ */
+function PainelSaudeFiscal({ clienteId }: { clienteId: string }) {
+  const [aberto,     setAberto]     = useState(false)
+  const [saude,      setSaude]      = useState<SaudeFiscal | null>(null)
+  const [carregando, setCarregando] = useState(false)
+  const [erro,       setErro]       = useState('')
+
+  const conferir = useCallback(async () => {
+    setCarregando(true); setErro('')
+    try {
+      const res  = await fetch(`/api/fiscal/clientes/${clienteId}/saude`)
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { setErro(json.erro ?? json.message ?? `Erro ${res.status}.`); return }
+      setSaude(json)
+    } catch {
+      setErro('Falha ao conferir a saúde fiscal.')
+    } finally {
+      setCarregando(false)
+    }
+  }, [clienteId])
+
+  function alternar() {
+    const proximo = !aberto
+    setAberto(proximo)
+    if (proximo && !saude) conferir()
+  }
+
+  return (
+    <div className="mt-3 border-t border-slate-800 pt-2">
+      <div className="flex items-center gap-2">
+        <button
+          onClick={alternar}
+          className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-200 transition-colors"
+        >
+          <Activity size={12} />
+          Saúde fiscal
+        </button>
+        {saude && (
+          <span className={`text-[10px] font-semibold ${COR_SAUDE[saude.geral].texto}`}>
+            {COR_SAUDE[saude.geral].rotulo}
+          </span>
+        )}
+        {aberto && (
+          <button
+            onClick={conferir}
+            disabled={carregando}
+            className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold text-slate-300 bg-slate-700/40 hover:bg-slate-700/70 disabled:opacity-50 transition-colors"
+          >
+            {carregando ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+            Rodar conferência
+          </button>
+        )}
+      </div>
+
+      {aberto && (
+        <div className="mt-2 space-y-1.5">
+          {carregando && !saude && (
+            <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+              <Loader2 size={11} className="animate-spin" /> Conferindo na Focus…
+            </p>
+          )}
+
+          {saude && (
+            <>
+              {saude.itens.map(i => (
+                <div key={i.chave} className="flex items-start gap-2 text-[11px]">
+                  <span className={`mt-1 h-2 w-2 rounded-full shrink-0 ${COR_SAUDE[i.estado].ponto}`} />
+                  <div className="min-w-0">
+                    <span className="text-slate-300 font-medium">{i.titulo}</span>
+                    <span className="text-slate-500"> — {i.detalhe}</span>
+                  </div>
+                </div>
+              ))}
+
+              {saude.rejeicoes.length > 0 && (
+                <div className="mt-1 pl-4 space-y-0.5">
+                  {saude.rejeicoes.map((r, idx) => (
+                    <p key={idx} className="text-[10px] text-slate-400">
+                      <span className="text-amber-400 font-semibold">{r.quantidade}×</span>{' '}
+                      {r.codigoSefaz != null && <span className="font-mono text-slate-300">[{r.codigoSefaz}] </span>}
+                      {r.motivo}
+                      <span className="text-slate-600"> · última {r.ultimaEm}</span>
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              <p className="text-[10px] text-slate-600">
+                Conferido: {tempoRelativo(saude.conferidoEm)}
+                {!saude.focusConsultada && ' · a Focus não foi lida; itens dela vêm dos dados locais'}
+              </p>
             </>
           )}
 
@@ -1497,6 +1627,7 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                     )}
                   </div>
                 )}
+                {!editandoFiscal && <PainelSaudeFiscal clienteId={clienteId} />}
               </div>
 
               {/* Licenças */}

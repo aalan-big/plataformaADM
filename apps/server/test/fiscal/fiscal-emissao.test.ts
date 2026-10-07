@@ -111,6 +111,8 @@ describe('FiscalService — emitir', () => {
     assert.match(r.mensagem_sefaz ?? '', /chNFe:3526095834894100010955002/)
     assert.equal(tabelas.consumoFiscal.length, 0)
     assert.equal(tabelas.emissaoLog[0].resultado, 'erro')
+    // O cStat vai para a trilha: é por ele que o painel de saúde (F4) agrupa.
+    assert.equal(tabelas.emissaoLog[0].codigoSefaz, 539)
   })
 
   it('denegada fica separada de rejeitada pelo status_focus', async () => {

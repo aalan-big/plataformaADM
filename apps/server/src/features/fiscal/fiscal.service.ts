@@ -853,6 +853,7 @@ export class FiscalService {
     resultado:  string
     httpStatus?: number | null
     mensagem?:  string | null
+    codigoSefaz?: number | null
   }) {
     try {
       await prisma.emissaoLog.create({
@@ -867,6 +868,7 @@ export class FiscalService {
           // Truncada: mensagem da SEFAZ é curta, mas erro de integração vem com
           // dump inteiro às vezes, e este log é para durar pouco e ler rápido.
           mensagem:   params.mensagem ? params.mensagem.slice(0, 500) : null,
+          codigoSefaz: params.codigoSefaz ?? null,
         },
       })
     } catch (err) {
@@ -1209,6 +1211,7 @@ export class FiscalService {
       acao:      'EMISSAO',
       resultado: resultado.status,
       mensagem:  resultado.mensagem_sefaz,
+      codigoSefaz: resultado.codigo_sefaz,
     })
 
     return resultado
@@ -1287,7 +1290,56 @@ export class FiscalService {
       )
     }
 
+    await this.registrarDesfechoDaConsulta(licencaId, ref, config.ambiente, tipoDocumento, resultado)
+
     return resultado
+  }
+
+  /**
+   * O desfecho da consulta vai também para a `EmissaoLog`, uma vez por nota.
+   *
+   * Até 07/10/2026 só a emissão gravava linha, e a emissão de NF-e quase sempre
+   * responde "processando": a autorização e a rejeição da SEFAZ chegavam por
+   * aqui e iam só para o log do processo. Resultado: para NF-e a tabela nunca
+   * tinha "autorizado" nem o cStat da recusa — e é dela que o painel de saúde
+   * fiscal (F4) e o censo tiram a última nota e as rejeições.
+   *
+   * Só `autorizado` e `erro`. `processando` não decidiu nada; `cancelado` já
+   * tem a linha do CANCELAMENTO. E só se ainda não houver linha igual para a
+   * ref: o ERP reconsulta a mesma nota (reabrir a venda, reimprimir), e uma
+   * linha por consulta inflaria a contagem de rejeições do painel.
+   *
+   * Best-effort como o `registrarEvento`: o ERP está esperando a resposta da
+   * nota, e falhar aqui não pode virar erro de consulta.
+   */
+  private async registrarDesfechoDaConsulta(
+    licencaId: string,
+    ref: string,
+    ambiente: number,
+    tipoDocumento: TipoDocumentoEmissivel,
+    resultado: ResultadoNota,
+  ) {
+    if (resultado.status !== 'autorizado' && resultado.status !== 'erro') return
+    try {
+      const jaRegistrado = await prisma.emissaoLog.findFirst({
+        where:  { licencaId, ref, acao: 'EMISSAO', resultado: resultado.status },
+        select: { id: true },
+      })
+      if (jaRegistrado) return
+    } catch (err) {
+      this.logger.error(`Falha ao conferir trilha da ref "${ref}": ${err instanceof Error ? err.message : err}`)
+      return
+    }
+    await this.registrarEvento({
+      licencaId,
+      ref,
+      ambiente,
+      tipoDocumento,
+      acao:        'EMISSAO',
+      resultado:   resultado.status,
+      mensagem:    resultado.mensagem_sefaz,
+      codigoSefaz: resultado.codigo_sefaz,
+    })
   }
 
   async cancelar(
@@ -1325,6 +1377,7 @@ export class FiscalService {
       acao:      'CANCELAMENTO',
       resultado: resultado.status,
       mensagem:  resultado.mensagem_sefaz,
+      codigoSefaz: resultado.codigo_sefaz,
     })
 
     return resultado
@@ -1398,6 +1451,7 @@ export class FiscalService {
       acao:      'CARTA_CORRECAO',
       resultado: resultado.status,
       mensagem:  resultado.mensagem_sefaz,
+      codigoSefaz: resultado.codigo_sefaz,
     })
 
     return resultado
@@ -1460,6 +1514,7 @@ export class FiscalService {
       acao:      'INUTILIZACAO',
       resultado: resultado.status,
       mensagem:  resultado.mensagem_sefaz,
+      codigoSefaz: resultado.codigo_sefaz,
     })
 
     return resultado

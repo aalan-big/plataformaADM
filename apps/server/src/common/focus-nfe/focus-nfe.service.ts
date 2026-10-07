@@ -299,6 +299,20 @@ export class FocusNfeService {
     )
   }
 
+  /**
+   * Lê o cadastro de uma empresa na Focus (`GET /v2/empresas/{id}`). SÓ LEITURA:
+   * é o que o painel de saúde fiscal (F4) confere — certificado, habilitação,
+   * CSC. A resposta traz os tokens da empresa; quem chama não pode repassá-la
+   * inteira para lugar nenhum.
+   */
+  async consultarEmpresa(tokenDaConta: string, empresaId: string): Promise<any> {
+    return this.requisitar(
+      `https://api.focusnfe.com.br/v2/empresas/${encodeURIComponent(empresaId)}`,
+      { method: 'GET', headers: this.getHeaders(tokenDaConta) },
+      `consulta da empresa ${empresaId}`,
+    )
+  }
+
   async atualizarEmpresa(
     tokenDaConta: string,
     empresaId: string,

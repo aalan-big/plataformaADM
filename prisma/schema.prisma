@@ -729,6 +729,10 @@ model EmissaoLog {
   httpStatus    Int?
   /// Mensagem da SEFAZ/Focus, truncada. Nunca o corpo da nota.
   mensagem      String?
+  /// cStat da SEFAZ (481, 539, 305...). A mensagem descreve, o código
+  /// identifica — é por ele que o painel de saúde fiscal agrupa as rejeições.
+  /// Nulo nas linhas anteriores a 07/10/2026 e quando a SEFAZ nem respondeu.
+  codigoSefaz   Int?
   criadoEm      DateTime @default(now())
 
   licenca Licenca @relation(fields: [licencaId], references: [id], onDelete: Cascade)

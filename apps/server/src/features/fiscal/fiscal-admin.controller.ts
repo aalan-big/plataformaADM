@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Body, Param, Query, BadRequestException } from '@nestjs/common'
 import { FiscalService } from './fiscal.service'
+import { FiscalSaudeService } from './fiscal-saude.service'
 import { MODULO_NFE, MODULO_NFCE } from '@startbig/database'
 import { z, ZodError } from 'zod'
 
@@ -58,5 +59,20 @@ export class FiscalAdminController {
   conceder(@Param('id') id: string, @Body() body: unknown) {
     const dados = this.parse(concederExtrasSchema, body)
     return this.fiscalService.concederExtras(id, dados.quantidade, dados.motivo, dados.tipoDocumento)
+  }
+}
+
+/**
+ * Painel de saúde fiscal por cliente (F4). Só leitura: o "Rodar conferência"
+ * do admin é este mesmo GET de novo — nada emite, nada grava, nem aqui nem na
+ * Focus. Por CLIENTE e não por licença porque a ficha fiscal é do cliente.
+ */
+@Controller('fiscal/clientes')
+export class FiscalSaudeController {
+  constructor(private readonly saudeService: FiscalSaudeService) {}
+
+  @Get(':id/saude')
+  saude(@Param('id') id: string) {
+    return this.saudeService.saudeDoCliente(id)
   }
 }

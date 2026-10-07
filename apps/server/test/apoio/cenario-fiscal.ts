@@ -48,6 +48,7 @@ export class FocusFalsa {
   buscarEmpresaPorCnpj(...a: any[]) { return this.responder('buscarEmpresaPorCnpj', a) }
   atualizarEmpresa(...a: any[])     { return this.responder('atualizarEmpresa', a) }
   criarEmpresa(...a: any[])         { return this.responder('criarEmpresa', a) }
+  consultarEmpresa(...a: any[])     { return this.responder('consultarEmpresa', a) }
 }
 
 /**

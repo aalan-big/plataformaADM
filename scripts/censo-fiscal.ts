@@ -62,17 +62,19 @@ async function main() {
 
     const recusas = ids.length
       ? await prisma.emissaoLog.findMany({
-          where:   { licencaId: { in: ids }, acao: 'EMISSAO', resultado: { not: 'autorizado' }, criadoEm: { gte: seteDiasAtras } },
+          // Só 'erro' é recusa: 'processando' é nota a caminho da SEFAZ, e até
+          // 07/10/2026 o censo a contava como recusada.
+          where:   { licencaId: { in: ids }, acao: 'EMISSAO', resultado: 'erro', criadoEm: { gte: seteDiasAtras } },
           orderBy: { criadoEm: 'desc' },
-          select:  { mensagem: true },
+          select:  { mensagem: true, codigoSefaz: true },
         })
       : []
 
-    // O cStat está no começo da mensagem da SEFAZ só às vezes; contar pelo
-    // texto "Rejeição: ..." já basta para o suporte enxergar o padrão.
+    // Pelo cStat quando a linha tem (desde 07/10/2026); nas antigas, pelo texto.
     const motivos = new Map<string, number>()
     for (const r of recusas) {
-      const motivo = (r.mensagem ?? 'sem mensagem').replace(/\[.*$/, '').slice(0, 70).trim()
+      const texto = (r.mensagem ?? 'sem mensagem').replace(/\[.*$/, '').slice(0, 70).trim()
+      const motivo = r.codigoSefaz != null ? `[${r.codigoSefaz}] ${texto}` : texto
       motivos.set(motivo, (motivos.get(motivo) ?? 0) + 1)
     }
 
