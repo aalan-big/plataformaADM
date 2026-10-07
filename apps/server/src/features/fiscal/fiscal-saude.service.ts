@@ -1,7 +1,7 @@
 import { Injectable, Logger, HttpException } from '@nestjs/common'
 import { prisma, MODULO_NFCE } from '@startbig/database'
 import { FocusNfeService } from '../../common/focus-nfe/focus-nfe.service'
-import { tokenDeEmissao } from './fiscal.service'
+import { tokenDeEmissao } from './fiscal-comum'
 
 /**
  * Painel de saúde fiscal de um cliente (F4 do plano de refatoração do fiscal).

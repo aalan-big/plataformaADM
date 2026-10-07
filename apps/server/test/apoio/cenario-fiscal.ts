@@ -1,9 +1,11 @@
 /**
- * Montagem comum dos testes do `FiscalService`: uma Focus falsa que grava as
+ * Montagem comum dos testes do fiscal (onboarding, emissão, cota): uma Focus falsa que grava as
  * chamadas e um cliente cadastrado no banco em memória.
  */
 import { HttpException } from '@nestjs/common'
-import { FiscalService } from '../../src/features/fiscal/fiscal.service'
+import { FiscalOnboardingService } from '../../src/features/fiscal/fiscal-onboarding.service'
+import { FiscalEmissaoService } from '../../src/features/fiscal/fiscal-emissao.service'
+import { FiscalCotaService } from '../../src/features/fiscal/fiscal-cota.service'
 import { reiniciarBanco, tabelas } from './prisma-falso'
 
 export const LICENCA = 'lic-1'
@@ -78,8 +80,10 @@ export function prepararCenario(ficha: Record<string, any> | null = {}) {
     })
   }
   const focus = new FocusFalsa()
-  const servico = new FiscalService(focus as any)
-  return { focus, servico, ficha: () => tabelas.empresaFiscalConfig[0] }
+  const cota = new FiscalCotaService()
+  const emissao = new FiscalEmissaoService(focus as any, cota)
+  const onboarding = new FiscalOnboardingService(focus as any)
+  return { focus, onboarding, emissao, cota, ficha: () => tabelas.empresaFiscalConfig[0] }
 }
 
 /** Confere status e `codigo` do corpo de uma HttpException. */

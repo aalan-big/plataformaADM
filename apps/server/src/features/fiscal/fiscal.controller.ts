@@ -1,6 +1,9 @@
 import { Controller, Get, Post, Body, Req, Query, Headers, UseGuards, BadRequestException } from '@nestjs/common'
 import { Request } from 'express'
-import { FiscalService, TipoDocumentoEmissivel } from './fiscal.service'
+import { TipoDocumentoEmissivel } from './fiscal-comum'
+import { FiscalEmissaoService } from './fiscal-emissao.service'
+import { FiscalCotaService } from './fiscal-cota.service'
+import { FiscalOnboardingService } from './fiscal-onboarding.service'
 import { ErpLicencaGuard } from '../../core/guards/erp-licenca.guard'
 import { ModuloGuard } from '../../core/guards/modulo.guard'
 import { Public } from '../../core/decorators/public.decorator'
@@ -21,7 +24,10 @@ type ReqErp = Request & { erp: { licencaId: string; modulos?: string[] } }
  * com o tempo.
  */
 abstract class FiscalErpControllerBase {
-  constructor(protected readonly fiscalService: FiscalService) {}
+  constructor(
+    protected readonly emissao: FiscalEmissaoService,
+    protected readonly cota:    FiscalCotaService,
+  ) {}
 
   /** NFE ou NFCE — o mesmo valor do módulo exigido pelo controller concreto. */
   protected abstract get tipoDocumento(): TipoDocumentoEmissivel
@@ -62,7 +68,7 @@ abstract class FiscalErpControllerBase {
     @Headers('x-idempotency-key') chaveIdempotencia?: string,
   ) {
     const dados = this.parse(emitirNotaSchema, body)
-    return this.fiscalService.emitir(
+    return this.emissao.emitir(
       req.erp.licencaId,
       dados.ref,
       dados.payload,
@@ -77,7 +83,7 @@ abstract class FiscalErpControllerBase {
     @Query('ref') ref: unknown
   ) {
     const refValida = this.parse(refNotaSchema, ref)
-    return this.fiscalService.consultar(req.erp.licencaId, refValida, this.tipoDocumento)
+    return this.emissao.consultar(req.erp.licencaId, refValida, this.tipoDocumento)
   }
 
   @Post('cancelar')
@@ -86,7 +92,7 @@ abstract class FiscalErpControllerBase {
     @Body() body: unknown
   ) {
     const dados = this.parse(cancelarNotaSchema, body)
-    return this.fiscalService.cancelar(req.erp.licencaId, dados.ref, dados.justificativa, this.tipoDocumento)
+    return this.emissao.cancelar(req.erp.licencaId, dados.ref, dados.justificativa, this.tipoDocumento)
   }
 
   /**
@@ -104,7 +110,7 @@ abstract class FiscalErpControllerBase {
     @Headers('x-idempotency-key') chaveIdempotencia?: string,
   ) {
     const dados = this.parse(inutilizarSchema, body)
-    return this.fiscalService.inutilizar(
+    return this.emissao.inutilizar(
       req.erp.licencaId,
       dados,
       this.tipoDocumento,
@@ -124,7 +130,7 @@ abstract class FiscalErpControllerBase {
    */
   @Get('consumo')
   consumo(@Req() req: ReqErp) {
-    return this.fiscalService.consumoMensal(req.erp.licencaId, this.tipoDocumento)
+    return this.cota.consumoMensal(req.erp.licencaId, this.tipoDocumento)
   }
 }
 
@@ -143,7 +149,7 @@ abstract class FiscalErpControllerBase {
 @RequerModulo(MODULO_NFE)
 @Controller('erp/fiscal/nfe')
 export class FiscalController extends FiscalErpControllerBase {
-  constructor(fiscalService: FiscalService) { super(fiscalService) }
+  constructor(emissao: FiscalEmissaoService, cota: FiscalCotaService) { super(emissao, cota) }
   protected get tipoDocumento(): TipoDocumentoEmissivel { return MODULO_NFE }
 
   /**
@@ -158,7 +164,7 @@ export class FiscalController extends FiscalErpControllerBase {
   @Post('carta-correcao')
   cartaCorrecao(@Req() req: ReqErp, @Body() body: unknown) {
     const dados = this.parse(cartaCorrecaoSchema, body)
-    return this.fiscalService.cartaCorrecao(req.erp.licencaId, dados.ref, dados.correcao)
+    return this.emissao.cartaCorrecao(req.erp.licencaId, dados.ref, dados.correcao)
   }
 }
 
@@ -174,7 +180,7 @@ export class FiscalController extends FiscalErpControllerBase {
 @RequerModulo(MODULO_NFCE)
 @Controller('erp/fiscal/nfce')
 export class FiscalNfceController extends FiscalErpControllerBase {
-  constructor(fiscalService: FiscalService) { super(fiscalService) }
+  constructor(emissao: FiscalEmissaoService, cota: FiscalCotaService) { super(emissao, cota) }
   protected get tipoDocumento(): TipoDocumentoEmissivel { return MODULO_NFCE }
 }
 
@@ -193,11 +199,11 @@ export class FiscalNfceController extends FiscalErpControllerBase {
 @UseGuards(ErpLicencaGuard)
 @Controller('erp/fiscal')
 export class FiscalConfigController {
-  constructor(private readonly fiscalService: FiscalService) {}
+  constructor(private readonly onboarding: FiscalOnboardingService) {}
 
   @Get('config')
   config(@Req() req: ReqErp) {
-    return this.fiscalService.configFiscal(req.erp.licencaId)
+    return this.onboarding.configFiscal(req.erp.licencaId)
   }
 
   /**
@@ -239,7 +245,7 @@ export class FiscalConfigController {
   @Post('certificado')
   certificado(@Req() req: ReqErp, @Body() body: unknown) {
     const dados = this.parse(enviarCertificadoSchema, body)
-    return this.fiscalService.enviarCertificado(
+    return this.onboarding.enviarCertificado(
       req.erp.licencaId,
       dados.arquivo_base64,
       dados.senha,
@@ -255,7 +261,7 @@ export class FiscalConfigController {
   @Post('ativacao')
   ativacao(@Req() req: ReqErp, @Body() body: unknown) {
     const dados = this.parse(ativarEmissaoSchema, body)
-    return this.fiscalService.ativarEmissao(req.erp.licencaId, req.erp.modulos, {
+    return this.onboarding.ativarEmissao(req.erp.licencaId, req.erp.modulos, {
       emitente:       dados.emitente as any,
       email:          dados.email,
       telefone:       dados.telefone,
@@ -278,7 +284,7 @@ export class FiscalConfigController {
   @Post('csc')
   csc(@Req() req: ReqErp, @Body() body: unknown) {
     const dados = this.parse(cadastrarCscSchema, body)
-    return this.fiscalService.cadastrarCsc(
+    return this.onboarding.cadastrarCsc(
       req.erp.licencaId,
       dados.csc_id,
       dados.csc_token,

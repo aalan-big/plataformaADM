@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Body, Param, Query, BadRequestException } from '@nestjs/common'
-import { FiscalService } from './fiscal.service'
+import { FiscalCotaService } from './fiscal-cota.service'
 import { FiscalSaudeService } from './fiscal-saude.service'
 import { MODULO_NFE, MODULO_NFCE } from '@startbig/database'
 import { z, ZodError } from 'zod'
@@ -32,7 +32,7 @@ const concederExtrasSchema = z.object({
 
 @Controller('fiscal/licencas')
 export class FiscalAdminController {
-  constructor(private readonly fiscalService: FiscalService) {}
+  constructor(private readonly cota: FiscalCotaService) {}
 
   private parse<T>(schema: { parse: (x: unknown) => T }, valor: unknown): T {
     try {
@@ -52,13 +52,13 @@ export class FiscalAdminController {
   consumo(@Param('id') id: string, @Query('tipo') tipo?: string) {
     // Ausente vira NFE pelo `.default`, que é o que o painel pedia antes de
     // existir seletor — link antigo e aba aberta continuam funcionando.
-    return this.fiscalService.consumoMensal(id, this.parse(tipoDocumentoSchema, tipo))
+    return this.cota.consumoMensal(id, this.parse(tipoDocumentoSchema, tipo))
   }
 
   @Post(':id/notas-extras')
   conceder(@Param('id') id: string, @Body() body: unknown) {
     const dados = this.parse(concederExtrasSchema, body)
-    return this.fiscalService.concederExtras(id, dados.quantidade, dados.motivo, dados.tipoDocumento)
+    return this.cota.concederExtras(id, dados.quantidade, dados.motivo, dados.tipoDocumento)
   }
 }
 

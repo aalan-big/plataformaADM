@@ -37,7 +37,7 @@ const RESPOSTA_FOCUS = {
 
 const NAO_ENCONTRADA = falhaHttp(404, { codigo: 'nao_encontrado' })
 
-describe('FiscalService — ativarEmissao', () => {
+describe('Fiscal — ativarEmissao', () => {
   beforeEach(() => {
     process.env.FOCUS_NFE_PARTNER_TOKEN = 'token-conta'
     process.env.FISCAL_TOKENS_KEY = randomBytes(32).toString('base64')
@@ -50,18 +50,18 @@ describe('FiscalService — ativarEmissao', () => {
   describe('sem ficha no admin', () => {
     it('licença sem NFE/NFCE explícito: 404 e nada criado — nem ficha, nem empresa na Focus', async () => {
       for (const claim of [undefined, [], ['FINANCEIRO']]) {
-        const { servico, focus } = prepararCenario(null)
-        await assert.rejects(servico.ativarEmissao(LICENCA, claim as any, dados()), ehHttp(404, 'SEM_CONFIGURACAO_FISCAL'))
+        const { onboarding, emissao, focus } = prepararCenario(null)
+        await assert.rejects(onboarding.ativarEmissao(LICENCA, claim as any, dados()), ehHttp(404, 'SEM_CONFIGURACAO_FISCAL'))
         assert.equal(tabelas.empresaFiscalConfig.length, 0)
         assert.equal(focus.chamadas.length, 0)
       }
     })
 
     it('licença com NFE: a ficha nasce em PRODUÇÃO e a empresa é CRIADA na Focus', async () => {
-      const { servico, focus, ficha } = prepararCenario(null)
+      const { onboarding, emissao, focus, ficha } = prepararCenario(null)
       focus.quando('buscarEmpresaPorCnpj', null).quando('criarEmpresa', RESPOSTA_FOCUS)
 
-      const r = await servico.ativarEmissao(LICENCA, ['FINANCEIRO', 'NFE'], dados())
+      const r = await onboarding.ativarEmissao(LICENCA, ['FINANCEIRO', 'NFE'], dados())
 
       assert.equal(r.empresa, 'CRIADA')
       assert.equal(r.ambienteNome, 'Producao')
@@ -81,18 +81,18 @@ describe('FiscalService — ativarEmissao', () => {
     })
 
     it('CNPJ que já é de outro cliente: 409, nada na Focus', async () => {
-      const { servico, focus } = prepararCenario(null)
+      const { onboarding, emissao, focus } = prepararCenario(null)
       tabelas.empresaFiscalConfig.push({ clienteId: 'outro', cnpj: CNPJ, ambiente: 1 })
-      await assert.rejects(servico.ativarEmissao(LICENCA, ['NFE'], dados()), ehHttp(409, 'CNPJ_DE_OUTRO_CLIENTE'))
+      await assert.rejects(onboarding.ativarEmissao(LICENCA, ['NFE'], dados()), ehHttp(409, 'CNPJ_DE_OUTRO_CLIENTE'))
       assert.equal(focus.chamadas.length, 0)
     })
   })
 
   describe('tokens', () => {
     it('grava os DOIS tokens cifrados e tira o texto puro', async () => {
-      const { servico, focus, ficha } = prepararCenario({ focusEmpresaToken: 'colado-antes' })
+      const { onboarding, emissao, focus, ficha } = prepararCenario({ focusEmpresaToken: 'colado-antes' })
       focus.quando('buscarEmpresaPorCnpj', null).quando('criarEmpresa', RESPOSTA_FOCUS)
-      await servico.ativarEmissao(LICENCA, ['NFE'], dados())
+      await onboarding.ativarEmissao(LICENCA, ['NFE'], dados())
 
       assert.equal(ficha().focusEmpresaToken, null)
       assert.equal(decifrar(ficha().focusTokenProducao), 'tp-real')
@@ -101,43 +101,43 @@ describe('FiscalService — ativarEmissao', () => {
     })
 
     it('a emissão seguinte usa o token cifrado do ambiente da ficha', async () => {
-      const { servico, focus } = prepararCenario()
+      const { onboarding, emissao, focus } = prepararCenario()
       focus.quando('buscarEmpresaPorCnpj', null).quando('criarEmpresa', RESPOSTA_FOCUS)
-      await servico.ativarEmissao(LICENCA, ['NFE'], dados())
+      await onboarding.ativarEmissao(LICENCA, ['NFE'], dados())
 
       focus.quando('consultar', NAO_ENCONTRADA).quando('emitir', { status: 'autorizado' })
-      await servico.emitir(LICENCA, 'venda-1', { emitente: { cnpj: CNPJ }, items: [] })
+      await emissao.emitir(LICENCA, 'venda-1', { emitente: { cnpj: CNPJ }, items: [] })
       assert.equal(focus.chamadasDe('emitir')[0].args[0], 'tp-real')
     })
 
     it('trocar a ficha para homologação passa a usar o token de homologação, sem reenviar nada', async () => {
-      const { servico, focus, ficha } = prepararCenario()
+      const { onboarding, emissao, focus, ficha } = prepararCenario()
       focus.quando('buscarEmpresaPorCnpj', null).quando('criarEmpresa', RESPOSTA_FOCUS)
-      await servico.ativarEmissao(LICENCA, ['NFE'], dados())
+      await onboarding.ativarEmissao(LICENCA, ['NFE'], dados())
 
       ficha().ambiente = 2
       focus.quando('consultar', NAO_ENCONTRADA).quando('emitir', { status: 'autorizado' })
-      await servico.emitir(LICENCA, 'teste-1', { emitente: { cnpj: CNPJ }, items: [] })
+      await emissao.emitir(LICENCA, 'teste-1', { emitente: { cnpj: CNPJ }, items: [] })
       const [token, , , , ambiente] = focus.chamadasDe('emitir')[0].args
       assert.deepEqual([token, ambiente], ['th-real', 2])
     })
 
     it('token colado à mão pelo admin vence o cifrado', async () => {
-      const { servico, focus, ficha } = prepararCenario()
+      const { onboarding, emissao, focus, ficha } = prepararCenario()
       focus.quando('buscarEmpresaPorCnpj', null).quando('criarEmpresa', RESPOSTA_FOCUS)
-      await servico.ativarEmissao(LICENCA, ['NFE'], dados())
+      await onboarding.ativarEmissao(LICENCA, ['NFE'], dados())
 
       ficha().focusEmpresaToken = 'colado-pelo-admin'
       focus.quando('consultar', NAO_ENCONTRADA).quando('emitir', { status: 'autorizado' })
-      await servico.emitir(LICENCA, 'venda-1', { emitente: { cnpj: CNPJ }, items: [] })
+      await emissao.emitir(LICENCA, 'venda-1', { emitente: { cnpj: CNPJ }, items: [] })
       assert.equal(focus.chamadasDe('emitir')[0].args[0], 'colado-pelo-admin')
     })
 
     it('sem FISCAL_TOKENS_KEY: comportamento antigo, token do ambiente em texto', async () => {
       delete process.env.FISCAL_TOKENS_KEY
-      const { servico, focus, ficha } = prepararCenario()
+      const { onboarding, emissao, focus, ficha } = prepararCenario()
       focus.quando('buscarEmpresaPorCnpj', null).quando('criarEmpresa', RESPOSTA_FOCUS)
-      const r = await servico.ativarEmissao(LICENCA, ['NFE'], dados())
+      const r = await onboarding.ativarEmissao(LICENCA, ['NFE'], dados())
 
       assert.equal(ficha().focusEmpresaToken, 'tp-real')
       assert.equal(ficha().focusTokenProducao, null)
@@ -145,9 +145,9 @@ describe('FiscalService — ativarEmissao', () => {
     })
 
     it('a resposta ao ERP não traz token nenhum', async () => {
-      const { servico, focus } = prepararCenario()
+      const { onboarding, emissao, focus } = prepararCenario()
       focus.quando('buscarEmpresaPorCnpj', null).quando('criarEmpresa', RESPOSTA_FOCUS)
-      const r = await servico.ativarEmissao(LICENCA, ['NFE'], dados())
+      const r = await onboarding.ativarEmissao(LICENCA, ['NFE'], dados())
       const texto = JSON.stringify(r)
       assert.equal(texto.includes('tp-real') || texto.includes('th-real') || texto.includes('senha'), false)
     })
@@ -155,9 +155,9 @@ describe('FiscalService — ativarEmissao', () => {
 
   describe('empresa que já existe na Focus', () => {
     it('com id na ficha: ATUALIZA, sem procurar nem criar', async () => {
-      const { servico, focus } = prepararCenario({ focusEmpresaId: '268251' })
+      const { onboarding, emissao, focus } = prepararCenario({ focusEmpresaId: '268251' })
       focus.quando('atualizarEmpresa', RESPOSTA_FOCUS)
-      const r = await servico.ativarEmissao(LICENCA, undefined, dados())
+      const r = await onboarding.ativarEmissao(LICENCA, undefined, dados())
       assert.equal(r.empresa, 'ATUALIZADA')
       assert.equal(focus.chamadasDe('atualizarEmpresa')[0].args[1], '268251')
       assert.equal(focus.chamadasDe('buscarEmpresaPorCnpj').length, 0)
@@ -165,43 +165,43 @@ describe('FiscalService — ativarEmissao', () => {
     })
 
     it('achada pelo CNPJ: atualiza aquela, nunca cria outra', async () => {
-      const { servico, focus, ficha } = prepararCenario()
+      const { onboarding, emissao, focus, ficha } = prepararCenario()
       focus.quando('buscarEmpresaPorCnpj', { id: 77, cnpj: CNPJ }).quando('atualizarEmpresa', RESPOSTA_FOCUS)
-      await servico.ativarEmissao(LICENCA, undefined, dados())
+      await onboarding.ativarEmissao(LICENCA, undefined, dados())
       assert.equal(focus.chamadasDe('criarEmpresa').length, 0)
       assert.equal(ficha().focusEmpresaId, '77')
     })
 
     it('na atualização, endereço incompleto não barra (a empresa já existe lá)', async () => {
-      const { servico, focus } = prepararCenario({ focusEmpresaId: '268251' })
+      const { onboarding, emissao, focus } = prepararCenario({ focusEmpresaId: '268251' })
       focus.quando('atualizarEmpresa', RESPOSTA_FOCUS)
-      const r = await servico.ativarEmissao(LICENCA, undefined, dados({ cnpj: CNPJ, codigo_regime_tributario: 4 }))
+      const r = await onboarding.ativarEmissao(LICENCA, undefined, dados({ cnpj: CNPJ, codigo_regime_tributario: 4 }))
       assert.equal(r.empresa, 'ATUALIZADA')
     })
   })
 
   describe('recusas', () => {
     it('CNPJ do ERP diferente da ficha: 422 e nada na Focus', async () => {
-      const { servico, focus } = prepararCenario()
+      const { onboarding, emissao, focus } = prepararCenario()
       await assert.rejects(
-        servico.ativarEmissao(LICENCA, ['NFE'], dados({ ...EMITENTE, cnpj: '11222333000181' })),
+        onboarding.ativarEmissao(LICENCA, ['NFE'], dados({ ...EMITENTE, cnpj: '11222333000181' })),
         ehHttp(422, 'CNPJ_DIVERGENTE'),
       )
       assert.equal(focus.chamadas.length, 0)
     })
 
     it('para CRIAR, endereço incompleto: 422 com a lista inteira, sem chamar a Focus para criar', async () => {
-      const { servico, focus } = prepararCenario()
+      const { onboarding, emissao, focus } = prepararCenario()
       focus.quando('buscarEmpresaPorCnpj', null)
       await assert.rejects(
-        servico.ativarEmissao(LICENCA, ['NFE'], dados({ cnpj: CNPJ, razao_social: 'X', codigo_regime_tributario: 4 })),
+        onboarding.ativarEmissao(LICENCA, ['NFE'], dados({ cnpj: CNPJ, razao_social: 'X', codigo_regime_tributario: 4 })),
         (e: any) => ehHttp(422, 'DADOS_INCOMPLETOS')(e) && /logradouro.*CEP/.test(e.getResponse().mensagem),
       )
       assert.equal(focus.chamadasDe('criarEmpresa').length, 0)
     })
 
     it('validação da Focus (senha, município…): 422 com as mensagens dela e sem a senha', async () => {
-      const { servico, focus, ficha } = prepararCenario()
+      const { onboarding, emissao, focus, ficha } = prepararCenario()
       focus
         .quando('buscarEmpresaPorCnpj', null)
         .quando('criarEmpresa', falhaHttp(422, {
@@ -209,7 +209,7 @@ describe('FiscalService — ativarEmissao', () => {
           erros: [{ mensagem: 'Senha do certificado inválida' }, { mensagem: 'Senha do certificado inválida' }],
         }))
       await assert.rejects(
-        servico.ativarEmissao(LICENCA, ['NFE'], dados()),
+        onboarding.ativarEmissao(LICENCA, ['NFE'], dados()),
         (e: any) => {
           const m = e.getResponse().mensagem as string
           return ehHttp(422, 'EMISSORA_RECUSOU')(e) && m.includes('Senha do certificado inválida') &&
@@ -220,29 +220,29 @@ describe('FiscalService — ativarEmissao', () => {
     })
 
     it('401 da Focus é o NOSSO token: 501, nunca "certificado recusado"', async () => {
-      const { servico, focus } = prepararCenario()
+      const { onboarding, emissao, focus } = prepararCenario()
       focus.quando('buscarEmpresaPorCnpj', falhaHttp(401))
-      await assert.rejects(servico.ativarEmissao(LICENCA, ['NFE'], dados()), ehHttp(501, 'PLATAFORMA_SEM_TOKEN_DA_CONTA'))
+      await assert.rejects(onboarding.ativarEmissao(LICENCA, ['NFE'], dados()), ehHttp(501, 'PLATAFORMA_SEM_TOKEN_DA_CONTA'))
     })
 
     it('sem token de parceiro no .env: 501 sem falar com a Focus', async () => {
       delete process.env.FOCUS_NFE_PARTNER_TOKEN
-      const { servico, focus } = prepararCenario()
-      await assert.rejects(servico.ativarEmissao(LICENCA, ['NFE'], dados()), ehHttp(501, 'PLATAFORMA_SEM_TOKEN_DA_CONTA'))
+      const { onboarding, emissao, focus } = prepararCenario()
+      await assert.rejects(onboarding.ativarEmissao(LICENCA, ['NFE'], dados()), ehHttp(501, 'PLATAFORMA_SEM_TOKEN_DA_CONTA'))
       assert.equal(focus.chamadas.length, 0)
     })
 
     it('emitente sem CNPJ: 400', async () => {
-      const { servico } = prepararCenario()
-      await assert.rejects(servico.ativarEmissao(LICENCA, ['NFE'], dados({ razao_social: 'X' })), ehHttp(400, 'EMITENTE_SEM_CNPJ'))
+      const { onboarding, emissao } = prepararCenario()
+      await assert.rejects(onboarding.ativarEmissao(LICENCA, ['NFE'], dados({ razao_social: 'X' })), ehHttp(400, 'EMITENTE_SEM_CNPJ'))
     })
   })
 
   it('configFiscal enxerga o token cifrado', async () => {
-    const { servico, focus } = prepararCenario({ certificadoStatus: 'ATIVO', cscConfigurado: true })
+    const { onboarding, emissao, focus } = prepararCenario({ certificadoStatus: 'ATIVO', cscConfigurado: true })
     focus.quando('buscarEmpresaPorCnpj', null).quando('criarEmpresa', RESPOSTA_FOCUS)
-    await servico.ativarEmissao(LICENCA, ['NFE'], dados())
-    const c = await servico.configFiscal(LICENCA)
+    await onboarding.ativarEmissao(LICENCA, ['NFE'], dados())
+    const c = await onboarding.configFiscal(LICENCA)
     assert.equal(c.tokenConfigurado, true)
     assert.deepEqual(c.pendencias, [])
   })

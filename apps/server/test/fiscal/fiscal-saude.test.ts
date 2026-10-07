@@ -209,14 +209,14 @@ describe('FiscalSaudeService — painel de saúde fiscal', () => {
   })
 })
 
-describe('FiscalService — a consulta grava o desfecho na EmissaoLog', () => {
+describe('Fiscal — a consulta grava o desfecho na EmissaoLog', () => {
   it('autorizada na consulta vira linha EMISSAO/autorizado com o cStat, uma vez só', async () => {
-    const { servico, focus } = prepararCenario({ focusEmpresaToken: 'tk' })
+    const { emissao, focus } = prepararCenario({ focusEmpresaToken: 'tk' })
     const AUTORIZADA = { status: 'autorizado', status_sefaz: '100', mensagem_sefaz: 'Autorizado o uso da NF-e' }
     focus.quando('consultar', AUTORIZADA, AUTORIZADA)
 
-    await servico.consultar(LICENCA, 'venda-1')
-    await servico.consultar(LICENCA, 'venda-1')
+    await emissao.consultar(LICENCA, 'venda-1')
+    await emissao.consultar(LICENCA, 'venda-1')
 
     assert.equal(tabelas.emissaoLog.length, 1)
     assert.equal(tabelas.emissaoLog[0].acao, 'EMISSAO')
@@ -225,19 +225,19 @@ describe('FiscalService — a consulta grava o desfecho na EmissaoLog', () => {
   })
 
   it('rejeição na consulta vira linha EMISSAO/erro com o cStat', async () => {
-    const { servico, focus } = prepararCenario({ focusEmpresaToken: 'tk' })
+    const { emissao, focus } = prepararCenario({ focusEmpresaToken: 'tk' })
     focus.quando('consultar', { status: 'erro_autorizacao', status_sefaz: '481', mensagem_sefaz: 'Rejeição: CRT diverge' })
-    await servico.consultar(LICENCA, 'venda-2')
+    await emissao.consultar(LICENCA, 'venda-2')
     assert.equal(tabelas.emissaoLog.length, 1)
     assert.equal(tabelas.emissaoLog[0].resultado, 'erro')
     assert.equal(tabelas.emissaoLog[0].codigoSefaz, 481)
   })
 
   it('processando e cancelado não gravam', async () => {
-    const { servico, focus } = prepararCenario({ focusEmpresaToken: 'tk' })
+    const { emissao, focus } = prepararCenario({ focusEmpresaToken: 'tk' })
     focus.quando('consultar', { status: 'processando_autorizacao' }, { status: 'cancelado' })
-    await servico.consultar(LICENCA, 'venda-3')
-    await servico.consultar(LICENCA, 'venda-3')
+    await emissao.consultar(LICENCA, 'venda-3')
+    await emissao.consultar(LICENCA, 'venda-3')
     assert.equal(tabelas.emissaoLog.length, 0)
   })
 })
