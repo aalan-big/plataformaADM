@@ -2,19 +2,22 @@ import { Injectable, Logger } from '@nestjs/common'
 import { randomUUID } from 'crypto'
 import { Resend } from 'resend'
 import { prisma } from '@startbig/database'
+import { layout, paragrafo, nota, destaque, aviso, dados as tabelaDados, botao, esc, COR } from './email-layout'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 const FROM   = process.env.EMAIL_FROM ?? 'noreply@startbig.com.br'
-
-/** Texto que chega por rota pública (hostname, HWID) não entra cru no HTML. */
-const escaparHtml = (texto: string) =>
-  texto.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
 
 async function enviar(payload: Parameters<typeof resend.emails.send>[0]) {
   const { data, error } = await resend.emails.send(payload)
   if (error) throw new Error(`Resend: ${JSON.stringify(error)}`)
   return data
 }
+
+const dataLonga = (d: Date) =>
+  d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Sao_Paulo' })
+
+const ola = (nomeCliente: string) =>
+  paragrafo(`Olá, <strong style="color:${COR.escuro};">${esc(nomeCliente)}</strong>!`)
 
 @Injectable()
 export class EmailService {
@@ -27,15 +30,27 @@ export class EmailService {
     dataVencimento:  Date
     nomeDispositivo: string
   }) {
-    const vencimento = dados.dataVencimento.toLocaleDateString('pt-BR', {
-      day: '2-digit', month: 'long', year: 'numeric',
-    })
+    const vencimento = dataLonga(dados.dataVencimento)
 
     await enviar({
       from:    FROM,
       to:      dados.email,
       subject: 'Sua chave de ativação StartBig ERP',
-      html:    this.template({ ...dados, vencimento }),
+      html:    layout({
+        selo:      'Chave de ativação',
+        titulo:    'Seu acesso ao StartBIG foi liberado',
+        preheader: `Sua chave de ativação, válida até ${vencimento}.`,
+        corpo: [
+          ola(dados.nomeCliente),
+          paragrafo('Use a chave abaixo para ativar o sistema no seu computador.'),
+          destaque({ rotulo: 'Chave de ativação', valor: esc(dados.chave), mono: true }),
+          tabelaDados([
+            ['Dispositivo', esc(dados.nomeDispositivo)],
+            ['Válida até',  vencimento],
+          ]),
+          nota('Não compartilhe esta chave: ela dá acesso à sua licença.'),
+        ].join(''),
+      }),
     })
 
     this.logger.log(`Chave de ativação enviada para ${dados.email}`)
@@ -61,19 +76,24 @@ export class EmailService {
     })
 
     const appUrl = process.env.APP_URL ?? 'https://admin.startbig.com.br'
+    const link   = `${appUrl}/primeiro-acesso?token=${token}`
 
     await enviar({
       from:    FROM,
       to:      dados.email,
       subject: 'Bem-vindo ao StartBig — Crie sua senha de acesso',
-      html:    `
-        <p>Olá, <strong>${dados.nomeCliente}</strong>!</p>
-        <p>Sua empresa foi cadastrada com sucesso no StartBig.</p>
-        <p>Clique no link abaixo para criar sua senha de acesso ao portal:</p>
-        <p><a href="${appUrl}/primeiro-acesso?token=${token}">Criar minha senha</a></p>
-        <p>Este link expira em 7 dias.</p>
-        <p>Se não foi você quem se cadastrou, ignore este e-mail.</p>
-      `,
+      html:    layout({
+        selo:      'Boas-vindas',
+        titulo:    'Crie sua senha de acesso',
+        preheader: 'Sua empresa foi cadastrada no StartBIG. Falta só criar a senha.',
+        corpo: [
+          ola(dados.nomeCliente),
+          paragrafo('Sua empresa foi cadastrada com sucesso no StartBIG. Para entrar, crie a sua senha de acesso:'),
+          botao('Criar minha senha', link),
+          paragrafo(`<span style="font-size:13px;color:${COR.apagado};">Se o botão não abrir, copie este endereço no navegador:<br><a href="${esc(link)}" style="color:${COR.primaria};word-break:break-all;">${esc(link)}</a></span>`),
+          nota('Este link expira em 7 dias. Se não foi você quem se cadastrou, ignore este e-mail.'),
+        ].join(''),
+      }),
     })
 
     this.logger.log(`E-mail de primeiro acesso enviado para ${dados.email}`)
@@ -85,41 +105,24 @@ export class EmailService {
     dataVencimento:  Date
     nomeDispositivo: string
   }) {
-    const vencimento = dados.dataVencimento.toLocaleDateString('pt-BR', {
-      day: '2-digit', month: 'long', year: 'numeric',
-    })
+    const vencimento = dataLonga(dados.dataVencimento)
 
     await enviar({
       from:    FROM,
       to:      dados.email,
       subject: 'Renovação confirmada — StartBig ERP',
-      html:    `
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#0f172a;font-family:Arial,sans-serif;">
-  <div style="max-width:540px;margin:40px auto;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;">
-    <div style="background:#1e3a5f;padding:28px 36px;text-align:center;">
-      <p style="margin:0;color:#fff;font-size:20px;font-weight:700;letter-spacing:1px;">StartBig ERP</p>
-      <p style="margin:4px 0 0;color:#94a3b8;font-size:12px;">Renovação Confirmada</p>
-    </div>
-    <div style="padding:32px 36px;">
-      <p style="color:#e2e8f0;font-size:15px;margin:0 0 6px;">Olá, <strong>${dados.nomeCliente}</strong></p>
-      <p style="color:#94a3b8;font-size:13px;margin:0 0 28px;line-height:1.7;">
-        Seu pagamento foi confirmado e sua licença foi renovada com sucesso. O sistema continua funcionando normalmente com a mesma chave de ativação.
-      </p>
-      <div style="background:#0f172a;border:1px solid #22c55e;border-radius:10px;padding:22px;text-align:center;margin-bottom:24px;">
-        <p style="margin:0 0 10px;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:2px;">Nova validade</p>
-        <p style="margin:0;color:#4ade80;font-size:22px;font-weight:700;">${vencimento}</p>
-        <p style="margin:10px 0 0;color:#94a3b8;font-size:12px;">Dispositivo: ${dados.nomeDispositivo}</p>
-      </div>
-      <p style="color:#475569;font-size:12px;line-height:1.6;margin:0;border-top:1px solid #334155;padding-top:20px;">
-        Não é necessário nenhuma ação. Em caso de dúvidas, entre em contato com o suporte.
-      </p>
-    </div>
-  </div>
-</body>
-</html>`,
+      html:    layout({
+        selo:      'Pagamento confirmado',
+        tom:       'sucesso',
+        titulo:    'Sua licença foi renovada',
+        preheader: `Pagamento confirmado. Nova validade: ${vencimento}.`,
+        corpo: [
+          ola(dados.nomeCliente),
+          paragrafo('Recebemos o seu pagamento. O sistema continua funcionando normalmente, com a mesma chave de ativação.'),
+          destaque({ rotulo: 'Nova validade', valor: vencimento, detalhe: `Dispositivo: ${esc(dados.nomeDispositivo)}`, tom: 'sucesso' }),
+          nota('Você não precisa fazer nada. Obrigado por continuar com a gente!'),
+        ].join(''),
+      }),
     })
 
     this.logger.log(`Confirmação de renovação enviada para ${dados.email}`)
@@ -130,42 +133,25 @@ export class EmailService {
     nomeCliente:    string
     dataVencimento: Date | null
   }) {
-    const vencimento = dados.dataVencimento
-      ? dados.dataVencimento.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
-      : null
+    const vencimento = dados.dataVencimento ? dataLonga(dados.dataVencimento) : null
 
     await enviar({
       from:    FROM,
       to:      dados.email,
       subject: 'Falha no pagamento da sua assinatura — atualize seu cartão · StartBig ERP',
-      html:    `
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#0f172a;font-family:Arial,sans-serif;">
-  <div style="max-width:540px;margin:40px auto;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;">
-    <div style="background:#7f1d1d;padding:28px 36px;text-align:center;">
-      <p style="margin:0;color:#fff;font-size:20px;font-weight:700;letter-spacing:1px;">StartBig ERP</p>
-      <p style="margin:4px 0 0;color:#fca5a5;font-size:12px;">Falha no Pagamento</p>
-    </div>
-    <div style="padding:32px 36px;">
-      <p style="color:#e2e8f0;font-size:15px;margin:0 0 6px;">Olá, <strong>${dados.nomeCliente}</strong></p>
-      <p style="color:#94a3b8;font-size:13px;margin:0 0 22px;line-height:1.7;">
-        Não conseguimos processar a cobrança da renovação da sua assinatura. Isso costuma acontecer por cartão vencido, sem limite ou bloqueado.
-      </p>
-      <div style="background:#0f172a;border:1px solid #f59e0b;border-radius:10px;padding:20px;margin-bottom:22px;">
-        <p style="margin:0;color:#fbbf24;font-size:13px;line-height:1.7;">
-          Vamos tentar cobrar novamente automaticamente nos próximos dias. Para não perder o acesso, atualize a forma de pagamento ou verifique seu cartão.
-        </p>
-      </div>
-      ${vencimento ? `<p style="color:#94a3b8;font-size:13px;margin:0 0 22px;">Seu acesso atual é válido até <strong style="color:#e2e8f0;">${vencimento}</strong>.</p>` : ''}
-      <p style="color:#475569;font-size:12px;line-height:1.6;margin:0;border-top:1px solid #334155;padding-top:20px;">
-        Se precisar de ajuda, entre em contato com o suporte.
-      </p>
-    </div>
-  </div>
-</body>
-</html>`,
+      html:    layout({
+        selo:      'Falha no pagamento',
+        tom:       'perigo',
+        titulo:    'Não conseguimos cobrar a sua assinatura',
+        preheader: 'Atualize o cartão para não perder o acesso ao sistema.',
+        corpo: [
+          ola(dados.nomeCliente),
+          paragrafo('A cobrança da renovação não passou. Isso costuma acontecer com cartão vencido, sem limite ou bloqueado.'),
+          aviso('Vamos tentar cobrar de novo automaticamente nos próximos dias. Para não perder o acesso, <strong>atualize a forma de pagamento</strong> ou confira o seu cartão com o banco.', 'atencao'),
+          vencimento ? paragrafo(`Seu acesso atual vale até <strong style="color:${COR.escuro};">${vencimento}</strong>.`) : '',
+          nota('Se já resolveu com o banco, pode ignorar este aviso: a próxima tentativa deve passar.'),
+        ].join(''),
+      }),
     })
 
     this.logger.log(`Aviso de falha de pagamento enviado para ${dados.email}`)
@@ -177,9 +163,7 @@ export class EmailService {
     diasRestantes:   number
     dataVencimento:  Date
   }) {
-    const vencimento = dados.dataVencimento.toLocaleDateString('pt-BR', {
-      day: '2-digit', month: 'long', year: 'numeric',
-    })
+    const vencimento = dataLonga(dados.dataVencimento)
 
     const subject = dados.diasRestantes === 1
       ? 'Aviso Importante: Sua licença vence amanhã'
@@ -209,9 +193,8 @@ export class EmailService {
     diasRestantes: number
     ultimoBackup:  Date
   }) {
-    const ultimo = dados.ultimoBackup.toLocaleDateString('pt-BR', {
-      day: '2-digit', month: 'long', year: 'numeric',
-    })
+    const ultimo = dataLonga(dados.ultimoBackup)
+    const dias   = `${dados.diasRestantes} ${dados.diasRestantes === 1 ? 'dia' : 'dias'}`
 
     await enviar({
       from:    FROM,
@@ -219,42 +202,19 @@ export class EmailService {
       subject: dados.diasRestantes <= 7
         ? `Últimos ${dados.diasRestantes} dias do seu backup — StartBig ERP`
         : `Seu backup em nuvem será removido em ${dados.diasRestantes} dias`,
-      html: `
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#0f172a;font-family:Arial,sans-serif;">
-  <div style="max-width:540px;margin:40px auto;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;">
-    <div style="background:#78350f;padding:28px 36px;text-align:center;">
-      <p style="margin:0;color:#fff;font-size:20px;font-weight:700;letter-spacing:1px;">StartBig ERP</p>
-      <p style="margin:4px 0 0;color:#fcd34d;font-size:12px;">Backup em nuvem — aviso de remoção</p>
-    </div>
-    <div style="padding:32px 36px;">
-      <p style="color:#e2e8f0;font-size:15px;margin:0 0 18px;">Olá, <strong>${dados.nomeCliente}</strong></p>
-
-      <p style="color:#cbd5e1;font-size:14px;line-height:1.7;margin:0 0 16px;">
-        Sua licença está inativa e, por isso, a cópia de segurança guardada na nossa nuvem será
-        <strong style="color:#fbbf24;">removida em ${dados.diasRestantes} dia(s)</strong>.
-      </p>
-
-      <div style="background:#0f172a;border:1px solid #92400e;border-radius:10px;padding:18px;margin-bottom:20px;">
-        <p style="margin:0 0 4px;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Último backup enviado</p>
-        <p style="margin:0;color:#e2e8f0;font-size:15px;font-weight:600;">${ultimo}</p>
-      </div>
-
-      <p style="color:#cbd5e1;font-size:14px;line-height:1.7;margin:0 0 16px;">
-        <strong>Nada foi perdido até aqui.</strong> Enquanto o prazo não vence, basta reativar sua
-        licença que você volta a ter acesso ao backup e pode restaurá-lo pelo próprio sistema.
-      </p>
-
-      <p style="color:#475569;font-size:12px;line-height:1.6;margin:0;border-top:1px solid #334155;padding-top:20px;">
-        Depois do prazo a remoção é definitiva e não há como recuperar. Em caso de dúvidas, entre em
-        contato com o suporte.
-      </p>
-    </div>
-  </div>
-</body>
-</html>`,
+      html: layout({
+        selo:      'Backup em nuvem',
+        tom:       'atencao',
+        titulo:    `Seu backup será removido em ${dias}`,
+        preheader: 'Reative a licença dentro do prazo e o backup continua guardado.',
+        corpo: [
+          ola(dados.nomeCliente),
+          paragrafo(`Sua licença está inativa e, por isso, a cópia de segurança guardada na nossa nuvem será <strong style="color:${COR.escuro};">removida em ${dias}</strong>.`),
+          tabelaDados([['Último backup enviado', ultimo]]),
+          aviso('<strong>Nada foi perdido até aqui.</strong> Enquanto o prazo não vence, basta reativar a licença para voltar a ter o backup e restaurá-lo pelo próprio sistema.', 'info'),
+          nota('Depois do prazo a remoção é definitiva e não há como recuperar.'),
+        ].join(''),
+      }),
     })
 
     this.logger.log(`Aviso de retenção de backup (${dados.diasRestantes} dias) enviado para ${dados.email}`)
@@ -269,44 +229,30 @@ export class EmailService {
     dataHora:    Date
   }) {
     const dataHora = dados.dataHora.toLocaleString('pt-BR', {
-      dateStyle: 'short', timeStyle: 'short',
+      dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo',
     })
 
     await enviar({
       from:    FROM,
       to:      dados.email,
       subject: 'Alerta de segurança — novo dispositivo conectado à sua conta StartBig',
-      html:    `
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#0f172a;font-family:Arial,sans-serif;">
-  <div style="max-width:540px;margin:40px auto;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;">
-    <div style="background:#1e3a5f;padding:28px 36px;text-align:center;">
-      <p style="margin:0;color:#fff;font-size:20px;font-weight:700;letter-spacing:1px;">StartBig ERP</p>
-      <p style="margin:4px 0 0;color:#94a3b8;font-size:12px;">Alerta de Segurança</p>
-    </div>
-    <div style="padding:32px 36px;">
-      <p style="color:#e2e8f0;font-size:15px;margin:0 0 6px;">Olá, <strong>${dados.nomeCliente}</strong></p>
-      <p style="color:#94a3b8;font-size:13px;margin:0 0 28px;line-height:1.7;">
-        Detectamos um login com e-mail e senha em um <strong>novo dispositivo</strong>. Como o limite de dispositivos simultâneos da sua licença já estava ocupado, a sessão anterior foi encerrada automaticamente para liberar acesso a este novo dispositivo.
-      </p>
-      <div style="background:#0f172a;border:1px solid #f59e0b;border-radius:10px;padding:22px;text-align:center;margin-bottom:24px;">
-        <p style="margin:0 0 10px;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:2px;">Novo dispositivo</p>
-        ${dados.nomeComputador ? `<p style="margin:0 0 6px;color:#e2e8f0;font-size:16px;font-weight:700;">${escaparHtml(dados.nomeComputador)}</p>` : ''}
-        <p style="margin:0;color:#e2e8f0;font-size:14px;font-family:monospace;">${escaparHtml(dados.hwidNovo)}</p>
-        <p style="margin:10px 0 0;color:#94a3b8;font-size:12px;">${dataHora}</p>
-      </div>
-      <p style="color:#94a3b8;font-size:13px;margin:0 0 20px;line-height:1.7;">
-        Se foi você quem reinstalou o sistema ou trocou de computador, pode ignorar este aviso. Se não reconhece esse acesso, troque sua senha e entre em contato com o suporte imediatamente.
-      </p>
-      <p style="color:#475569;font-size:12px;line-height:1.6;margin:0;border-top:1px solid #334155;padding-top:20px;">
-        Este é um e-mail automático de segurança — não é necessário responder.
-      </p>
-    </div>
-  </div>
-</body>
-</html>`,
+      html:    layout({
+        selo:      'Alerta de segurança',
+        tom:       'atencao',
+        titulo:    'Sua licença foi ativada em outro computador',
+        preheader: `Login com e-mail e senha em ${dados.nomeComputador ?? 'um novo computador'} em ${dataHora}.`,
+        corpo: [
+          ola(dados.nomeCliente),
+          paragrafo('Alguém entrou na sua conta com e-mail e senha em um <strong>novo computador</strong>, e a licença passou a funcionar nele. O computador anterior foi desconectado para liberar a vaga.'),
+          tabelaDados([
+            ...(dados.nomeComputador ? [['Computador', esc(dados.nomeComputador)] as [string, string]] : []),
+            ['Identificação', `<span style="font-family:'Courier New',Courier,monospace;font-size:12px;font-weight:400;word-break:break-all;">${esc(dados.hwidNovo)}</span>`],
+            ['Data e hora',   dataHora],
+          ]),
+          aviso('Se foi você quem trocou de computador ou reinstalou o sistema, pode ignorar este aviso. <strong>Se não reconhece esse acesso</strong>, troque sua senha e fale com o suporte agora.', 'atencao'),
+          nota('E-mail automático de segurança. Não é preciso responder.'),
+        ].join(''),
+      }),
     })
 
     this.logger.log(`Alerta de troca de dispositivo enviado para ${dados.email}`)
@@ -337,35 +283,29 @@ export class EmailService {
     const valor = dados.valor != null
       ? dados.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
       : '—'
+    const mono = (t: string) => `<span style="font-family:'Courier New',Courier,monospace;font-size:12px;word-break:break-all;">${esc(t)}</span>`
 
     await enviar({
       from:    FROM,
       to:      destino,
       subject: `[ALERTA] ${dados.titulo} — ${dados.evento}`,
-      html:    `
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#0f172a;font-family:Arial,sans-serif;">
-  <div style="max-width:540px;margin:40px auto;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;">
-    <div style="background:#7f1d1d;padding:24px 32px;">
-      <p style="margin:0;color:#fff;font-size:17px;font-weight:700;">${dados.titulo}</p>
-      <p style="margin:4px 0 0;color:#fca5a5;font-size:12px;">${dados.subtitulo}</p>
-    </div>
-    <div style="padding:28px 32px;">
-      <table width="100%" cellpadding="0" cellspacing="0" style="font-size:13px;">
-        <tr><td style="color:#64748b;padding:6px 0;width:110px;">Evento</td><td style="color:#e2e8f0;font-family:monospace;">${dados.evento}</td></tr>
-        <tr><td style="color:#64748b;padding:6px 0;">Motivo</td><td style="color:#fbbf24;">${dados.motivo}</td></tr>
-        <tr><td style="color:#64748b;padding:6px 0;">Referência</td><td style="color:#e2e8f0;font-family:monospace;">${dados.referencia}</td></tr>
-        <tr><td style="color:#64748b;padding:6px 0;">Valor</td><td style="color:#e2e8f0;">${valor}</td></tr>
-      </table>
-      <p style="color:#94a3b8;font-size:13px;line-height:1.7;margin:22px 0 0;border-top:1px solid #334155;padding-top:18px;">
-        ${dados.acao}
-      </p>
-    </div>
-  </div>
-</body>
-</html>`,
+      html:    layout({
+        selo:      'Alerta operacional',
+        tom:       'perigo',
+        titulo:    dados.titulo,
+        preheader: `${dados.evento}: ${dados.motivo}`,
+        interno:   true,
+        corpo: [
+          paragrafo(esc(dados.subtitulo)),
+          tabelaDados([
+            ['Evento',     mono(dados.evento)],
+            ['Motivo',     esc(dados.motivo)],
+            ['Referência', mono(dados.referencia)],
+            ['Valor',      valor],
+          ]),
+          aviso(`<strong>O que fazer:</strong> ${esc(dados.acao)}`, 'info'),
+        ].join(''),
+      }),
     })
 
     this.logger.warn(`Alerta operacional enviado para ${destino}: ${dados.evento} — ${dados.motivo} (${dados.referencia})`)
@@ -376,85 +316,21 @@ export class EmailService {
     diasRestantes: number
     vencimento:    string
   }) {
-    const isUrgente  = d.diasRestantes <= 1
-    const corDestaque = isUrgente ? '#ef4444' : '#f59e0b'
+    const urgente = d.diasRestantes <= 1
+    const dias    = `${d.diasRestantes} ${d.diasRestantes === 1 ? 'dia' : 'dias'}`
 
-    return `
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#0f172a;font-family:Arial,sans-serif;">
-  <div style="max-width:540px;margin:40px auto;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;">
-    <div style="background:#1e3a5f;padding:28px 36px;text-align:center;">
-      <p style="margin:0;color:#fff;font-size:20px;font-weight:700;letter-spacing:1px;">StartBig ERP</p>
-      <p style="margin:4px 0 0;color:#94a3b8;font-size:12px;">Aviso de Vencimento</p>
-    </div>
-    <div style="padding:32px 36px;">
-      <p style="color:#e2e8f0;font-size:15px;margin:0 0 6px;">Olá, <strong>${d.nomeCliente}</strong></p>
-      <p style="color:#94a3b8;font-size:13px;margin:0 0 28px;line-height:1.7;">
-        Este é um lembrete automático de que a sua assinatura do sistema está prestes a expirar.
-      </p>
-      <div style="background:#0f172a;border:1px solid ${corDestaque};border-radius:10px;padding:22px;text-align:center;margin-bottom:24px;">
-        <p style="margin:0 0 10px;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:2px;">Sua licença expira em</p>
-        <p style="margin:0;color:${corDestaque};font-size:26px;font-weight:700;letter-spacing:2px;">${d.diasRestantes} ${d.diasRestantes === 1 ? 'dia' : 'dias'}</p>
-        <p style="margin:10px 0 0;color:#e2e8f0;font-size:13px;">Data: <strong>${d.vencimento}</strong></p>
-      </div>
-      <p style="color:#94a3b8;font-size:13px;margin:0 0 28px;line-height:1.7;">
-        Para evitar a interrupção do seu acesso e a suspensão da sua licença, certifique-se de que o pagamento da renovação seja realizado antes do vencimento.
-      </p>
-      <p style="color:#475569;font-size:12px;line-height:1.6;margin:0;border-top:1px solid #334155;padding-top:20px;">
-        Caso já tenha efetuado o pagamento, por favor, desconsidere este e-mail. Em caso de dúvidas, entre em contato com o suporte.
-      </p>
-    </div>
-  </div>
-</body>
-</html>`
-  }
-
-  private template(d: {
-    nomeCliente:     string
-    chave:           string
-    vencimento:      string
-    nomeDispositivo: string
-  }) {
-    return `
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#0f172a;font-family:Arial,sans-serif;">
-  <div style="max-width:540px;margin:40px auto;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;">
-    <div style="background:#1e3a5f;padding:28px 36px;text-align:center;">
-      <p style="margin:0;color:#fff;font-size:20px;font-weight:700;letter-spacing:1px;">StartBig ERP</p>
-      <p style="margin:4px 0 0;color:#94a3b8;font-size:12px;">Sistema de Gestão</p>
-    </div>
-    <div style="padding:32px 36px;">
-      <p style="color:#e2e8f0;font-size:15px;margin:0 0 6px;">Olá, <strong>${d.nomeCliente}</strong></p>
-      <p style="color:#94a3b8;font-size:13px;margin:0 0 28px;line-height:1.7;">
-        Seu acesso ao StartBig ERP foi liberado. Use a chave abaixo para ativar o sistema no seu dispositivo.
-      </p>
-      <div style="background:#0f172a;border:1px solid #3b82f6;border-radius:10px;padding:22px;text-align:center;margin-bottom:24px;">
-        <p style="margin:0 0 10px;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:2px;">Chave de Ativação</p>
-        <p style="margin:0;color:#60a5fa;font-size:26px;font-weight:700;letter-spacing:5px;font-family:monospace;">${d.chave}</p>
-      </div>
-      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
-        <tr>
-          <td width="48%" style="background:#0f172a;border-radius:8px;padding:14px;border:1px solid #1e293b;">
-            <p style="margin:0 0 4px;color:#64748b;font-size:11px;text-transform:uppercase;">Dispositivo</p>
-            <p style="margin:0;color:#e2e8f0;font-size:13px;">${d.nomeDispositivo}</p>
-          </td>
-          <td width="4%"></td>
-          <td width="48%" style="background:#0f172a;border-radius:8px;padding:14px;border:1px solid #1e293b;">
-            <p style="margin:0 0 4px;color:#64748b;font-size:11px;text-transform:uppercase;">Válida até</p>
-            <p style="margin:0;color:#e2e8f0;font-size:13px;">${d.vencimento}</p>
-          </td>
-        </tr>
-      </table>
-      <p style="color:#475569;font-size:12px;line-height:1.6;margin:0;border-top:1px solid #334155;padding-top:20px;">
-        Não compartilhe esta chave. Em caso de dúvidas, entre em contato com o suporte.
-      </p>
-    </div>
-  </div>
-</body>
-</html>`
+    return layout({
+      selo:      'Aviso de vencimento',
+      tom:       urgente ? 'perigo' : 'atencao',
+      titulo:    urgente ? 'Sua licença vence amanhã' : `Sua licença vence em ${dias}`,
+      preheader: `Renove até ${d.vencimento} para não interromper o sistema.`,
+      corpo: [
+        ola(d.nomeCliente),
+        paragrafo('Este é um lembrete automático: a sua assinatura do StartBIG está perto de vencer.'),
+        destaque({ rotulo: 'Sua licença vence em', valor: dias, detalhe: `Data: <strong>${d.vencimento}</strong>`, tom: urgente ? 'perigo' : 'atencao' }),
+        paragrafo('Para não interromper o acesso, faça o pagamento da renovação antes dessa data. Dá para renovar pelo próprio sistema.'),
+        nota('Se já fez o pagamento, pode desconsiderar este e-mail.'),
+      ].join(''),
+    })
   }
 }
