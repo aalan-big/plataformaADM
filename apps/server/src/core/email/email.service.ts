@@ -6,6 +6,10 @@ import { prisma } from '@startbig/database'
 const resend = new Resend(process.env.RESEND_API_KEY)
 const FROM   = process.env.EMAIL_FROM ?? 'noreply@startbig.com.br'
 
+/** Texto que chega por rota pública (hostname, HWID) não entra cru no HTML. */
+const escaparHtml = (texto: string) =>
+  texto.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
+
 async function enviar(payload: Parameters<typeof resend.emails.send>[0]) {
   const { data, error } = await resend.emails.send(payload)
   if (error) throw new Error(`Resend: ${JSON.stringify(error)}`)
@@ -260,6 +264,8 @@ export class EmailService {
     email:       string
     nomeCliente: string
     hwidNovo:    string
+    /** Hostname, quando o ERP manda: "NOTEBOOK-LOJA" diz mais que um GUID. */
+    nomeComputador?: string
     dataHora:    Date
   }) {
     const dataHora = dados.dataHora.toLocaleString('pt-BR', {
@@ -287,7 +293,8 @@ export class EmailService {
       </p>
       <div style="background:#0f172a;border:1px solid #f59e0b;border-radius:10px;padding:22px;text-align:center;margin-bottom:24px;">
         <p style="margin:0 0 10px;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:2px;">Novo dispositivo</p>
-        <p style="margin:0;color:#e2e8f0;font-size:14px;font-family:monospace;">${dados.hwidNovo}</p>
+        ${dados.nomeComputador ? `<p style="margin:0 0 6px;color:#e2e8f0;font-size:16px;font-weight:700;">${escaparHtml(dados.nomeComputador)}</p>` : ''}
+        <p style="margin:0;color:#e2e8f0;font-size:14px;font-family:monospace;">${escaparHtml(dados.hwidNovo)}</p>
         <p style="margin:10px 0 0;color:#94a3b8;font-size:12px;">${dataHora}</p>
       </div>
       <p style="color:#94a3b8;font-size:13px;margin:0 0 20px;line-height:1.7;">

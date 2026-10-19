@@ -31,6 +31,8 @@ export const adicionarExtraSchema = z.object({
 export const conectarSchema = z.object({
   chave: z.string().min(1),
   hwid:  z.string().optional(),
+  /** Hostname da máquina, só para leitura humana (e-mail de aviso, suporte). */
+  nomeComputador: z.string().trim().max(100).optional(),
 })
 
 export const desconectarSchema = z.object({

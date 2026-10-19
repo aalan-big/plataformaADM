@@ -21,6 +21,11 @@ export const tabelas = {
   consumoFiscal:       [] as Linha[],
   planoModulo:         [] as Linha[],
   licencaModuloExtra:  [] as Linha[],
+  cliente:             [] as Linha[],
+  licencaSessao:       [] as Linha[],
+  licencaHwidRevogado: [] as Linha[],
+  licencaHistorico:    [] as Linha[],
+  modulo:              [] as Linha[],
 }
 
 export function reiniciarBanco() {
@@ -53,6 +58,7 @@ function casa(linha: Linha, where: Linha = {}): boolean {
         if (op === 'in')  return alvo.includes(v)
         if (op === 'not') return v !== alvo
         if (op === 'gte') return v >= alvo
+        if (op === 'gt')  return v > alvo
         throw new TypeError(`prisma falso: operador "${op}" não simulado`)
       })
     }
@@ -74,12 +80,103 @@ const chaveConsumo = (w: Linha) =>
     l.ambiente === w.ambiente &&
     l.tipoDocumento === w.tipoDocumento
 
+/** Sessão, revogado: a chave composta `licencaId_hwid` do schema. */
+const porLicencaHwid = (w: Linha) =>
+  (l: Linha) => l.licencaId === w.licencaId_hwid.licencaId && l.hwid === w.licencaId_hwid.hwid
+
+/** `deleteMany` com `where` simples; devolve `{ count }` como o Prisma. */
+function apagar(tabela: Linha[], where: Linha) {
+  const antes = tabela.length
+  for (let i = tabela.length - 1; i >= 0; i--) if (casa(tabela[i], where)) tabela.splice(i, 1)
+  return { count: antes - tabela.length }
+}
+
+let sequencia = 0
+const novoId = (prefixo: string) => `${prefixo}-${++sequencia}`
+
 export const prismaFalso = {
+  // As operações já rodaram quando chegam aqui (funções async são ansiosas):
+  // basta esperar. Não há rollback — os testes não dependem dele.
+  $transaction: async (operacoes: Promise<unknown>[]) => Promise.all(operacoes),
+
   licenca: {
     findUnique: async ({ where }: Linha) =>
       copia(tabelas.licenca.find(l => l.id === where.id)),
+    findFirst: async ({ where }: Linha) =>
+      copia(tabelas.licenca.find(l => casa(l, where))),
     findMany: async ({ where }: Linha) =>
       tabelas.licenca.filter(l => casa(l, where)).map(copia),
+    update: async ({ where, data }: Linha) => {
+      const linha = tabelas.licenca.find(l => l.id === where.id)
+      if (!linha) throw new Error(`licenca ${where.id} não existe`)
+      aplicarDados(linha, data)
+      return copia(linha)
+    },
+  },
+
+  /** `include: { dispositivos }` é o único include que o login do ERP usa. */
+  cliente: {
+    findFirst: async ({ where, include }: Linha) => {
+      const cliente = tabelas.cliente.find(c => casa(c, where))
+      if (!cliente) return null
+      if (!include?.dispositivos) return copia(cliente)
+      const d = include.dispositivos
+      const dispositivos = ordenar(tabelas.licenca.filter(l => l.clienteId === cliente.id && casa(l, d.where)), d.orderBy)
+      return { ...cliente, dispositivos: dispositivos.map(copia) }
+    },
+  },
+
+  licencaSessao: {
+    findUnique: async ({ where }: Linha) =>
+      copia(tabelas.licencaSessao.find(porLicencaHwid(where))),
+    findMany: async ({ where, orderBy, take }: Linha) =>
+      ordenar(tabelas.licencaSessao.filter(s => casa(s, where)), orderBy).slice(0, take ?? Infinity).map(copia),
+    count: async ({ where }: Linha) =>
+      tabelas.licencaSessao.filter(s => casa(s, where)).length,
+    upsert: async ({ where, update, create }: Linha) => {
+      const linha = tabelas.licencaSessao.find(porLicencaHwid(where))
+      if (linha) {
+        aplicarDados(linha, update)
+        return copia(linha)
+      }
+      const nova = { id: novoId('sessao'), ultimoHeartbeat: new Date(), ...create }
+      tabelas.licencaSessao.push(nova)
+      return copia(nova)
+    },
+    deleteMany: async ({ where }: Linha) => apagar(tabelas.licencaSessao, where),
+  },
+
+  licencaHwidRevogado: {
+    findUnique: async ({ where }: Linha) =>
+      copia(tabelas.licencaHwidRevogado.find(porLicencaHwid(where))),
+    upsert: async ({ where, update, create }: Linha) => {
+      const linha = tabelas.licencaHwidRevogado.find(porLicencaHwid(where))
+      if (linha) {
+        aplicarDados(linha, update)
+        return copia(linha)
+      }
+      const nova = { id: novoId('revogado'), revogadoEm: new Date(), ...create }
+      tabelas.licencaHwidRevogado.push(nova)
+      return copia(nova)
+    },
+    deleteMany: async ({ where }: Linha) => apagar(tabelas.licencaHwidRevogado, where),
+  },
+
+  licencaHistorico: {
+    create: async ({ data }: Linha) => {
+      const linha = { id: novoId('hist'), criadoEm: new Date(), ...data }
+      tabelas.licencaHistorico.push(linha)
+      return copia(linha)
+    },
+    findFirst: async ({ where, orderBy }: Linha) =>
+      copia(ordenar(tabelas.licencaHistorico.filter(h => casa(h, where)), orderBy)[0]),
+    count: async ({ where }: Linha) =>
+      tabelas.licencaHistorico.filter(h => casa(h, where)).length,
+  },
+
+  modulo: {
+    findMany: async ({ where }: Linha) =>
+      tabelas.modulo.filter(m => casa(m, where)).map(copia),
   },
 
   empresaFiscalConfig: {

@@ -294,6 +294,12 @@ model Licenca {
   /// carencia e da falha do meio de pagamento, nao um favor ao cliente.
   carenciaAte          DateTime?
   planoPendenteId      String? // plano agendado p/ valer no fim do ciclo (downgrade)
+  /// HWID do computador que e o SERVIDOR da loja: o que entrou na conta pelo
+  /// /erp/auth/login ou nasceu no auto-cadastro (os dois so sao chamados pelo
+  /// backend do servidor). Login de um HWID diferente e troca de servidor, e o
+  /// antigo vai para `hwidsRevogados`. Licenca antiga nasce vazia e e preenchida
+  /// no primeiro login; enquanto vazia, ninguem e revogado.
+  hwidServidor         String?
   criadoEm             DateTime      @default(now())
   dataAtivacao         DateTime?
   chaveOrigem          String        @default("MANUAL")
@@ -312,6 +318,7 @@ model Licenca {
   emissaoLogs   EmissaoLog[]
   idempotenciaFiscal IdempotenciaFiscal[]
   modulosExtras LicencaModuloExtra[]
+  hwidsRevogados LicencaHwidRevogado[]
 
   @@index([clienteId])
   @@index([status])
@@ -408,6 +415,9 @@ model LicencaSessao {
   id              String   @id @default(uuid())
   licencaId       String
   hwid            String
+  /// Hostname que o ERP manda junto do HWID, quando manda. So para leitura
+  /// humana (e-mail de aviso, suporte): quem identifica a maquina e o HWID.
+  nomeComputador  String?
   ultimoHeartbeat DateTime @default(now())
 
   licenca Licenca @relation(fields: [licencaId], references: [id], onDelete: Cascade)
@@ -415,6 +425,26 @@ model LicencaSessao {
   @@unique([licencaId, hwid])
   @@index([ultimoHeartbeat])
   @@map("licencas_sessoes")
+}
+
+// ── LicencaHwidRevogado ───────────────────────────────────────────────────────
+/// Servidor antigo de uma licenca que foi transferida para outro computador.
+///
+/// Existe para separar "caiu a internet" de "perdeu a vaga numa transferencia":
+/// o cron apaga sessao sem heartbeat ha 35 min, entao a falta de sessao sozinha
+/// nao prova nada. Um HWID daqui e recusado no conectar, no validar e no
+/// heartbeat. Sai da lista quando o dono entra na conta de novo por ele (decidiu
+/// voltar para aquele computador).
+model LicencaHwidRevogado {
+  id         String   @id @default(uuid())
+  licencaId  String
+  hwid       String
+  revogadoEm DateTime @default(now())
+
+  licenca Licenca @relation(fields: [licencaId], references: [id], onDelete: Cascade)
+
+  @@unique([licencaId, hwid])
+  @@map("licencas_hwids_revogados")
 }
 
 // ── Backup ────────────────────────────────────────────────────────────────────

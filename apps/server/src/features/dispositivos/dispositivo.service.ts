@@ -14,7 +14,7 @@
  * - Comunicação com bibliotecas externas (ex: Stripe, Envio de E-mails).
  * ============================================================================
  */
-import { Injectable, NotFoundException, BadRequestException, OnModuleInit, Logger } from '@nestjs/common'
+import { Injectable, NotFoundException, BadRequestException, HttpException, HttpStatus, OnModuleInit, Logger } from '@nestjs/common'
 import { generateKeyPairSync }                                                        from 'crypto'
 import { ZodError }                                                                   from 'zod'
 import { randomUUID }                                                                 from 'crypto'
@@ -39,9 +39,15 @@ import {
   resetarSessoesInativas,
   deletarLicenca as deletarLicencaRepo,
   upsertLicencaSessao,
+  findLicencaSessao,
   countSessoesAtivas,
   deletarSessao,
   deletarTodasSessoesDaLicenca,
+  deletarSessoesMaisAntigas,
+  hwidEstaRevogado,
+  assumirServidorDaLicenca,
+  contarTrocasDeComputador,
+  TIPO_LIBERACAO_TROCA,
   modulosDaLicenca,
   modulosBase
 } from '@startbig/database'
@@ -101,6 +107,17 @@ const FLUSH_INTERVAL_MS    = 30 * 1000         // flush do buffer no banco a cad
 const GRACE_PERIOD_DIAS    = 7
 
 /**
+ * Antiabuso da troca de computador: quantas trocas a licença faz por janela
+ * antes de precisar do suporte (que libera com "Trocar dispositivo" no admin).
+ * Padrão de mercado (LicenseSpring, Cryptlex). Três em 30 dias cobre o dono que
+ * troca o servidor e ainda erra uma vez; não cobre emprestar a licença.
+ */
+const LIMITE_TROCAS_COMPUTADOR = 3
+const JANELA_TROCAS_DIAS       = 30
+
+const MSG_LICENCA_TRANSFERIDA = 'Licença transferida para outro computador.'
+
+/**
  * Módulos do plano, no formato que `modulosDaLicenca` espera.
  *
  * Só o auto-cadastro precisa disto: ali a licença acaba de nascer e o plano vem
@@ -138,6 +155,8 @@ function carregarChaves(): { privateKey: string; publicKey: string } {
 
 const { privateKey: RSA_PRIVATE_KEY, publicKey: RSA_PUBLIC_KEY } = carregarChaves()
 
+type LicencaCompleta = NonNullable<Awaited<ReturnType<typeof findLicencaByChave>>>
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Injectable()
@@ -169,7 +188,7 @@ export class DispositivoService {
    * trava no vencimento. A janela é escrita uma única vez por falha e some na
    * renovação ou no cancelamento da assinatura.
    */
-  private carenciaVigente(licenca: { carenciaAte?: Date | null }): boolean {
+  carenciaVigente(licenca: { carenciaAte?: Date | null }): boolean {
     return !!licenca.carenciaAte && licenca.carenciaAte > new Date()
   }
 
@@ -304,6 +323,78 @@ export class DispositivoService {
     return RSA_PUBLIC_KEY
   }
 
+  /**
+   * Erro com `codigo` estável. O ERP decide pela chave, não pelo texto — frase
+   * se reescreve, código é contrato. O filtro global repassa o `codigo`.
+   */
+  private erro(status: HttpStatus, codigo: string, message: string): HttpException {
+    return new HttpException({ codigo, message }, status)
+  }
+
+  private limiteDe(licenca: { plano?: { limiteUsuario?: number | null } | null; usuariosExtras?: number | null }): number {
+    return (licenca.plano?.limiteUsuario ?? 1) + (licenca.usuariosExtras ?? 0)
+  }
+
+  /** Recusa a troca se a licença já mudou de computador demais na janela. */
+  private async exigirTrocaDisponivel(licencaId: string) {
+    const inicioJanela = new Date(Date.now() - JANELA_TROCAS_DIAS * 24 * 60 * 60 * 1000)
+    const feitas = await contarTrocasDeComputador(licencaId, inicioJanela)
+    if (feitas >= LIMITE_TROCAS_COMPUTADOR)
+      throw this.erro(
+        HttpStatus.TOO_MANY_REQUESTS,
+        'LIMITE_TRANSFERENCIAS',
+        `Esta licença já mudou de computador ${feitas} vezes nos últimos ${JANELA_TROCAS_DIAS} dias. ` +
+        'Para liberar uma nova troca, fale com o suporte StartBig.',
+      )
+  }
+
+  /** E-mail de aviso de troca. Falha de SMTP não pode desfazer a troca. */
+  private async avisarTrocaDeComputador(licenca: LicencaCompleta, hwid: string, nomeComputador?: string) {
+    try {
+      const nomeCliente = licenca.cliente.pf
+        ? (licenca.cliente.pf.nomeCompleto ?? licenca.cliente.email)
+        : (licenca.cliente.pj?.razaoSocial  ?? licenca.cliente.email)
+
+      await this.emailService.enviarAlertaTrocaDispositivo({
+        email:    licenca.cliente.email,
+        nomeCliente,
+        hwidNovo: hwid,
+        nomeComputador,
+        dataHora: new Date(),
+      })
+    } catch (err) {
+      console.warn('[email] falha ao enviar alerta de troca de dispositivo:', err instanceof Error ? err.message : err)
+    }
+  }
+
+  /**
+   * O computador que entrou na conta passa a ser o servidor da licença.
+   *
+   * Se havia outro servidor gravado, é uma troca: o antigo é revogado (cai na
+   * próxima checagem de licença e o heartbeat dele para de ocupar vaga), o
+   * evento vai para o histórico e o dono recebe o aviso. Licença antiga sem
+   * servidor gravado só registra este — ninguém é revogado.
+   *
+   * Devolve `true` quando houve troca.
+   */
+  private async assumirServidor(licenca: LicencaCompleta, hwid: string, nomeComputador?: string): Promise<boolean> {
+    const antigo = licenca.hwidServidor ?? null
+    if (antigo === hwid) return false
+
+    if (antigo) await this.exigirTrocaDisponivel(licenca.id)
+
+    await assumirServidorDaLicenca(licenca.id, hwid, antigo)
+    if (!antigo) return false
+
+    await registrarEventoLicenca(licenca.id, {
+      tipo:          'TROCA_SERVIDOR',
+      chaveAtivacao: licenca.chaveAtivacao,
+      observacao:    `Servidor trocado por login na conta (hwid antigo: ${antigo}; novo: ${nomeComputador ? `${nomeComputador} — ` : ''}${hwid}).`,
+    })
+    await this.avisarTrocaDeComputador(licenca, hwid, nomeComputador)
+    return true
+  }
+
 
 
   // ── Queries ───────────────────────────────────────────────────────────────
@@ -431,6 +522,13 @@ export class DispositivoService {
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
     await deletarTodasSessoesDaLicenca(licencaId)
     await resetarConexoes(licencaId)
+    // Zera também a contagem do antiabuso: é por aqui que o suporte libera quem
+    // bateu no limite de trocas de computador.
+    await registrarEventoLicenca(licencaId, {
+      tipo:          TIPO_LIBERACAO_TROCA,
+      chaveAtivacao: licenca.chaveAtivacao,
+      observacao:    'Sessões encerradas e trocas de computador liberadas pelo administrador.',
+    })
     return { msg: 'Sessões encerradas. O cliente pode conectar de uma nova máquina.' }
   }
 
@@ -623,10 +721,21 @@ export class DispositivoService {
 
   // ── Endpoints do ERP (públicos) ───────────────────────────────────────────
 
-  async conectar(body: unknown, opts?: { autenticado?: boolean }) {
+  /**
+   * `autenticado`: identidade provada por e-mail + senha (o /erp/auth/login).
+   * `servidor`: quem chama é o backend do servidor da loja, com o HWID dele —
+   * só o login com HWID real. É o que grava (ou troca) o servidor da licença.
+   */
+  async conectar(body: unknown, opts?: { autenticado?: boolean; servidor?: boolean }) {
     const dados   = this.parseBody(conectarSchema, body)
     const licenca = await findLicencaByChave(dados.chave)
     if (!licenca) throw new NotFoundException('Licença não encontrada.')
+
+    // Servidor antigo de uma licença transferida. Vem antes de qualquer outra
+    // recusa: para aquele computador a resposta certa é "foi para outro", não
+    // "renove". O login autenticado passa — é o dono voltando para ele.
+    if (dados.hwid && !opts?.autenticado && await hwidEstaRevogado(licenca.id, dados.hwid))
+      throw this.erro(HttpStatus.BAD_REQUEST, 'LICENCA_TRANSFERIDA', MSG_LICENCA_TRANSFERIDA)
 
     // A carência precisa valer AQUI também, não só no /validar. São portas
     // diferentes para a mesma casa: liberar a validação e barrar a conexão
@@ -642,7 +751,7 @@ export class DispositivoService {
       throw new BadRequestException('Licença vencida.')
     }
 
-    const limite = (licenca.plano?.limiteUsuario ?? 1) + (licenca.usuariosExtras ?? 0)
+    const limite = this.limiteDe(licenca)
 
     const assinado = this.assinarToken({
       licencaId:      licenca.id,
@@ -668,53 +777,44 @@ export class DispositivoService {
     }
 
     // Com HWID: controla sessões por dispositivo (uso avançado / múltiplos backends)
-    let countSessoes = await countSessoesAtivas(licenca.id)
+    const trocouServidor = opts?.servidor
+      ? await this.assumirServidor(licenca, dados.hwid, dados.nomeComputador)
+      : false
 
-    let reconexao = false
-    try {
-      const { prisma } = require('@startbig/database')
-      const sessao = await prisma.licencaSessao.findUnique({
-        where: { licencaId_hwid: { licencaId: licenca.id, hwid: dados.hwid } }
-      })
-      reconexao = !!sessao
-    } catch(e) {}
+    // Depois do assumirServidor: a troca já apagou a sessão do servidor antigo.
+    let countSessoes = await countSessoesAtivas(licenca.id)
+    const reconexao  = !!(await findLicencaSessao(licenca.id, dados.hwid))
 
     if (!reconexao && countSessoes >= limite) {
       // Login autenticado (email+senha) já provou a identidade do dono da licença —
-      // nesse caso é seguro encerrar sessões antigas para liberar vaga num dispositivo novo
-      // (reinstalação/troca de máquina). Via chave de ativação pura isso continua bloqueado,
-      // pois a chave sozinha não prova quem está conectando.
-      if (opts?.autenticado) {
-        await deletarTodasSessoesDaLicenca(licenca.id)
-        await registrarEventoLicenca(licenca.id, {
-          tipo:          'TROCA_DISPOSITIVO',
-          chaveAtivacao: licenca.chaveAtivacao,
-          observacao:    `Sessão(ões) anterior(es) encerrada(s) automaticamente — login autenticado em novo dispositivo (hwid: ${dados.hwid}).`,
-        })
-        countSessoes = 0
-
-        try {
-          const nomeCliente = licenca.cliente.pf
-            ? (licenca.cliente.pf.nomeCompleto ?? licenca.cliente.email)
-            : (licenca.cliente.pj?.razaoSocial  ?? licenca.cliente.email)
-
-          await this.emailService.enviarAlertaTrocaDispositivo({
-            email:       licenca.cliente.email,
-            nomeCliente,
-            hwidNovo:    dados.hwid,
-            dataHora:    new Date(),
-          })
-        } catch (err) {
-          console.warn('[email] falha ao enviar alerta de troca de dispositivo:', err instanceof Error ? err.message : err)
-        }
-      } else {
+      // nesse caso é seguro liberar vaga num dispositivo novo (reinstalação/troca
+      // de máquina). Via chave de ativação pura isso continua bloqueado, pois a
+      // chave sozinha não prova quem está conectando.
+      if (!opts?.autenticado)
         throw new BadRequestException(
           `Limite de ${limite} dispositivo(s) simultâneo(s) atingido. Encerre outra sessão e tente novamente.`
         )
+
+      // A troca de servidor já contou, registrou e avisou — não conta duas vezes.
+      if (!trocouServidor) await this.exigirTrocaDisponivel(licenca.id)
+
+      // Só as que excedem, as de heartbeat mais antigo: o caixa aberto agora
+      // continua vendendo. Antes derrubava todas.
+      const excedentes = countSessoes - limite + 1
+      await deletarSessoesMaisAntigas(licenca.id, excedentes)
+      countSessoes -= excedentes
+
+      if (!trocouServidor) {
+        await registrarEventoLicenca(licenca.id, {
+          tipo:          'TROCA_DISPOSITIVO',
+          chaveAtivacao: licenca.chaveAtivacao,
+          observacao:    `${excedentes} sessão(ões) mais antiga(s) encerrada(s) automaticamente — login autenticado em novo dispositivo (hwid: ${dados.hwid}).`,
+        })
+        await this.avisarTrocaDeComputador(licenca, dados.hwid, dados.nomeComputador)
       }
     }
 
-    await upsertLicencaSessao(licenca.id, dados.hwid)
+    await upsertLicencaSessao(licenca.id, dados.hwid, dados.nomeComputador)
     const novoTotalSessoes = reconexao ? countSessoes : countSessoes + 1
     await updateLicenca(licenca.id, { totalUsuarios: novoTotalSessoes, ultimoHeartbeat: new Date() })
 
@@ -757,6 +857,24 @@ export class DispositivoService {
     }
 
     if (dados.hwid) {
+      // Servidor antigo de uma licença transferida: o ERP trata 400 como
+      // bloqueio e para de bater — e a vaga não volta a ser ocupada.
+      if (await hwidEstaRevogado(dados.licencaId, dados.hwid))
+        throw this.erro(HttpStatus.BAD_REQUEST, 'LICENCA_TRANSFERIDA', MSG_LICENCA_TRANSFERIDA)
+
+      // Sem sessão pode ser só o cron (35 min sem internet): recria — mas só se
+      // couber. Antes recriava sempre, e um computador fora do limite voltava a
+      // ocupar vaga sozinho a cada heartbeat.
+      if (!(await findLicencaSessao(dados.licencaId, dados.hwid))) {
+        const limite = this.limiteDe(licenca)
+        if (await countSessoesAtivas(dados.licencaId) >= limite)
+          throw this.erro(
+            HttpStatus.BAD_REQUEST,
+            'LIMITE_DISPOSITIVOS',
+            `Limite de ${limite} dispositivo(s) simultâneo(s) atingido. Conexão encerrada pelo servidor.`,
+          )
+      }
+
       await upsertLicencaSessao(dados.licencaId, dados.hwid)
     }
     
@@ -770,6 +888,11 @@ export class DispositivoService {
     const dados   = this.parseBody(validarSchema, body)
     const licenca = await findLicencaByChave(dados.chave)
     if (!licenca) return { valida: false, motivo: 'Licença não encontrada.' }
+
+    // Mesmo contrato das outras recusas daqui (`valida: false`), não um 400:
+    // é assim que o ERP lê o /validar.
+    if (dados.hwid && await hwidEstaRevogado(licenca.id, dados.hwid))
+      return { valida: false, motivo: MSG_LICENCA_TRANSFERIDA, status: 'TRANSFERIDA', codigo: 'LICENCA_TRANSFERIDA' }
 
     // Rejeição imediata — sem grace period
     const MOTIVOS_REJEICAO: Partial<Record<string, string>> = {
@@ -812,7 +935,7 @@ export class DispositivoService {
     }
 
     const statusFinal = licenca.status === 'AGUARDANDO' ? 'ATIVA' : licenca.status
-    const limite      = (licenca.plano?.limiteUsuario ?? 1) + (licenca.usuariosExtras ?? 0)
+    const limite      = this.limiteDe(licenca)
 
     await updateLicenca(licenca.id, { ultimaSincronizacao: agora })
     const assinado = this.assinarToken({
@@ -988,6 +1111,16 @@ export class DispositivoService {
       await upsertLicencaSessao(licenca.id, hwidKey)
     } catch (err) {
       this.logger.warn(`[auto-cadastro] falha ao criar sessão inicial (não crítico): ${err instanceof Error ? err.message : err}`)
+    }
+
+    // O auto-cadastro só é chamado pelo backend do servidor: o HWID real dele é
+    // o servidor da licença. Sem HWID fica vazio e o primeiro login preenche.
+    if (dados.hwid) {
+      try {
+        await assumirServidorDaLicenca(licenca.id, dados.hwid, null)
+      } catch (err) {
+        this.logger.warn(`[auto-cadastro] falha ao gravar o servidor da licença (não crítico): ${err instanceof Error ? err.message : err}`)
+      }
     }
 
     // 8. Assinar Token
