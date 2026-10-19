@@ -11,6 +11,10 @@ import { Logger } from '@nestjs/common'
 import { prismaFalso } from './prisma-falso'
 
 delete process.env.DATABASE_URL
+
+// O SDK do Resend recusa carregar sem chave. Uma falsa, e nunca a real: se um
+// teste esquecer de simular o `fetch`, o Resend recusa e nenhum e-mail sai.
+process.env.RESEND_API_KEY = 're_teste_nao_envia'
 ;(globalThis as any).prisma = prismaFalso
 
 // O log do Nest é útil no servidor e ruído no teste. Quem quiser ver, comenta.

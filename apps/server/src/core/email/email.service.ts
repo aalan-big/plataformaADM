@@ -1,17 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common'
 import { randomUUID } from 'crypto'
 import { Resend } from 'resend'
-import { prisma } from '@startbig/database'
+import { prisma, registrarEmail, type StatusEmail } from '@startbig/database'
 import { layout, paragrafo, nota, destaque, aviso, dados as tabelaDados, botao, esc, COR } from './email-layout'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 const FROM   = process.env.EMAIL_FROM ?? 'noreply@startbig.com.br'
 
-async function enviar(payload: Parameters<typeof resend.emails.send>[0]) {
-  const { data, error } = await resend.emails.send(payload)
-  if (error) throw new Error(`Resend: ${JSON.stringify(error)}`)
-  return data
-}
+type Payload = Parameters<typeof resend.emails.send>[0]
+
+/** Tipos gravados no histórico (`EmailLog.tipo`). A tela E-mails filtra por eles. */
+export type TipoEmail =
+  | 'CHAVE_ATIVACAO' | 'PRIMEIRO_ACESSO' | 'RENOVACAO' | 'FALHA_PAGAMENTO'
+  | 'AVISO_VENCIMENTO' | 'RETENCAO_BACKUP' | 'TROCA_COMPUTADOR' | 'ALERTA_OPERACIONAL'
 
 const dataLonga = (d: Date) =>
   d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Sao_Paulo' })
@@ -23,6 +24,47 @@ const ola = (nomeCliente: string) =>
 export class EmailService {
   private readonly logger = new Logger(EmailService.name)
 
+  /**
+   * Manda pelo Resend e grava o desfecho no histórico, deu certo ou não.
+   * A falha continua estourando para quem chamou, como antes.
+   */
+  private async enviar(tipo: TipoEmail, payload: Payload) {
+    let resendId: string | null = null
+    let erro: string | null = null
+
+    try {
+      const { data, error } = await resend.emails.send(payload)
+      if (error) throw new Error(`Resend: ${JSON.stringify(error)}`)
+      resendId = data?.id ?? null
+      return data
+    } catch (e) {
+      erro = e instanceof Error ? e.message : String(e)
+      throw e
+    } finally {
+      await this.registrar(tipo, payload, erro ? 'FALHOU' : 'ENVIADO', erro, resendId)
+    }
+  }
+
+  /**
+   * Histórico é auxiliar: se a gravação falhar, o e-mail já saiu (ou já falhou)
+   * e quem chamou não pode receber o erro do log no lugar do dele.
+   */
+  private async registrar(tipo: TipoEmail, payload: Payload, status: StatusEmail, erro: string | null, resendId: string | null = null) {
+    try {
+      await registrarEmail({
+        tipo,
+        destinatario: Array.isArray(payload.to) ? payload.to.join(', ') : payload.to,
+        assunto:      payload.subject,
+        status,
+        erro,
+        resendId,
+        html:         payload.html ?? '',
+      })
+    } catch (err) {
+      this.logger.warn(`[email] falha ao gravar o histórico (${tipo} para ${payload.to}): ${err instanceof Error ? err.message : err}`)
+    }
+  }
+
   async enviarChaveAtivacao(dados: {
     email:           string
     nomeCliente:     string
@@ -32,7 +74,7 @@ export class EmailService {
   }) {
     const vencimento = dataLonga(dados.dataVencimento)
 
-    await enviar({
+    await this.enviar('CHAVE_ATIVACAO', {
       from:    FROM,
       to:      dados.email,
       subject: 'Sua chave de ativação StartBig ERP',
@@ -78,7 +120,7 @@ export class EmailService {
     const appUrl = process.env.APP_URL ?? 'https://admin.startbig.com.br'
     const link   = `${appUrl}/primeiro-acesso?token=${token}`
 
-    await enviar({
+    await this.enviar('PRIMEIRO_ACESSO', {
       from:    FROM,
       to:      dados.email,
       subject: 'Bem-vindo ao StartBig — Crie sua senha de acesso',
@@ -107,7 +149,7 @@ export class EmailService {
   }) {
     const vencimento = dataLonga(dados.dataVencimento)
 
-    await enviar({
+    await this.enviar('RENOVACAO', {
       from:    FROM,
       to:      dados.email,
       subject: 'Renovação confirmada — StartBig ERP',
@@ -135,7 +177,7 @@ export class EmailService {
   }) {
     const vencimento = dados.dataVencimento ? dataLonga(dados.dataVencimento) : null
 
-    await enviar({
+    await this.enviar('FALHA_PAGAMENTO', {
       from:    FROM,
       to:      dados.email,
       subject: 'Falha no pagamento da sua assinatura — atualize seu cartão · StartBig ERP',
@@ -169,7 +211,7 @@ export class EmailService {
       ? 'Aviso Importante: Sua licença vence amanhã'
       : `Sua licença vencerá em ${dados.diasRestantes} dias`
 
-    await enviar({
+    await this.enviar('AVISO_VENCIMENTO', {
       from:    FROM,
       to:      dados.email,
       subject,
@@ -196,7 +238,7 @@ export class EmailService {
     const ultimo = dataLonga(dados.ultimoBackup)
     const dias   = `${dados.diasRestantes} ${dados.diasRestantes === 1 ? 'dia' : 'dias'}`
 
-    await enviar({
+    await this.enviar('RETENCAO_BACKUP', {
       from:    FROM,
       to:      dados.email,
       subject: dados.diasRestantes <= 7
@@ -232,7 +274,7 @@ export class EmailService {
       dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo',
     })
 
-    await enviar({
+    await this.enviar('TROCA_COMPUTADOR', {
       from:    FROM,
       to:      dados.email,
       subject: 'Alerta de segurança — novo dispositivo conectado à sua conta StartBig',
@@ -275,19 +317,15 @@ export class EmailService {
     acao:       string
   }) {
     const destino = process.env.ADMIN_ALERT_EMAIL
-    if (!destino) {
-      this.logger.warn(`ADMIN_ALERT_EMAIL não configurada — alerta operacional não enviado (${dados.evento}: ${dados.motivo})`)
-      return
-    }
 
     const valor = dados.valor != null
       ? dados.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
       : '—'
     const mono = (t: string) => `<span style="font-family:'Courier New',Courier,monospace;font-size:12px;word-break:break-all;">${esc(t)}</span>`
 
-    await enviar({
+    const payload: Payload = {
       from:    FROM,
-      to:      destino,
+      to:      destino ?? '(ADMIN_ALERT_EMAIL não configurada)',
       subject: `[ALERTA] ${dados.titulo} — ${dados.evento}`,
       html:    layout({
         selo:      'Alerta operacional',
@@ -306,7 +344,17 @@ export class EmailService {
           aviso(`<strong>O que fazer:</strong> ${esc(dados.acao)}`, 'info'),
         ].join(''),
       }),
-    })
+    }
+
+    // Sem destino o alerta não sai, mas entra no histórico: é a única forma de
+    // ele aparecer para alguém em vez de morrer no log do pm2.
+    if (!destino) {
+      this.logger.warn(`ADMIN_ALERT_EMAIL não configurada — alerta operacional não enviado (${dados.evento}: ${dados.motivo})`)
+      await this.registrar('ALERTA_OPERACIONAL', payload, 'NAO_ENVIADO', 'ADMIN_ALERT_EMAIL não configurada no servidor.')
+      return
+    }
+
+    await this.enviar('ALERTA_OPERACIONAL', payload)
 
     this.logger.warn(`Alerta operacional enviado para ${destino}: ${dados.evento} — ${dados.motivo} (${dados.referencia})`)
   }

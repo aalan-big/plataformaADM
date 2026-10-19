@@ -933,3 +933,29 @@ model LicencaModuloExtra {
   @@index([dataVencimento])
   @@map("licencas_modulos_extras")
 }
+
+// ── EmailLog ──────────────────────────────────────────────────────────────────
+/// Cada e-mail que a plataforma tentou mandar, deu certo ou nao. E o que a tela
+/// E-mails do painel lista: sem isto, "o cliente diz que nao recebeu" nao tinha
+/// como ser conferido. Guarda o HTML como foi enviado para ver o que ele viu.
+model EmailLog {
+  id           String   @id @default(uuid())
+  /// CHAVE_ATIVACAO | PRIMEIRO_ACESSO | RENOVACAO | FALHA_PAGAMENTO |
+  /// AVISO_VENCIMENTO | RETENCAO_BACKUP | TROCA_COMPUTADOR | ALERTA_OPERACIONAL
+  tipo         String
+  destinatario String
+  assunto      String
+  /// ENVIADO (o Resend aceitou) | FALHOU (o Resend recusou ou nao respondeu) |
+  /// NAO_ENVIADO (faltou configuracao, ex.: ADMIN_ALERT_EMAIL)
+  status       String
+  erro         String?
+  /// Id do Resend: e por ele que se acha o e-mail no painel do Resend.
+  resendId     String?
+  html         String
+  criadoEm     DateTime @default(now())
+
+  @@index([criadoEm])
+  @@index([destinatario])
+  @@index([status])
+  @@map("emails_log")
+}

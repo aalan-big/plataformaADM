@@ -26,6 +26,7 @@ export const tabelas = {
   licencaHwidRevogado: [] as Linha[],
   licencaHistorico:    [] as Linha[],
   modulo:              [] as Linha[],
+  emailLog:            [] as Linha[],
 }
 
 export function reiniciarBanco() {
@@ -52,6 +53,7 @@ function aplicarDados(linha: Linha, dados: Linha) {
  */
 function casa(linha: Linha, where: Linha = {}): boolean {
   return Object.entries(where).every(([campo, cond]) => {
+    if (campo === 'OR') return (cond as Linha[]).some(c => casa(linha, c))
     const v = linha[campo]
     if (cond && typeof cond === 'object' && !(cond instanceof Date)) {
       return Object.entries(cond).every(([op, alvo]: [string, any]) => {
@@ -59,6 +61,10 @@ function casa(linha: Linha, where: Linha = {}): boolean {
         if (op === 'not') return v !== alvo
         if (op === 'gte') return v >= alvo
         if (op === 'gt')  return v > alvo
+        if (op === 'contains') return cond.mode === 'insensitive'
+          ? String(v ?? '').toLowerCase().includes(String(alvo).toLowerCase())
+          : String(v ?? '').includes(alvo)
+        if (op === 'mode') return true
         throw new TypeError(`prisma falso: operador "${op}" não simulado`)
       })
     }
@@ -116,6 +122,8 @@ export const prismaFalso = {
 
   /** `include: { dispositivos }` é o único include que o login do ERP usa. */
   cliente: {
+    findMany: async ({ where }: Linha) =>
+      tabelas.cliente.filter(c => casa(c, where)).map(copia),
     findFirst: async ({ where, include }: Linha) => {
       const cliente = tabelas.cliente.find(c => casa(c, where))
       if (!cliente) return null
@@ -177,6 +185,21 @@ export const prismaFalso = {
   modulo: {
     findMany: async ({ where }: Linha) =>
       tabelas.modulo.filter(m => casa(m, where)).map(copia),
+  },
+
+  emailLog: {
+    create: async ({ data }: Linha) => {
+      const linha = { id: novoId('email'), criadoEm: new Date(), erro: null, resendId: null, ...data }
+      tabelas.emailLog.push(linha)
+      return copia(linha)
+    },
+    findUnique: async ({ where }: Linha) =>
+      copia(tabelas.emailLog.find(e => e.id === where.id)),
+    findMany: async ({ where, orderBy, skip, take }: Linha) =>
+      ordenar(tabelas.emailLog.filter(e => casa(e, where)), orderBy)
+        .slice(skip ?? 0, (skip ?? 0) + (take ?? Infinity)).map(copia),
+    count: async ({ where }: Linha) =>
+      tabelas.emailLog.filter(e => casa(e, where)).length,
   },
 
   empresaFiscalConfig: {
