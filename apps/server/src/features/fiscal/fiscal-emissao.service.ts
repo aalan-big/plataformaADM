@@ -272,11 +272,12 @@ export class FiscalEmissaoService {
    * Best-effort como o `registrarEvento`: o ERP está esperando a resposta da
    * nota, e falhar aqui não pode virar erro de consulta.
    */
-  private async registrarDesfechoDaConsulta(
+  // Público (sem `private`) para o FiscalNfseService reusar a mesma trilha.
+  async registrarDesfechoDaConsulta(
     licencaId: string,
     ref: string,
     ambiente: number,
-    tipoDocumento: TipoDocumentoEmissivel,
+    tipoDocumento: string,
     resultado: ResultadoNota,
   ) {
     if (resultado.status !== 'autorizado' && resultado.status !== 'erro') return
@@ -485,7 +486,8 @@ export class FiscalEmissaoService {
    * estourar aqui devolveria erro ao ERP para uma operação que deu certo — o
    * operador emitiria de novo. Falha vira log, não exceção.
    */
-  private async registrarEvento(params: {
+  // Público (sem `private`) para o FiscalNfseService reusar a mesma trilha.
+  async registrarEvento(params: {
     licencaId:  string
     ref:        string
     ambiente:   number
@@ -526,7 +528,8 @@ export class FiscalEmissaoService {
    * desaparecer sem nenhum sinal — o oposto do que a idempotência existe para
    * proteger.
    */
-  private async consultarIdempotencia(
+  // Público (sem `private`) para o FiscalNfseService reusar a mesma idempotência.
+  async consultarIdempotencia(
     licencaId: string,
     chave: string | undefined,
     operacao: 'EMISSAO' | 'INUTILIZACAO',
@@ -556,7 +559,8 @@ export class FiscalEmissaoService {
    * novo — que é exatamente a nota duplicada que esta tabela existe para evitar.
    * A `ref` continua sendo a trava principal; esta é a segunda camada.
    */
-  private async gravarIdempotencia(params: {
+  // Público (sem `private`) para o FiscalNfseService reusar a mesma idempotência.
+  async gravarIdempotencia(params: {
     licencaId: string
     chave?:    string
     operacao:  'EMISSAO' | 'INUTILIZACAO'

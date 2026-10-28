@@ -6,6 +6,7 @@ import { HttpException } from '@nestjs/common'
 import { FiscalOnboardingService } from '../../src/features/fiscal/fiscal-onboarding.service'
 import { FiscalEmissaoService } from '../../src/features/fiscal/fiscal-emissao.service'
 import { FiscalCotaService } from '../../src/features/fiscal/fiscal-cota.service'
+import { FiscalNfseService } from '../../src/features/fiscal/fiscal-nfse.service'
 import { reiniciarBanco, tabelas } from './prisma-falso'
 
 export const LICENCA = 'lic-1'
@@ -51,6 +52,9 @@ export class FocusFalsa {
   atualizarEmpresa(...a: any[])     { return this.responder('atualizarEmpresa', a) }
   criarEmpresa(...a: any[])         { return this.responder('criarEmpresa', a) }
   consultarEmpresa(...a: any[])     { return this.responder('consultarEmpresa', a) }
+  emitirNfsen(...a: any[])          { return this.responder('emitirNfsen', a) }
+  consultarNfsen(...a: any[])       { return this.responder('consultarNfsen', a) }
+  cancelarNfsen(...a: any[])        { return this.responder('cancelarNfsen', a) }
 }
 
 /**
@@ -83,7 +87,8 @@ export function prepararCenario(ficha: Record<string, any> | null = {}) {
   const cota = new FiscalCotaService()
   const emissao = new FiscalEmissaoService(focus as any, cota)
   const onboarding = new FiscalOnboardingService(focus as any)
-  return { focus, onboarding, emissao, cota, ficha: () => tabelas.empresaFiscalConfig[0] }
+  const nfse = new FiscalNfseService(focus as any, cota, emissao)
+  return { focus, onboarding, emissao, nfse, cota, ficha: () => tabelas.empresaFiscalConfig[0] }
 }
 
 /** Confere status e `codigo` do corpo de uma HttpException. */

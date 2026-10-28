@@ -117,6 +117,19 @@ export const emitirNotaSchema = z.object({
   }),
 })
 
+/**
+ * Emissão de NFS-e Nacional (DPS). Mesma regra do `emitirNotaSchema` — loose,
+ * quem conhece os campos é a Focus —, mas a DPS não tem `items`: é UM serviço
+ * por nota. O que dá para afirmar aqui é que há o que descrever e o que cobrar.
+ */
+export const emitirNfseSchema = z.object({
+  ref: refNotaSchema,
+  payload: z.looseObject({
+    descricao_servico: z.string().trim().min(1, 'Informe a descrição do serviço.'),
+    valor_servico:     z.number().positive('O valor do serviço deve ser maior que zero.'),
+  }),
+})
+
 export const cancelarNotaSchema = z.object({
   ref: refNotaSchema,
   // 15 caracteres é exigência da SEFAZ, não escolha nossa.

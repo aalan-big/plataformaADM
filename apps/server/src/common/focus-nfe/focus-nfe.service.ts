@@ -181,6 +181,50 @@ export class FocusNfeService {
   }
 
   /**
+   * NFS-e NACIONAL (DPS) — `/nfsen`. Doc: doc.focusnfe.com.br/reference/emitir_dps_nacional
+   *
+   * Métodos próprios, e não um `RecursoFocus` a mais, por três diferenças:
+   * - o corpo vai como o ERP mandou: a DPS já é o formato plano da Focus
+   *   (`cnpj_prestador`, `codigo_tributacao_nacional_iss`...), e o
+   *   `traduzirPayloadParaFocus` da NF-e moveria campos que aqui não existem;
+   * - a consulta não tem `completa=1` (a resposta já traz número, código de
+   *   verificação e links);
+   * - o cancelamento é `DELETE /nfsen/{ref}`, síncrono, e não um POST em
+   *   `/cancelamento`.
+   * Não há carta de correção nem inutilização na NFS-e Nacional.
+   */
+  async emitirNfsen(token: string, ref: string, payload: any, ambiente: number): Promise<any> {
+    this.logger.log(`Enviando NFSE (nacional) ref "${ref}" para a Focus NFe (ambiente: ${ambiente})`)
+    return this.requisitar(
+      `${this.getBaseUrl(ambiente)}/nfsen?ref=${this.encodeRef(ref)}`,
+      { method: 'POST', headers: this.getHeaders(token), body: JSON.stringify(payload) },
+      `emissão nfsen ref "${ref}"`,
+    )
+  }
+
+  async consultarNfsen(token: string, ref: string, ambiente: number): Promise<any> {
+    this.logger.log(`Consultando status da NFSE (nacional) ref "${ref}" (ambiente: ${ambiente})`)
+    return this.requisitar(
+      `${this.getBaseUrl(ambiente)}/nfsen/${this.encodeRef(ref)}`,
+      { method: 'GET', headers: this.getHeaders(token) },
+      `consulta nfsen ref "${ref}"`,
+    )
+  }
+
+  /**
+   * Síncrono: volta `cancelado` ou `erro_cancelamento` com `erros[]` (ex.:
+   * V999, fora do prazo). Só nota autorizada cancela, e não se desfaz.
+   */
+  async cancelarNfsen(token: string, ref: string, justificativa: string, ambiente: number): Promise<any> {
+    this.logger.log(`Cancelando NFSE (nacional) ref "${ref}" (ambiente: ${ambiente})`)
+    return this.requisitar(
+      `${this.getBaseUrl(ambiente)}/nfsen/${this.encodeRef(ref)}`,
+      { method: 'DELETE', headers: this.getHeaders(token), body: JSON.stringify({ justificativa }) },
+      `cancelamento nfsen ref "${ref}"`,
+    )
+  }
+
+  /**
    * Inutiliza uma faixa de numeração.
    *
    * Não tem `ref`: a Focus identifica o evento pela própria faixa (CNPJ, série,

@@ -1,5 +1,5 @@
 import { Injectable, Logger, NotFoundException, BadRequestException, ConflictException, HttpException, HttpStatus } from '@nestjs/common'
-import { prisma, MODULO_NFE, MODULO_NFCE } from '@startbig/database'
+import { prisma, MODULO_NFE, MODULO_NFCE, MODULO_NFSE } from '@startbig/database'
 import { FocusNfeService } from '../../common/focus-nfe/focus-nfe.service'
 import { camposFaltandoParaCriar, emitenteParaCadastroFocus, EmitenteErp } from '../../common/focus-nfe/focus-empresa.mapper'
 import { cifraDisponivel, cifrar } from '../../common/cripto/segredo-fiscal'
@@ -12,6 +12,36 @@ export type DadosAtivacao = {
   telefone?:      string | null
   arquivo_base64: string
   senha:          string
+}
+
+/**
+ * A rota da NFS-e na ativação (docs/nfse-plano.md do ERP, §2 e F2).
+ *
+ * - Sem NFSE EXPLÍCITO na licença: `null` e nada muda no cadastro da Focus —
+ *   como a ficha, ligar documento na emissora só com o módulo contratado.
+ * - MEI (`codigo_regime_tributario` 4): `NACIONAL`, sempre. É obrigação federal,
+ *   e a Focus nem deixa ligar a municipal para MEI. O painel pede "eu aceito"
+ *   para isso; a API não, e esta regra é o "eu aceito" (só MEI cai aqui).
+ * - Os demais: `MUNICIPAL_PENDENTE`. Depende da cidade, e a rota municipal entra
+ *   cidade por cidade; ligar a Nacional às cegas faria a nota ser recusada em
+ *   município que não a aceita para todas as empresas (Iguatu é um deles).
+ */
+export type RotaNfse = 'NACIONAL' | 'MUNICIPAL_PENDENTE' | null
+
+export function rotaNfseDaAtivacao(modulosDaLicenca: string[] | undefined, emitente: Record<string, any>): RotaNfse {
+  if (!Array.isArray(modulosDaLicenca) || !modulosDaLicenca.includes(MODULO_NFSE)) return null
+  return Number(emitente?.codigo_regime_tributario) === 4 ? 'NACIONAL' : 'MUNICIPAL_PENDENTE'
+}
+
+/**
+ * As chaves da Focus para a rota. `habilita_nfse` (municipal) NUNCA vai junto:
+ * a Focus recusa as duas ligadas em produção. Homologação vai sempre ligada com
+ * a Nacional, para o teste não depender de outra ativação.
+ */
+function flagsNfse(rota: RotaNfse): Record<string, boolean> {
+  return rota === 'NACIONAL'
+    ? { habilita_nfsen_producao: true, habilita_nfsen_homologacao: true }
+    : {}
 }
 
 /**
@@ -219,7 +249,7 @@ export class FiscalOnboardingService {
    *
    * Regras que não podem afrouxar:
    *   - o CNPJ do emitente tem de ser o da ficha (nunca grava em empresa alheia);
-   *   - sem ficha, ela só nasce se a licença trouxer EXPLICITAMENTE NFE ou NFCE —
+   *   - sem ficha, ela só nasce se a licença trouxer EXPLICITAMENTE NFE, NFCE ou NFSE —
    *     criar empresa na Focus pode custar dinheiro, e a claim vazia (licença
    *     antiga) não autoriza isso; aí o admin cria a ficha com o CNPJ;
    *   - 401/403 da Focus é o NOSSO token de parceiro → 501, nunca "recusamos o
@@ -236,9 +266,10 @@ export class FiscalOnboardingService {
 
     if (!config) {
       const contratou = Array.isArray(modulosDaLicenca) &&
-        (modulosDaLicenca.includes(MODULO_NFE) || modulosDaLicenca.includes(MODULO_NFCE))
+        (modulosDaLicenca.includes(MODULO_NFE) || modulosDaLicenca.includes(MODULO_NFCE) ||
+         modulosDaLicenca.includes(MODULO_NFSE))
       if (!contratou) {
-        this.logger.warn(`Licença ${licencaId}: ativação fiscal sem ficha e sem NFE/NFCE na licença (claim: ${modulosDaLicenca?.join(', ') || 'vazia'}).`)
+        this.logger.warn(`Licença ${licencaId}: ativação fiscal sem ficha e sem NFE/NFCE/NFSE na licença (claim: ${modulosDaLicenca?.join(', ') || 'vazia'}).`)
         throw new NotFoundException({
           codigo:   'SEM_CONFIGURACAO_FISCAL',
           mensagem: 'Nenhuma configuração fiscal vinculada a esta licença.',
@@ -318,6 +349,8 @@ export class FiscalOnboardingService {
       }
     }
 
+    const rotaNfse = rotaNfseDaAtivacao(modulosDaLicenca, emitente)
+
     const corpo = {
       ...emitenteParaCadastroFocus(emitente, { email: dados.email, telefone: dados.telefone }),
       arquivo_certificado_base64: dados.arquivo_base64,
@@ -325,6 +358,7 @@ export class FiscalOnboardingService {
       // As duas, sempre — ver o comentário em `enviarCertificado`.
       habilita_nfe:  true,
       habilita_nfce: true,
+      ...flagsNfse(rotaNfse),
     }
 
     let empresa: any
@@ -415,6 +449,7 @@ export class FiscalOnboardingService {
       ambienteNome:     nomeAmbiente(ficha.ambiente),
       tokenConfigurado: temToken,
       cscConfigurado:   !!atualizada?.cscConfigurado,
+      nfse:             rotaNfse,
       mensagem: acao === 'CRIADA'
         ? 'Empresa cadastrada na emissora e certificado enviado. A emissão está ativa.'
         : 'Cadastro da empresa atualizado na emissora e certificado enviado. A emissão está ativa.',
