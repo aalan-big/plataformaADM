@@ -487,13 +487,11 @@ type Consumo = {
   ambienteNome: string | null
 }
 
-/**
- * Os documentos que a plataforma emite. NFS-e existe no contador mas não tem
- * emissão — oferecer aqui criaria cota para um produto que não sai.
- */
+/** Os documentos que a plataforma emite. */
 const TIPOS_FISCAIS = [
   { id: 'NFE',  rotulo: 'NF-e'  },
   { id: 'NFCE', rotulo: 'NFC-e' },
+  { id: 'NFSE', rotulo: 'NFS-e' },
 ] as const
 
 /**

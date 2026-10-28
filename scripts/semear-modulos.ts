@@ -90,6 +90,15 @@ const CATALOGO = [
   { identificador: 'NFCE', nome: 'NFC-e', descricao: 'Nota Fiscal de Consumidor Eletrônica (cupom), via Focus NFe.', icone: 'Receipt', ordem: 11, vincularATodos: false, incluidoPorPadrao: false, vincularAosPlanos: [] },
 
   /**
+   * NFS-e — nota de serviço pelo Sistema Nacional (`/erp/fiscal/nfse/*`).
+   *
+   * Hoje só sai para emitente MEI: a ativação liga a Nacional na Focus apenas
+   * para CRT 4, e os demais voltam `MUNICIPAL_PENDENTE`. Por isso nasce sem
+   * plano — conceder por licença, canário primeiro, como o COMPRAS.
+   */
+  { identificador: 'NFSE', nome: 'NFS-e', descricao: 'Nota Fiscal de Serviço Eletrônica (Sistema Nacional, MEI), via Focus NFe.', icone: 'FileSignature', ordem: 12, vincularATodos: false, incluidoPorPadrao: false, vincularAosPlanos: [] },
+
+  /**
    * FINANCEIRO — base. Visão Geral, Contas a Pagar, Contas a Receber, Extrato e
    * Plano de Contas. É o que toda loja já usa hoje.
    *

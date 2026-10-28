@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Body, Param, Query, BadRequestException } from '@nestjs/common'
 import { FiscalCotaService } from './fiscal-cota.service'
 import { FiscalSaudeService } from './fiscal-saude.service'
-import { MODULO_NFE, MODULO_NFCE } from '@startbig/database'
+import { MODULO_NFE, MODULO_NFCE, MODULO_NFSE } from '@startbig/database'
 import { z, ZodError } from 'zod'
 
 /**
@@ -18,11 +18,9 @@ import { z, ZodError } from 'zod'
  *
  * Cota e consumo são POR TIPO, e o painel só sabia perguntar de NF-e: a NFC-e
  * de um cliente não aparecia em lugar nenhum e não havia como conceder cupom
- * avulso para ele. Restrito aos dois que a plataforma emite — NFS-e existe no
- * contador mas não tem emissão, e oferecer no painel criaria cota para um
- * produto que não sai.
+ * avulso para ele. Restrito aos tipos que a plataforma emite.
  */
-const tipoDocumentoSchema = z.enum([MODULO_NFE, MODULO_NFCE]).default(MODULO_NFE)
+const tipoDocumentoSchema = z.enum([MODULO_NFE, MODULO_NFCE, MODULO_NFSE]).default(MODULO_NFE)
 
 const concederExtrasSchema = z.object({
   quantidade: z.number().int().min(1, 'Informe ao menos 1 nota.').max(10_000, 'Quantidade acima do razoável para concessão manual.'),
