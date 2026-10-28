@@ -14,7 +14,7 @@
     "@startbig/ui": "*",
     "clsx": "*",
     "lucide-react": "*",
-    "next": "*",
+    "next": "^16.4.3",
     "react": "*",
     "react-dom": "*",
     "tailwind-merge": "*",

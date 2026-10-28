@@ -109,6 +109,17 @@ describe('Fiscal — franquia de notas', () => {
     await assert.rejects(emissao.emitir(LICENCA, 'v-71', nfe()), ehHttp(402, 'FRANQUIA_ESGOTADA'))
   })
 
+  it('reenvio da ref que já saiu não leva 402: devolve a nota existente', async () => {
+    const { emissao, focus, emitirOk } = cenario()
+    consumo('NFE', 69)
+    await emitirOk('v-70')
+    focus.quando('consultar', AUTORIZADA)
+    const r = await emissao.emitir(LICENCA, 'v-70', nfe())
+    assert.equal(r.status, 'autorizado')
+    assert.equal(focus.chamadasDe('emitir').length, 1, 'não emite de novo')
+    await assert.rejects(emissao.emitir(LICENCA, 'v-71', nfe({ cnpj_destinatario: '99888777000166' })), ehHttp(402, 'FRANQUIA_ESGOTADA'))
+  })
+
   it('homologação não passa pela franquia', async () => {
     const { emitirOk } = cenario({ ambiente: 2 })
     consumo('NFE', 500)

@@ -97,7 +97,10 @@ export class FiscalNfseService {
       throw new BadRequestException('O CNPJ do prestador não corresponde à configuração fiscal desta licença.')
     }
 
-    if (config.ambiente === AMBIENTE_PRODUCAO) {
+    // Reenvio de ref já aceita não passa pelas travas (ver FiscalEmissaoService).
+    const reenvio = await this.trilha.refJaAceita(licencaId, ref)
+
+    if (config.ambiente === AMBIENTE_PRODUCAO && !reenvio) {
       const uso = await this.cota.consumoMensal(licencaId, MODULO_NFSE, config)
       if (!uso.ilimitado && uso.restantes === 0) {
         this.logger.warn(`NFS-e barrada por cota: licença ${licencaId} usou ${uso.emitidas}/${uso.cota} em ${uso.competencia}.`)
@@ -109,7 +112,7 @@ export class FiscalNfseService {
       await this.franquia.exigirEspaco(licencaId)
     }
 
-    const assinatura = await this.franquia.conferirDuplicata(licencaId, config.ambiente, MODULO_NFSE, ref, payload, confirmarDuplicidade)
+    const assinatura = await this.franquia.conferirDuplicata(licencaId, config.ambiente, MODULO_NFSE, ref, payload, confirmarDuplicidade || reenvio)
 
     // Idempotência por ref: a mesma da NF-e — na dúvida, não emite.
     try {

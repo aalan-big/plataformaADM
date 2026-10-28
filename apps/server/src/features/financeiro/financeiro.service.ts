@@ -635,8 +635,32 @@ export class FinanceiroService {
    *
    * Nada aqui acredita no gateway além de "a cobrança X foi paga": meses e
    * licença saem da nossa CobrancaRenovacao.
+   *
+   * Uma cobrança por vez. O webhook e a conciliação podem chegar juntos para o
+   * mesmo PIX, e as travas abaixo (status PAGA, pagamento lançado) só valem
+   * depois que o primeiro termina: os dois passariam por elas, e os módulos
+   * avulsos seriam estendidos duas vezes. A fila é em memória porque a API roda
+   * num processo só (pm2 fork); o segundo espera e então cai em "já processada".
    */
   async confirmarCobrancaAsaas(params: {
+    gatewayCobrancaId: string
+    valorPago:         number
+    origem:            string
+  }) {
+    const anterior = this.confirmacoesEmAndamento.get(params.gatewayCobrancaId) ?? Promise.resolve()
+    const atual    = anterior.catch(() => {}).then(() => this.confirmarCobrancaAsaasSozinha(params))
+    this.confirmacoesEmAndamento.set(params.gatewayCobrancaId, atual)
+    try {
+      return await atual
+    } finally {
+      if (this.confirmacoesEmAndamento.get(params.gatewayCobrancaId) === atual)
+        this.confirmacoesEmAndamento.delete(params.gatewayCobrancaId)
+    }
+  }
+
+  private readonly confirmacoesEmAndamento = new Map<string, Promise<unknown>>()
+
+  private async confirmarCobrancaAsaasSozinha(params: {
     gatewayCobrancaId: string
     valorPago:         number
     origem:            string

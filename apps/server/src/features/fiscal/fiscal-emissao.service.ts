@@ -69,7 +69,15 @@ export class FiscalEmissaoService {
      * pode gastar chamada na Focus para descobrir isso. Homologação passa
      * direto — teste do cliente não consome o pacote que ele pagou.
      */
-    if (config.ambiente === AMBIENTE_PRODUCAO) {
+    /**
+     * Reenvio de uma ref que a Focus já aceitou não passa pelas travas abaixo:
+     * a nota já existe e já foi contada. Sem isto, o ERP que perdeu a resposta
+     * da 70ª nota e reenviou a mesma ref levaria 402 e concluiria que ela não
+     * saiu — com a franquia, bater no limite é rotina, não exceção.
+     */
+    const reenvio = await this.refJaAceita(licencaId, ref)
+
+    if (config.ambiente === AMBIENTE_PRODUCAO && !reenvio) {
       const uso = await this.cota.consumoMensal(licencaId, tipoDocumento, config)
       if (!uso.ilimitado && uso.restantes === 0) {
         this.logger.warn(`Emissão barrada por cota: licença ${licencaId} usou ${uso.emitidas}/${uso.cota} de ${tipoDocumento} em ${uso.competencia}.`)
@@ -83,7 +91,7 @@ export class FiscalEmissaoService {
     }
 
     // A mesma venda com outra ref, há pouco: barra antes de virar nota em dobro.
-    const assinatura = await this.franquia.conferirDuplicata(licencaId, config.ambiente, tipoDocumento, ref, payload, confirmarDuplicidade)
+    const assinatura = await this.franquia.conferirDuplicata(licencaId, config.ambiente, tipoDocumento, ref, payload, confirmarDuplicidade || reenvio)
 
     // Trava de idempotência: confere na Focus se esta ref já foi enviada.
     try {
@@ -543,6 +551,15 @@ export class FiscalEmissaoService {
    * desaparecer sem nenhum sinal — o oposto do que a idempotência existe para
    * proteger.
    */
+  /** Esta ref já teve uma emissão aceita pela Focus (autorizada ou na fila). */
+  async refJaAceita(licencaId: string, ref: string): Promise<boolean> {
+    const linha = await prisma.emissaoLog.findFirst({
+      where:  { licencaId, ref, acao: 'EMISSAO', resultado: { in: ['autorizado', 'processando'] } },
+      select: { ref: true },
+    })
+    return !!linha
+  }
+
   // Público (sem `private`) para o FiscalNfseService reusar a mesma idempotência.
   async consultarIdempotencia(
     licencaId: string,
