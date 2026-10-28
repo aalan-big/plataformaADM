@@ -7,6 +7,7 @@ import { FiscalOnboardingService } from '../../src/features/fiscal/fiscal-onboar
 import { FiscalEmissaoService } from '../../src/features/fiscal/fiscal-emissao.service'
 import { FiscalCotaService } from '../../src/features/fiscal/fiscal-cota.service'
 import { FiscalNfseService } from '../../src/features/fiscal/fiscal-nfse.service'
+import { FiscalFranquiaService } from '../../src/features/fiscal/fiscal-franquia.service'
 import { reiniciarBanco, tabelas } from './prisma-falso'
 
 export const LICENCA = 'lic-1'
@@ -85,10 +86,12 @@ export function prepararCenario(ficha: Record<string, any> | null = {}) {
   }
   const focus = new FocusFalsa()
   const cota = new FiscalCotaService()
-  const emissao = new FiscalEmissaoService(focus as any, cota)
+  // Sem EmailService: os avisos são gravados em `avisoFiscal` e nada é enviado.
+  const franquia = new FiscalFranquiaService()
+  const emissao = new FiscalEmissaoService(focus as any, cota, franquia)
   const onboarding = new FiscalOnboardingService(focus as any)
-  const nfse = new FiscalNfseService(focus as any, cota, emissao)
-  return { focus, onboarding, emissao, nfse, cota, ficha: () => tabelas.empresaFiscalConfig[0] }
+  const nfse = new FiscalNfseService(focus as any, cota, emissao, franquia)
+  return { focus, onboarding, emissao, nfse, cota, franquia, ficha: () => tabelas.empresaFiscalConfig[0] }
 }
 
 /** Confere status e `codigo` do corpo de uma HttpException. */

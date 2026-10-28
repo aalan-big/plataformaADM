@@ -44,6 +44,8 @@ const TIPOS: Record<string, string> = {
   RETENCAO_BACKUP:    'Retenção de backup',
   TROCA_COMPUTADOR:   'Troca de computador',
   ALERTA_OPERACIONAL: 'Alerta operacional',
+  AVISO_FISCAL:       'Aviso de notas fiscais',
+  COBRANCA_EXCEDENTE: 'Cobrança de notas excedentes',
 }
 
 const POR_PAGINA = 30

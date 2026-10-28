@@ -3,6 +3,7 @@ import { prisma, MODULO_NFE } from '@startbig/database'
 import { FocusNfeService } from '../../common/focus-nfe/focus-nfe.service'
 import { AMBIENTE_PRODUCAO, TipoDocumentoEmissivel, RECURSO_FOCUS, numeroOuNulo, nomeAmbiente, urlAbsolutaFocus, ResultadoNota, mapResultado, getEmpresaConfig } from './fiscal-comum'
 import { FiscalCotaService } from './fiscal-cota.service'
+import { FiscalFranquiaService } from './fiscal-franquia.service'
 
 /**
  * Emissão e eventos de nota: emitir, consultar, cancelar, carta de correção e
@@ -15,6 +16,7 @@ export class FiscalEmissaoService {
   constructor(
     private readonly focusNfeService: FocusNfeService,
     private readonly cota: FiscalCotaService,
+    private readonly franquia: FiscalFranquiaService,
   ) {}
 
   async emitir(
@@ -23,6 +25,8 @@ export class FiscalEmissaoService {
     payload: any,
     tipoDocumento: TipoDocumentoEmissivel = MODULO_NFE,
     chaveIdempotencia?: string,
+    /** O operador confirmou que é outra venda (cabeçalho `X-Confirmar-Duplicidade`). */
+    confirmarDuplicidade = false,
   ) {
     const config  = await getEmpresaConfig(licencaId)
     const recurso = RECURSO_FOCUS[tipoDocumento]
@@ -74,7 +78,12 @@ export class FiscalEmissaoService {
           HttpStatus.PAYMENT_REQUIRED,
         )
       }
+      // Franquia do mês, todos os documentos somados (fiscal-franquia.service).
+      await this.franquia.exigirEspaco(licencaId)
     }
+
+    // A mesma venda com outra ref, há pouco: barra antes de virar nota em dobro.
+    const assinatura = await this.franquia.conferirDuplicata(licencaId, config.ambiente, tipoDocumento, ref, payload, confirmarDuplicidade)
 
     // Trava de idempotência: confere na Focus se esta ref já foi enviada.
     try {
@@ -157,7 +166,8 @@ export class FiscalEmissaoService {
      * "erro" não conta — nota rejeitada não consumiu nada do cliente, e cobrar
      * cota por tentativa que falhou seria cobrar pelo nosso problema.
      */
-    if (resultado.status === 'autorizado' || resultado.status === 'processando') {
+    const contou = resultado.status === 'autorizado' || resultado.status === 'processando'
+    if (contou) {
       await this.cota.incrementarConsumo(licencaId, config.ambiente, tipoDocumento, 'emitidas')
     }
 
@@ -172,7 +182,10 @@ export class FiscalEmissaoService {
       resultado: resultado.status,
       mensagem:  resultado.mensagem_sefaz,
       codigoSefaz: resultado.codigo_sefaz,
+      assinatura,
     })
+
+    if (contou && config.ambiente === AMBIENTE_PRODUCAO) await this.franquia.aposEmitir(licencaId)
 
     return resultado
   }
@@ -497,6 +510,7 @@ export class FiscalEmissaoService {
     httpStatus?: number | null
     mensagem?:  string | null
     codigoSefaz?: number | null
+    assinatura?: string | null
   }) {
     try {
       await prisma.emissaoLog.create({
@@ -512,6 +526,7 @@ export class FiscalEmissaoService {
           // dump inteiro às vezes, e este log é para durar pouco e ler rápido.
           mensagem:   params.mensagem ? params.mensagem.slice(0, 500) : null,
           codigoSefaz: params.codigoSefaz ?? null,
+          assinatura:  params.assinatura ?? null,
         },
       })
     } catch (err) {

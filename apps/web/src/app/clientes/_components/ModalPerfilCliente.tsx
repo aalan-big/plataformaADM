@@ -487,6 +487,30 @@ type Consumo = {
   ambienteNome: string | null
 }
 
+/** Franquia do mês: todos os documentos somados (GET /fiscal/licencas/:id/franquia). */
+type Franquia = {
+  competencia:    string
+  vigente:        boolean
+  franquia:       number
+  emitidas:       number
+  excedentes:     number
+  valorExcedente: number
+  formaCobranca:  'CARTAO' | 'PIX'
+  limite:         number
+  restantes:      number
+  faturas: { competencia: string; excedentes: number; valor: number; status: string; erro: string | null }[]
+}
+
+const STATUS_FATURA: Record<string, { rotulo: string; cor: string }> = {
+  PAGA:       { rotulo: 'paga',            cor: 'text-emerald-400' },
+  COBRANDO:   { rotulo: 'cobrando',        cor: 'text-amber-400' },
+  PENDENTE:   { rotulo: 'pendente',        cor: 'text-amber-400' },
+  FALHOU:     { rotulo: 'cartão recusou',  cor: 'text-red-400' },
+  SEM_CARTAO: { rotulo: 'sem cartão',      cor: 'text-red-400' },
+}
+
+const reais = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
 /** Os documentos que a plataforma emite. */
 const TIPOS_FISCAIS = [
   { id: 'NFE',  rotulo: 'NF-e'  },
@@ -510,6 +534,15 @@ function PainelCotaFiscal({ licencaId }: { licencaId: string }) {
   const [motivo,    setMotivo]    = useState('')
   const [concedendo, setConcedendo] = useState(false)
   const [tipo,      setTipo]      = useState<string>('NFE')
+  const [franquia,  setFranquia]  = useState<Franquia | null>(null)
+
+  /** A franquia é da licença, não do documento: recarrega junto, sem depender da aba. */
+  const carregarFranquia = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/fiscal/licencas/${licencaId}/franquia`)
+      if (res.ok) setFranquia(await res.json())
+    } catch { /* o resumo é auxiliar; a cota por documento segue funcionando */ }
+  }, [licencaId])
 
   const carregar = useCallback(async (doc: string) => {
     setCarregando(true); setErro('')
@@ -518,6 +551,7 @@ function PainelCotaFiscal({ licencaId }: { licencaId: string }) {
       const json = await res.json().catch(() => ({}))
       if (!res.ok) { setErro(json.erro ?? json.message ?? `Erro ${res.status}.`); return }
       setConsumo(json)
+      carregarFranquia()
     } catch {
       setErro('Falha ao carregar a cota fiscal.')
     } finally {
@@ -560,6 +594,7 @@ function PainelCotaFiscal({ licencaId }: { licencaId: string }) {
       if (!res.ok) { setErro(json.erro ?? json.message ?? `Erro ${res.status}.`); return }
       setConsumo(json)
       setExtras(''); setMotivo('')
+      carregarFranquia()
     } catch {
       setErro('Falha ao conceder notas avulsas.')
     } finally {
@@ -602,6 +637,36 @@ function PainelCotaFiscal({ licencaId }: { licencaId: string }) {
             )}
           </div>
 
+          {franquia && (
+            <div className="rounded-lg bg-slate-800/50 px-2 py-1.5 space-y-0.5">
+              <div className="flex items-baseline gap-2 text-[11px]">
+                <span className="text-slate-500">Franquia {franquia.competencia}</span>
+                <span className={`font-semibold ${franquia.emitidas > franquia.franquia ? 'text-amber-400' : 'text-slate-200'}`}>
+                  {franquia.emitidas} de {franquia.franquia}
+                </span>
+                <span className="text-slate-500">· todas as notas</span>
+              </div>
+              <p className="text-[10px] text-slate-500">
+                {!franquia.vigente
+                  ? 'Ainda não vale neste mês (começa em novembro de 2026).'
+                  : franquia.formaCobranca === 'CARTAO'
+                    ? <>Cartão · {franquia.excedentes > 0
+                        ? <span className="text-amber-400">{franquia.excedentes} excedente(s) = {reais(franquia.valorExcedente)} no dia 1º</span>
+                        : 'sem excedente'} · pausa em {franquia.limite}</>
+                    : <>Sem cartão · <span className={franquia.restantes === 0 ? 'text-red-400 font-semibold' : ''}>para em {franquia.limite}</span></>}
+              </p>
+              {franquia.faturas.length > 0 && (
+                <p className="text-[10px] text-slate-500">
+                  {franquia.faturas.map(f => (
+                    <span key={f.competencia} className="mr-2" title={f.erro ?? undefined}>
+                      {f.competencia}: {reais(f.valor)} <span className={STATUS_FATURA[f.status]?.cor ?? ''}>{STATUS_FATURA[f.status]?.rotulo ?? f.status}</span>
+                    </span>
+                  ))}
+                </p>
+              )}
+            </div>
+          )}
+
           {consumo && !consumo.configurado && (
             <p className="text-[10px] text-amber-400">
               Cliente sem configuração fiscal — não emite até o CNPJ e o token da Focus serem preenchidos acima.
@@ -640,11 +705,9 @@ function PainelCotaFiscal({ licencaId }: { licencaId: string }) {
                 </p>
               )}
 
-              {consumo.ilimitado ? (
-                <p className="text-[10px] text-slate-500">
-                  O plano não tem teto — não há o que conceder.
-                </p>
-              ) : (
+              {/* Sempre visível: mesmo sem teto por documento, a avulsa soma na
+                  franquia do mês e não é cobrada como excedente. */}
+              {(
                 <div className="flex gap-1.5">
                   <input
                     type="number" min={1} value={extras}
@@ -669,11 +732,9 @@ function PainelCotaFiscal({ licencaId }: { licencaId: string }) {
                 </div>
               )}
 
-              {!consumo.ilimitado && (
-                <p className="text-[10px] text-slate-500">
-                  Notas avulsas valem só neste mês e somem na virada. Homologação não consome cota.
-                </p>
-              )}
+              <p className="text-[10px] text-slate-500">
+                Notas avulsas valem só neste mês, somam na franquia e não são cobradas. Homologação não consome cota.
+              </p>
             </>
           )}
 

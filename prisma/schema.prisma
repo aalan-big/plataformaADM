@@ -319,6 +319,8 @@ model Licenca {
   idempotenciaFiscal IdempotenciaFiscal[]
   modulosExtras LicencaModuloExtra[]
   hwidsRevogados LicencaHwidRevogado[]
+  faturasExcedente FaturaExcedenteFiscal[]
+  avisosFiscais    AvisoFiscal[]
 
   @@index([clienteId])
   @@index([status])
@@ -763,13 +765,69 @@ model EmissaoLog {
   /// identifica — é por ele que o painel de saúde fiscal agrupa as rejeições.
   /// Nulo nas linhas anteriores a 07/10/2026 e quando a SEFAZ nem respondeu.
   codigoSefaz   Int?
+  /// Hash do conteúdo da nota (sem datas, número e série), só nas emissões.
+  /// É o que acha a MESMA venda mandada de novo com outra `ref`. Não guarda
+  /// valor nem destinatário: só dá para comparar, não para ler.
+  assinatura    String?
   criadoEm      DateTime @default(now())
 
   licenca Licenca @relation(fields: [licencaId], references: [id], onDelete: Cascade)
 
   @@index([licencaId, criadoEm])
+  @@index([licencaId, assinatura])
   @@index([ref])
   @@map("emissao_log")
+}
+
+// ── FaturaExcedenteFiscal ─────────────────────────────────────────────────────
+/// A cobrança das notas acima da franquia num mês, uma por licença.
+///
+/// A linha nasce ANTES de falar com o Stripe, e o único por (licença,
+/// competência) é a trava contra cobrar duas vezes: o fechamento do mês pode
+/// rodar de novo (deploy, restart, rodada manual) e esbarra aqui.
+model FaturaExcedenteFiscal {
+  id          String   @id @default(uuid())
+  licencaId   String
+  /// Mês das notas, "2026-11" — não o mês da cobrança.
+  competencia String
+  /// Notas de produção do mês, todos os tipos somados.
+  emitidas    Int
+  /// Franquia do mês: a padrão mais as notas avulsas que o admin deu.
+  franquia    Int
+  excedentes  Int
+  valor       Decimal  @db.Decimal(10, 2)
+  /// PENDENTE (gravada, Stripe ainda não chamado) | COBRANDO (fatura aberta,
+  /// pagamento não confirmado) | PAGA | FALHOU (cartão recusou; o Stripe
+  /// tenta de novo) | SEM_CARTAO (cliente de PIX passou da franquia — só com
+  /// nota avulsa do admin; fica para cobrar à mão).
+  status      String   @default("PENDENTE")
+  stripeInvoiceId String? @unique
+  erro        String?
+  criadoEm    DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  licenca Licenca @relation(fields: [licencaId], references: [id], onDelete: Cascade)
+
+  @@unique([licencaId, competencia])
+  @@index([status])
+  @@map("faturas_excedente_fiscal")
+}
+
+// ── AvisoFiscal ───────────────────────────────────────────────────────────────
+/// Aviso de franquia já mandado ao cliente. Existe só para cada aviso sair UMA
+/// vez: sem isto, toda nota depois da 56ª mandaria de novo o "você usou 80%".
+model AvisoFiscal {
+  licencaId   String
+  competencia String
+  /// FRANQUIA_80 | FRANQUIA_ATINGIDA | TETO_PROXIMO | TETO_ATINGIDO |
+  /// DUPLICATA:<dia> (no máximo um por dia)
+  tipo        String
+  criadoEm    DateTime @default(now())
+
+  licenca Licenca @relation(fields: [licencaId], references: [id], onDelete: Cascade)
+
+  @@id([licencaId, competencia, tipo])
+  @@map("avisos_fiscais")
 }
 
 // ── IdempotenciaFiscal ────────────────────────────────────────────────────────

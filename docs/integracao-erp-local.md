@@ -1000,6 +1000,67 @@ Regras que valem a pena conhecer antes de montar a tela:
 
 Esta rota é **conveniência, não trava**: sirva para avisar o operador antes dele preencher a nota inteira. Quem barra de verdade é o `emitir`, no servidor — o ERP não precisa (e não deve) tentar controlar isso sozinho.
 
+### 13.4.1. Franquia mensal (a partir de 2026-11)
+
+Além da cota por documento, toda licença tem uma **franquia de 70 notas por mês,
+somando NF-e, NFC-e e NFS-e** de produção.
+
+- **Cliente que paga no cartão** passa da franquia sem travar: cada nota a mais
+  custa R$ 1, cobrado numa fatura única no cartão no dia 1º do mês seguinte. Há
+  um **teto de segurança de 300 notas** no mês; ao chegar nele a emissão pausa.
+- **Cliente que paga por PIX** (ou com excedente anterior em aberto) **para na 70ª nota**.
+- Notas avulsas concedidas pelo admin somam na franquia e no teto e não são cobradas.
+- O cliente recebe e-mail aos 80%, ao atingir a franquia, perto do teto e no teto.
+
+```
+GET /erp/fiscal/franquia
+Authorization: Bearer <token da licença>
+```
+
+Não exige módulo. Resposta:
+
+```json
+{
+  "competencia": "2026-11",
+  "vigente": true,
+  "franquia": 70,
+  "emitidas": 74,
+  "restantesNaFranquia": 0,
+  "excedentes": 4,
+  "precoExcedente": 1,
+  "valorExcedente": 4,
+  "formaCobranca": "CARTAO",
+  "limite": 300,
+  "restantes": 226
+}
+```
+
+Sugestão de tela: "74 de 70 notas no mês · 4 extras (R$ 4,00 no dia 1º)". Com
+`formaCobranca: "PIX"`, `limite` é a própria franquia e `restantes` chega a 0 na 70ª.
+
+### 13.4.2. Nota repetida
+
+Se o ERP mandar uma nota **com o mesmo conteúdo** de outra autorizada há menos
+de 1 hora, mas com **outra `ref`**, a plataforma não emite e responde `409`:
+
+```json
+{ "codigo": "NOTA_DUPLICADA_SUSPEITA", "mensagem": "Esta nota é igual à ref \"venda-10\", autorizada há 3 min. ...", "refAnterior": "venda-10" }
+```
+
+"Mesmo conteúdo" ignora datas (`data_*`), `numero`, `serie` e `ref`. A NFC-e
+**sem** CPF/CNPJ do destinatário não passa por esta conferência (venda de balcão
+repete de verdade).
+
+Se for mesmo outra venda, mostre o aviso ao operador e, com a confirmação dele,
+reenvie com o cabeçalho:
+
+```
+X-Confirmar-Duplicidade: sim
+```
+
+A mesma `ref` reenviada **não** é duplicata: continua valendo a idempotência
+por `ref` (a nota existente é devolvida).
+
 ### 13.5. Erros
 
 | HTTP | Quando | O que fazer |
@@ -1007,6 +1068,9 @@ Esta rota é **conveniência, não trava**: sirva para avisar o operador antes d
 | `401` | Token ausente, inválido ou expirado | Chamar `validar` e repetir |
 | `403` | Licença não tem o módulo do documento (`NFE`, `NFCE`, `NFSE`) | Esconder a função. Não repetir |
 | `402` | Cota do mês esgotada | Avisar o operador. **Não repetir** — só resolve com virada do mês ou concessão do admin |
+| `402` `FRANQUIA_ESGOTADA` | As 70 notas do mês acabaram e o cliente não tem cartão (ou tem excedente em aberto) | Avisar o operador. **Não repetir.** Resolve com cartão, nota avulsa do admin ou virada do mês |
+| `402` `TETO_MENSAL_ATINGIDO` | Cartão chegou ao teto de segurança do mês | Avisar o operador e o suporte. **Não repetir** |
+| `409` `NOTA_DUPLICADA_SUSPEITA` | Mesma nota, outra `ref`, há menos de 1 h (13.4.2) | Perguntar ao operador; se confirmar, reenviar com `X-Confirmar-Duplicidade: sim` |
 | `404` | Ver a tabela de `codigo` abaixo — **um 404 com `codigo` no corpo é a plataforma respondendo**, não rota inexistente | Depende do `codigo` |
 | `409` | `X-Idempotency-Key` reusada para outra operação ou outra `ref`/faixa | Gerar outra chave. Não repetir com a mesma |
 | `400` | Dados inválidos, ou CNPJ do emitente não confere | Corrigir. Não repetir sem mudar o corpo |

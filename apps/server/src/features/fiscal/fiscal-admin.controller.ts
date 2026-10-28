@@ -1,6 +1,9 @@
 import { Controller, Get, Post, Body, Param, Query, BadRequestException } from '@nestjs/common'
 import { FiscalCotaService } from './fiscal-cota.service'
 import { FiscalSaudeService } from './fiscal-saude.service'
+import { FiscalFranquiaService } from './fiscal-franquia.service'
+import { FiscalExcedenteService, competenciaAnterior } from './fiscal-excedente.service'
+import { prisma } from '@startbig/database'
 import { MODULO_NFE, MODULO_NFCE, MODULO_NFSE } from '@startbig/database'
 import { z, ZodError } from 'zod'
 
@@ -30,7 +33,10 @@ const concederExtrasSchema = z.object({
 
 @Controller('fiscal/licencas')
 export class FiscalAdminController {
-  constructor(private readonly cota: FiscalCotaService) {}
+  constructor(
+    private readonly cota:     FiscalCotaService,
+    private readonly franquia: FiscalFranquiaService,
+  ) {}
 
   private parse<T>(schema: { parse: (x: unknown) => T }, valor: unknown): T {
     try {
@@ -57,6 +63,39 @@ export class FiscalAdminController {
   conceder(@Param('id') id: string, @Body() body: unknown) {
     const dados = this.parse(concederExtrasSchema, body)
     return this.cota.concederExtras(id, dados.quantidade, dados.motivo, dados.tipoDocumento)
+  }
+
+  /** Franquia do mês (todos os documentos) e as últimas faturas de excedente. */
+  @Get(':id/franquia')
+  async franquiaDaLicenca(@Param('id') id: string) {
+    const [situacao, faturas] = await Promise.all([
+      this.franquia.situacao(id),
+      prisma.faturaExcedenteFiscal.findMany({
+        where:   { licencaId: id },
+        orderBy: { competencia: 'desc' },
+        take:    6,
+        select:  { competencia: true, emitidas: true, franquia: true, excedentes: true, valor: true, status: true, erro: true },
+      }),
+    ])
+    return { ...situacao, faturas: faturas.map(f => ({ ...f, valor: Number(f.valor) })) }
+  }
+}
+
+const competenciaSchema = z.string().regex(/^\d{4}-\d{2}$/, 'Competência no formato AAAA-MM.')
+
+/**
+ * Fechamento do excedente à mão. O cron faz isso sozinho no dia 1º; esta rota
+ * existe para conferir antes (`simular`) e para retomar uma linha PENDENTE sem
+ * esperar o mês seguinte. Rodar de novo não cobra duas vezes.
+ */
+@Controller('fiscal/excedentes')
+export class FiscalExcedenteController {
+  constructor(private readonly excedente: FiscalExcedenteService) {}
+
+  @Post('fechar')
+  fechar(@Body() body: { competencia?: string; simular?: boolean } = {}) {
+    const competencia = competenciaSchema.parse(body?.competencia ?? competenciaAnterior())
+    return this.excedente.fecharMes(competencia, { simular: body?.simular !== false })
   }
 }
 

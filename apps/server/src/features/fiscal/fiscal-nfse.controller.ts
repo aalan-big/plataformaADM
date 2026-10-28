@@ -5,6 +5,7 @@ import { MODULO_NFSE } from '@startbig/database'
 import { refNotaSchema, chaveIdempotenciaSchema, emitirNfseSchema, cancelarNotaSchema } from '@startbig/schemas'
 import { FiscalNfseService } from './fiscal-nfse.service'
 import { FiscalCotaService } from './fiscal-cota.service'
+import { confirmouDuplicidade } from './fiscal.controller'
 import { ErpLicencaGuard } from '../../core/guards/erp-licenca.guard'
 import { ModuloGuard } from '../../core/guards/modulo.guard'
 import { Public } from '../../core/decorators/public.decorator'
@@ -52,9 +53,14 @@ export class FiscalNfseController {
   }
 
   @Post('emitir')
-  emitir(@Req() req: ReqErp, @Body() body: unknown, @Headers('x-idempotency-key') chaveIdempotencia?: string) {
+  emitir(
+    @Req() req: ReqErp,
+    @Body() body: unknown,
+    @Headers('x-idempotency-key') chaveIdempotencia?: string,
+    @Headers('x-confirmar-duplicidade') confirmar?: string,
+  ) {
     const dados = this.parse(emitirNfseSchema, body)
-    return this.nfse.emitir(req.erp.licencaId, dados.ref, dados.payload, this.chave(chaveIdempotencia))
+    return this.nfse.emitir(req.erp.licencaId, dados.ref, dados.payload, this.chave(chaveIdempotencia), confirmouDuplicidade(confirmar))
   }
 
   @Get('consultar')

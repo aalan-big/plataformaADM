@@ -13,6 +13,15 @@ type Payload = Parameters<typeof resend.emails.send>[0]
 export type TipoEmail =
   | 'CHAVE_ATIVACAO' | 'PRIMEIRO_ACESSO' | 'RENOVACAO' | 'FALHA_PAGAMENTO'
   | 'AVISO_VENCIMENTO' | 'RETENCAO_BACKUP' | 'TROCA_COMPUTADOR' | 'ALERTA_OPERACIONAL'
+  | 'AVISO_FISCAL' | 'COBRANCA_EXCEDENTE'
+
+const reais = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
+/** "2026-11" → "novembro de 2026". */
+const mesPorExtenso = (competencia: string) => {
+  const [ano, mes] = competencia.split('-').map(Number)
+  return new Date(Date.UTC(ano, mes - 1, 15)).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+}
 
 const dataLonga = (d: Date) =>
   d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'America/Sao_Paulo' })
@@ -298,6 +307,160 @@ export class EmailService {
     })
 
     this.logger.log(`Alerta de troca de dispositivo enviado para ${dados.email}`)
+  }
+
+  /**
+   * Avisos da franquia de notas fiscais: 80% usada, franquia atingida, teto
+   * de segurança próximo e teto atingido. Cada um sai uma vez no mês — quem
+   * segura isso é o `FiscalFranquiaService`, não este método.
+   */
+  async enviarAvisoFranquia(dados: {
+    email:          string
+    nomeCliente:    string
+    tipo:           'FRANQUIA_80' | 'FRANQUIA_ATINGIDA' | 'TETO_PROXIMO' | 'TETO_ATINGIDO'
+    emitidas:       number
+    franquia:       number
+    limite:         number
+    formaCobranca:  'CARTAO' | 'PIX'
+    precoExcedente: number
+  }) {
+    const cartao = dados.formaCobranca === 'CARTAO'
+    const uso = destaque({
+      rotulo:  'Notas emitidas neste mês',
+      valor:   `${dados.emitidas} de ${dados.franquia}`,
+      detalhe: 'NF-e, NFC-e e NFS-e somadas',
+      tom:     dados.tipo === 'FRANQUIA_80' ? 'atencao' : 'perigo',
+    })
+
+    const conteudo = {
+      FRANQUIA_80: {
+        assunto: `Você já usou ${dados.emitidas} das ${dados.franquia} notas do mês`,
+        tom:     'atencao' as const,
+        titulo:  'Sua franquia de notas está acabando',
+        texto: [
+          paragrafo(`Seu plano inclui <strong style="color:${COR.escuro};">${dados.franquia} notas por mês</strong>, somando NF-e, NFC-e e NFS-e.`),
+          cartao
+            ? aviso(`Passando disso, a emissão continua normalmente e cada nota a mais custa <strong>${reais(dados.precoExcedente)}</strong>, cobrado no cartão no dia 1º do mês seguinte.`, 'info')
+            : aviso('Passando disso, a emissão de notas para até a virada do mês. Para continuar emitindo, cadastre um cartão ou fale com o suporte.', 'atencao'),
+        ],
+      },
+      FRANQUIA_ATINGIDA: {
+        assunto: cartao ? 'Franquia de notas atingida — notas extras a partir de agora' : 'Franquia de notas atingida — emissão pausada',
+        tom:     cartao ? 'atencao' as const : 'perigo' as const,
+        titulo:  'Você usou todas as notas do mês',
+        texto: [
+          cartao
+            ? paragrafo(`A emissão continua normalmente. Cada nota a partir de agora custa <strong style="color:${COR.escuro};">${reais(dados.precoExcedente)}</strong>, e o total vai numa cobrança única no cartão, no dia 1º.`)
+            : paragrafo('A emissão de notas está pausada até a virada do mês.'),
+          cartao
+            ? aviso(`Por segurança, a emissão pausa sozinha se chegar a ${dados.limite} notas no mês. Você recebe um aviso antes.`, 'info')
+            : aviso('Para voltar a emitir agora, cadastre um cartão na assinatura ou fale com o suporte.', 'atencao'),
+        ],
+      },
+      TETO_PROXIMO: {
+        assunto: `Atenção: ${dados.emitidas} notas emitidas este mês`,
+        tom:     'atencao' as const,
+        titulo:  'Volume de notas fora do comum',
+        texto: [
+          paragrafo(`Este mês já saíram <strong style="color:${COR.escuro};">${dados.emitidas} notas</strong>. Ao chegar em ${dados.limite}, a emissão pausa para proteger o seu cartão.`),
+          aviso('Se esse volume não é o da sua loja, confira se o sistema está mandando a mesma venda mais de uma vez e fale com o suporte.', 'atencao'),
+        ],
+      },
+      TETO_ATINGIDO: {
+        assunto: 'Emissão de notas pausada — limite de segurança do mês',
+        tom:     'perigo' as const,
+        titulo:  'A emissão de notas foi pausada',
+        texto: [
+          paragrafo(`Chegamos a <strong style="color:${COR.escuro};">${dados.limite} notas</strong> neste mês, o limite de segurança. A emissão pausou para que um erro não vire uma cobrança alta no seu cartão.`),
+          aviso('Se o volume é real, fale com o suporte e liberamos mais na hora.', 'atencao'),
+        ],
+      },
+    }[dados.tipo]
+
+    await this.enviar('AVISO_FISCAL', {
+      from:    FROM,
+      to:      dados.email,
+      subject: `${conteudo.assunto} · StartBig ERP`,
+      html:    layout({
+        selo:      'Notas fiscais',
+        tom:       conteudo.tom,
+        titulo:    conteudo.titulo,
+        preheader: conteudo.assunto,
+        corpo:     [ola(dados.nomeCliente), uso, ...conteudo.texto].join(''),
+      }),
+    })
+    this.logger.log(`Aviso de franquia ${dados.tipo} enviado para ${dados.email}`)
+  }
+
+  /** A mesma nota mandada de novo com outra ref foi barrada (no máximo um aviso por dia). */
+  async enviarAvisoDuplicata(dados: {
+    email:         string
+    nomeCliente:   string
+    ref:           string
+    refAnterior:   string
+    minutos:       number
+    tipoDocumento: string
+  }) {
+    await this.enviar('AVISO_FISCAL', {
+      from:    FROM,
+      to:      dados.email,
+      subject: 'Barramos uma nota repetida · StartBig ERP',
+      html:    layout({
+        selo:      'Notas fiscais',
+        tom:       'atencao',
+        titulo:    'Uma nota repetida não foi emitida',
+        preheader: 'O sistema tentou emitir de novo uma nota igual a uma autorizada há pouco.',
+        corpo: [
+          ola(dados.nomeCliente),
+          paragrafo(`O sistema tentou emitir uma nota igual a outra autorizada há ${dados.minutos} min. Para evitar nota em duplicidade, <strong style="color:${COR.escuro};">ela não foi emitida</strong> e não foi cobrada.`),
+          tabelaDados([
+            ['Documento',         esc(dados.tipoDocumento)],
+            ['Nota já emitida',   esc(dados.refAnterior)],
+            ['Tentativa barrada', esc(dados.ref)],
+          ]),
+          aviso('Se era mesmo uma venda nova, é só confirmar no sistema e enviar de novo. Se isso se repetir sem ninguém ter pedido, fale com o suporte.', 'info'),
+        ].join(''),
+      }),
+    })
+    this.logger.log(`Aviso de nota repetida enviado para ${dados.email}`)
+  }
+
+  /** Cobrança das notas acima da franquia: paga ou recusada no cartão. */
+  async enviarCobrancaExcedente(dados: {
+    email:       string
+    nomeCliente: string
+    competencia: string
+    excedentes:  number
+    valor:       number
+    pago:        boolean
+  }) {
+    const mes = mesPorExtenso(dados.competencia)
+    await this.enviar('COBRANCA_EXCEDENTE', {
+      from:    FROM,
+      to:      dados.email,
+      subject: dados.pago
+        ? `Notas extras de ${mes}: ${reais(dados.valor)} cobrados · StartBig ERP`
+        : `Não conseguimos cobrar as notas extras de ${mes} · StartBig ERP`,
+      html:    layout({
+        selo:      dados.pago ? 'Pagamento confirmado' : 'Falha no pagamento',
+        tom:       dados.pago ? 'sucesso' : 'perigo',
+        titulo:    dados.pago ? 'Cobrança das notas extras' : 'A cobrança das notas extras não passou',
+        preheader: `${dados.excedentes} notas acima da franquia em ${mes}.`,
+        corpo: [
+          ola(dados.nomeCliente),
+          destaque({
+            rotulo:  `Notas acima da franquia em ${mes}`,
+            valor:   reais(dados.valor),
+            detalhe: `${dados.excedentes} ${dados.excedentes === 1 ? 'nota' : 'notas'} a ${reais(dados.valor / Math.max(1, dados.excedentes))}`,
+            tom:     dados.pago ? 'sucesso' : 'perigo',
+          }),
+          dados.pago
+            ? nota('Cobrado no cartão da sua assinatura. Não precisa fazer nada.')
+            : aviso('Vamos tentar de novo nos próximos dias. Enquanto estiver em aberto, a emissão de notas para quando a franquia do mês acabar. Confira o cartão com o banco ou atualize a forma de pagamento.', 'atencao'),
+        ].join(''),
+      }),
+    })
+    this.logger.log(`Cobrança de excedente (${dados.pago ? 'paga' : 'falhou'}) enviada para ${dados.email}`)
   }
 
   /**

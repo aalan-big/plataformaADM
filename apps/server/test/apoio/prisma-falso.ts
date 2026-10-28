@@ -27,6 +27,8 @@ export const tabelas = {
   licencaHistorico:    [] as Linha[],
   modulo:              [] as Linha[],
   emailLog:            [] as Linha[],
+  faturaExcedenteFiscal: [] as Linha[],
+  avisoFiscal:         [] as Linha[],
 }
 
 export function reiniciarBanco() {
@@ -254,6 +256,8 @@ export const prismaFalso = {
   consumoFiscal: {
     findUnique: async ({ where }: Linha) =>
       copia(tabelas.consumoFiscal.find(chaveConsumo(where.licencaId_competencia_ambiente_tipoDocumento))),
+    findMany: async ({ where }: Linha) =>
+      tabelas.consumoFiscal.filter(c => casa(c, where)).map(copia),
     upsert: async ({ where, update, create }: Linha) => {
       const chave = where.licencaId_competencia_ambiente_tipoDocumento
       const linha = tabelas.consumoFiscal.find(chaveConsumo(chave))
@@ -264,6 +268,49 @@ export const prismaFalso = {
       const nova = { emitidas: 0, canceladas: 0, cotaExtra: 0, ...create }
       tabelas.consumoFiscal.push(nova)
       return copia(nova)
+    },
+  },
+
+  faturaExcedenteFiscal: {
+    findUnique: async ({ where }: Linha) => {
+      const w = where.licencaId_competencia
+      return copia(tabelas.faturaExcedenteFiscal.find(f => w
+        ? f.licencaId === w.licencaId && f.competencia === w.competencia
+        : f.id === where.id))
+    },
+    findFirst: async ({ where }: Linha) =>
+      copia(tabelas.faturaExcedenteFiscal.find(f => casa(f, where))),
+    findMany: async ({ where, orderBy }: Linha) =>
+      ordenar(tabelas.faturaExcedenteFiscal.filter(f => casa(f, where)), orderBy).map(copia),
+    create: async ({ data }: Linha) => {
+      if (tabelas.faturaExcedenteFiscal.some(f => f.licencaId === data.licencaId && f.competencia === data.competencia)) {
+        throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
+      }
+      const linha = { id: novoId('fatura'), stripeInvoiceId: null, erro: null, ...data }
+      tabelas.faturaExcedenteFiscal.push(linha)
+      return copia(linha)
+    },
+    update: async ({ where, data }: Linha) => {
+      const linha = tabelas.faturaExcedenteFiscal.find(f => f.id === where.id)
+      if (!linha) throw new Error(`fatura ${where.id} não existe`)
+      aplicarDados(linha, data)
+      return copia(linha)
+    },
+    updateMany: async ({ where, data }: Linha) => {
+      const linhas = tabelas.faturaExcedenteFiscal.filter(f => casa(f, where))
+      linhas.forEach(l => aplicarDados(l, data))
+      return { count: linhas.length }
+    },
+  },
+
+  /** Chave composta (licença, competência, tipo): repetir estoura P2002, como no Postgres. */
+  avisoFiscal: {
+    create: async ({ data }: Linha) => {
+      if (tabelas.avisoFiscal.some(a => a.licencaId === data.licencaId && a.competencia === data.competencia && a.tipo === data.tipo)) {
+        throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
+      }
+      tabelas.avisoFiscal.push({ criadoEm: new Date(), ...data })
+      return { ...data }
     },
   },
 

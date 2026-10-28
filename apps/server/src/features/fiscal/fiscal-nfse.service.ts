@@ -4,6 +4,7 @@ import { FocusNfeService } from '../../common/focus-nfe/focus-nfe.service'
 import { AMBIENTE_PRODUCAO, nomeAmbiente, urlAbsolutaFocus, numeroOuNulo, ResultadoNota, getEmpresaConfig } from './fiscal-comum'
 import { FiscalCotaService } from './fiscal-cota.service'
 import { FiscalEmissaoService } from './fiscal-emissao.service'
+import { FiscalFranquiaService } from './fiscal-franquia.service'
 
 /**
  * Resposta da NFS-e no MESMO contrato da NF-e (`ResultadoNota`), para o ERP ler
@@ -80,9 +81,10 @@ export class FiscalNfseService {
     private readonly focusNfeService: FocusNfeService,
     private readonly cota: FiscalCotaService,
     private readonly trilha: FiscalEmissaoService,
+    private readonly franquia: FiscalFranquiaService,
   ) {}
 
-  async emitir(licencaId: string, ref: string, payload: any, chaveIdempotencia?: string): Promise<ResultadoNfse> {
+  async emitir(licencaId: string, ref: string, payload: any, chaveIdempotencia?: string, confirmarDuplicidade = false): Promise<ResultadoNfse> {
     const config = await getEmpresaConfig(licencaId)
 
     const jaRespondido = await this.trilha.consultarIdempotencia(licencaId, chaveIdempotencia, 'EMISSAO', ref)
@@ -104,7 +106,10 @@ export class FiscalNfseService {
           HttpStatus.PAYMENT_REQUIRED,
         )
       }
+      await this.franquia.exigirEspaco(licencaId)
     }
+
+    const assinatura = await this.franquia.conferirDuplicata(licencaId, config.ambiente, MODULO_NFSE, ref, payload, confirmarDuplicidade)
 
     // Idempotência por ref: a mesma da NF-e — na dúvida, não emite.
     try {
@@ -130,14 +135,17 @@ export class FiscalNfseService {
     const resultado = mapResultadoNfse(res, config.ambiente)
     this.logarDesfecho(ref, resultado, 'emissão')
 
-    if (resultado.status === 'autorizado' || resultado.status === 'processando') {
+    const contou = resultado.status === 'autorizado' || resultado.status === 'processando'
+    if (contou) {
       await this.cota.incrementarConsumo(licencaId, config.ambiente, MODULO_NFSE, 'emitidas')
     }
     await this.trilha.gravarIdempotencia({ licencaId, chave: chaveIdempotencia, operacao: 'EMISSAO', ref, resultado })
     await this.trilha.registrarEvento({
       licencaId, ref, ambiente: config.ambiente, tipoDocumento: MODULO_NFSE,
       acao: 'EMISSAO', resultado: resultado.status, mensagem: resultado.mensagem_sefaz,
+      assinatura,
     })
+    if (contou && config.ambiente === AMBIENTE_PRODUCAO) await this.franquia.aposEmitir(licencaId)
     return resultado
   }
 

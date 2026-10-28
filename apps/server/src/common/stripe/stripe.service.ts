@@ -59,7 +59,15 @@ export type EventoParsed =
       tipo:  'customer.subscription.deleted'
       dados: { subscriptionId: string }
     }
-  | { tipo: Exclude<string, 'checkout.session.completed' | 'invoice.payment_succeeded' | 'invoice.payment_failed' | 'customer.subscription.deleted'> }
+  | {
+      /** Fatura avulsa das notas acima da franquia — não é assinatura. */
+      tipo:  'excedente_fiscal.pago' | 'excedente_fiscal.falhou'
+      dados: { invoiceId: string; licencaId: string | null; competencia: string | null; valor: number }
+    }
+  | { tipo: Exclude<string, 'checkout.session.completed' | 'invoice.payment_succeeded' | 'invoice.payment_failed' | 'customer.subscription.deleted' | 'excedente_fiscal.pago' | 'excedente_fiscal.falhou'> }
+
+/** Marca na metadata da fatura avulsa do excedente fiscal. É por ela que o webhook a separa da assinatura. */
+export const METADATA_EXCEDENTE_FISCAL = 'EXCEDENTE_FISCAL'
 
 @Injectable()
 export class StripeService {
@@ -232,6 +240,26 @@ export class StripeService {
       }
     }
 
+    /**
+     * A fatura do excedente fiscal não tem assinatura. Sem este desvio ela cairia
+     * no tratamento da renovação, que a descartaria com alarme ("fatura paga sem
+     * assinatura") e, na falha, procuraria uma licença pela assinatura vazia.
+     */
+    if (event.type === 'invoice.payment_succeeded' || event.type === 'invoice.payment_failed') {
+      const inv = event.data.object as any
+      if (inv.metadata?.tipo === METADATA_EXCEDENTE_FISCAL) {
+        return {
+          tipo:  event.type === 'invoice.payment_succeeded' ? 'excedente_fiscal.pago' : 'excedente_fiscal.falhou',
+          dados: {
+            invoiceId:   inv.id,
+            licencaId:   inv.metadata?.licencaId ?? null,
+            competencia: inv.metadata?.competencia ?? null,
+            valor:       (inv.amount_paid || inv.amount_due || 0) / 100,
+          },
+        }
+      }
+    }
+
     if (event.type === 'invoice.payment_succeeded') {
       const inv = event.data.object as any
       const { subscriptionId, licencaId, meses, modulosMensal } = this.extrairDadosFatura(inv)
@@ -362,6 +390,66 @@ export class StripeService {
     })
 
     this.logger.log(`[modulo] item ${itemId} removido da assinatura ${subscriptionId}.`)
+  }
+
+  /**
+   * Cobra um valor avulso no cartão da assinatura, numa fatura própria.
+   *
+   * Fatura própria, e não item na próxima fatura da assinatura, porque no plano
+   * trimestral ou anual a próxima fatura está a meses: o excedente de novembro
+   * seria cobrado em março. Aqui ele sai no dia em que o mês fecha.
+   *
+   * As chaves de idempotência vêm de quem chama (licença + competência): rodar o
+   * fechamento de novo devolve a MESMA fatura e o MESMO item, em vez de criar
+   * uma segunda cobrança.
+   *
+   * O pagamento é tentado na hora. Recusado, a fatura fica aberta e o Stripe
+   * tenta de novo sozinho; o desfecho chega pelo webhook.
+   */
+  async cobrarAvulsoNaAssinatura(dados: {
+    subscriptionId: string
+    valor:          number
+    descricao:      string
+    metadata:       Record<string, string>
+    chave:          string
+  }): Promise<{ invoiceId: string; pago: boolean; erro: string | null }> {
+    const sub      = await this.stripe.subscriptions.retrieve(dados.subscriptionId)
+    const customer = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id
+    if (!customer) throw new BadRequestException('Assinatura sem cliente no Stripe.')
+    const pm       = typeof sub.default_payment_method === 'string' ? sub.default_payment_method : sub.default_payment_method?.id
+    const currency = sub.items?.data?.[0]?.price?.currency ?? 'brl'
+
+    const fatura = await this.stripe.invoices.create({
+      customer,
+      collection_method:              'charge_automatically',
+      auto_advance:                   true,
+      // Sem isto, itens pendentes do cliente (ajuste de plano, por exemplo)
+      // entrariam nesta fatura e seriam cobrados como se fossem nota.
+      pending_invoice_items_behavior: 'exclude',
+      ...(pm ? { default_payment_method: pm } : {}),
+      description:                    dados.descricao,
+      metadata:                       dados.metadata,
+    }, { idempotencyKey: `${dados.chave}-fatura` })
+
+    await this.stripe.invoiceItems.create({
+      customer,
+      invoice:     fatura.id,
+      amount:      Math.round(dados.valor * 100),
+      currency,
+      description: dados.descricao,
+    }, { idempotencyKey: `${dados.chave}-item` })
+
+    if (fatura.status === 'draft') await this.stripe.invoices.finalizeInvoice(fatura.id)
+
+    try {
+      const paga = await this.stripe.invoices.pay(fatura.id)
+      this.logger.log(`[excedente] fatura ${fatura.id} de R$ ${dados.valor} — ${paga.status}.`)
+      return { invoiceId: fatura.id, pago: paga.status === 'paid', erro: null }
+    } catch (err) {
+      const erro = err instanceof Error ? err.message : String(err)
+      this.logger.warn(`[excedente] fatura ${fatura.id} de R$ ${dados.valor} não passou: ${erro}`)
+      return { invoiceId: fatura.id, pago: false, erro }
+    }
   }
 
   async cancelarSubscription(subscriptionId: string): Promise<void> {

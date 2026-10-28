@@ -41,6 +41,7 @@ import {
   contarCobrancasPorStatus,
   estenderModulosExtras,
   modulosCobraveisDaLicenca,
+  prisma,
 } from '@startbig/database'
 import { confirmarPagamentoSchema, gerarCobrancaSchema } from '@startbig/schemas'
 import { EmailService } from '../../core/email/email.service'
@@ -414,6 +415,12 @@ export class FinanceiroService {
       }
 
       return { msg: 'Pagamento inicial processado', data: resultado }
+    }
+
+    // ── 1b. Fatura avulsa das notas fiscais acima da franquia ─────────────────
+    // Não renova nada nem mexe na licença: só fecha a fatura e avisa o cliente.
+    if (evento.tipo === 'excedente_fiscal.pago' || evento.tipo === 'excedente_fiscal.falhou') {
+      return this.processarExcedenteFiscal(evento.tipo === 'excedente_fiscal.pago', (evento as any).dados)
     }
 
     // ── 2. Fatura paga: renovação de ciclo OU ajuste proporcional de plano (upgrade)
@@ -819,6 +826,79 @@ export class FinanceiroService {
     }
 
     return { msg: `Evento Asaas ${evento} ignorado` }
+  }
+
+  // ── Excedente fiscal (notas acima da franquia) ─────────────────────────────
+
+  /**
+   * Desfecho da fatura avulsa que o `FiscalExcedenteService` abriu no dia 1º.
+   *
+   * Paga: marca PAGA, registra no financeiro (sem comissão de parceiro — é uso,
+   * não plano) e manda o recibo. O id da fatura é a trava contra o reenvio do
+   * webhook, como na renovação.
+   *
+   * Recusada: marca FALHOU e avisa UMA vez. Cada retentativa do Stripe dispara
+   * este evento de novo; o e-mail só sai na passagem para FALHOU. Enquanto ela
+   * estiver aberta, a franquia trata o cliente como PIX e para na 70ª nota.
+   */
+  private async processarExcedenteFiscal(
+    pago: boolean,
+    dados: { invoiceId: string; licencaId: string | null; competencia: string | null; valor: number },
+  ) {
+    const fatura = await prisma.faturaExcedenteFiscal.findFirst({
+      where: dados.licencaId && dados.competencia
+        ? { OR: [{ stripeInvoiceId: dados.invoiceId }, { licencaId: dados.licencaId, competencia: dados.competencia }] }
+        : { stripeInvoiceId: dados.invoiceId },
+    })
+    if (!fatura) {
+      await this.alarmarDescarte({
+        evento:     pago ? 'excedente_fiscal.pago' : 'excedente_fiscal.falhou',
+        motivo:     'Fatura de excedente fiscal sem linha correspondente na plataforma',
+        referencia: dados.invoiceId,
+        valor:      dados.valor,
+      })
+      return { msg: 'Fatura de excedente desconhecida — ignorado' }
+    }
+
+    const licenca = await findLicencaById(fatura.licencaId)
+    const cliente = licenca?.cliente
+    const nomeCliente = cliente ? (cliente.pf?.nomeCompleto ?? cliente.pj?.razaoSocial ?? cliente.email) : ''
+    const valor = Number(fatura.valor)
+
+    if (pago) {
+      await prisma.faturaExcedenteFiscal.update({
+        where: { id: fatura.id },
+        data:  { status: 'PAGA', stripeInvoiceId: dados.invoiceId, erro: null },
+      })
+      if (await findPagamentoByTransacaoId(dados.invoiceId)) return { msg: 'Excedente já registrado' }
+      if (!licenca) return { msg: 'Excedente pago, licença não existe mais' }
+
+      const descricao = `Notas fiscais acima da franquia — ${fatura.competencia} (${fatura.excedentes} notas)`
+      const pagamento = await criarPagamento({ licencaId: licenca.id, clienteId: licenca.clienteId, valor, meses: 0, gateway: 'STRIPE', transacaoId: dados.invoiceId, observacao: descricao })
+      await criarTransacao({ clienteId: licenca.clienteId, licencaId: licenca.id, pagamentoId: pagamento.id, tipo: 'PAGAMENTO_RECEBIDO', valor, origem: 'STRIPE', descricao })
+
+      try {
+        await this.emailService.enviarCobrancaExcedente({ email: licenca.cliente.email, nomeCliente, competencia: fatura.competencia, excedentes: fatura.excedentes, valor, pago: true })
+      } catch (err) {
+        console.warn('[email] falha ao enviar recibo de excedente:', err instanceof Error ? err.message : err)
+      }
+      return { msg: 'Excedente fiscal pago' }
+    }
+
+    if (fatura.status === 'PAGA') return { msg: 'Excedente já pago — falha antiga ignorada' }
+    const jaFalhou = fatura.status === 'FALHOU'
+    await prisma.faturaExcedenteFiscal.update({
+      where: { id: fatura.id },
+      data:  { status: 'FALHOU', stripeInvoiceId: dados.invoiceId },
+    })
+    if (!jaFalhou && licenca) {
+      try {
+        await this.emailService.enviarCobrancaExcedente({ email: licenca.cliente.email, nomeCliente, competencia: fatura.competencia, excedentes: fatura.excedentes, valor, pago: false })
+      } catch (err) {
+        console.warn('[email] falha ao avisar excedente recusado:', err instanceof Error ? err.message : err)
+      }
+    }
+    return { msg: 'Excedente fiscal recusado' }
   }
 
   // ── Helper: alarme de descarte ─────────────────────────────────────────────

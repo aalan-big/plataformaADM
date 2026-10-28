@@ -4,6 +4,7 @@ import { TipoDocumentoEmissivel } from './fiscal-comum'
 import { FiscalEmissaoService } from './fiscal-emissao.service'
 import { FiscalCotaService } from './fiscal-cota.service'
 import { FiscalOnboardingService } from './fiscal-onboarding.service'
+import { FiscalFranquiaService } from './fiscal-franquia.service'
 import { ErpLicencaGuard } from '../../core/guards/erp-licenca.guard'
 import { ModuloGuard } from '../../core/guards/modulo.guard'
 import { Public } from '../../core/decorators/public.decorator'
@@ -13,6 +14,13 @@ import { refNotaSchema, chaveIdempotenciaSchema, emitirNotaSchema, cancelarNotaS
 import { ZodError } from 'zod'
 
 type ReqErp = Request & { erp: { licencaId: string; modulos?: string[] } }
+
+/**
+ * `X-Confirmar-Duplicidade: sim` — o operador viu o aviso de nota repetida
+ * (409 `NOTA_DUPLICADA_SUSPEITA`) e confirmou que é outra venda.
+ */
+export const confirmouDuplicidade = (valor?: string) =>
+  ['sim', 'true', '1'].includes(String(valor ?? '').trim().toLowerCase())
 
 /**
  * Parte comum das rotas fiscais do ERP.
@@ -66,6 +74,7 @@ abstract class FiscalErpControllerBase {
     @Req() req: ReqErp,
     @Body() body: unknown,
     @Headers('x-idempotency-key') chaveIdempotencia?: string,
+    @Headers('x-confirmar-duplicidade') confirmar?: string,
   ) {
     const dados = this.parse(emitirNotaSchema, body)
     return this.emissao.emitir(
@@ -74,6 +83,7 @@ abstract class FiscalErpControllerBase {
       dados.payload,
       this.tipoDocumento,
       this.chave(chaveIdempotencia),
+      confirmouDuplicidade(confirmar),
     )
   }
 
@@ -199,11 +209,24 @@ export class FiscalNfceController extends FiscalErpControllerBase {
 @UseGuards(ErpLicencaGuard)
 @Controller('erp/fiscal')
 export class FiscalConfigController {
-  constructor(private readonly onboarding: FiscalOnboardingService) {}
+  constructor(
+    private readonly onboarding: FiscalOnboardingService,
+    private readonly franquia:   FiscalFranquiaService,
+  ) {}
 
   @Get('config')
   config(@Req() req: ReqErp) {
     return this.onboarding.configFiscal(req.erp.licencaId)
+  }
+
+  /**
+   * Franquia do mês, todos os documentos somados: quantas notas foram, quantas
+   * faltam, quanto já passou e quanto vai ser cobrado. Fora dos controllers de
+   * emissão pelo mesmo motivo do `/config`: vale para qualquer documento.
+   */
+  @Get('franquia')
+  situacaoFranquia(@Req() req: ReqErp) {
+    return this.franquia.situacao(req.erp.licencaId)
   }
 
   /**
