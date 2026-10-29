@@ -1,5 +1,5 @@
 import { Injectable, Logger, HttpException } from '@nestjs/common'
-import { prisma, MODULO_NFCE } from '@startbig/database'
+import { prisma, MODULO_NFCE, MODULO_NFSE } from '@startbig/database'
 import { FocusNfeService } from '../../common/focus-nfe/focus-nfe.service'
 import { tokenDeEmissao } from './fiscal-comum'
 
@@ -26,7 +26,11 @@ export type ItemSaude = {
 }
 
 export type RejeicaoAgrupada = {
+  /** NFE, NFCE ou NFSE: a NFS-e é recusada pela prefeitura/Sistema Nacional, não pela SEFAZ. */
+  tipoDocumento: string
   codigoSefaz: number | null
+  /** Código alfanumérico da NFS-e ("E0312", "L99"), que não cabe no cStat. */
+  codigoErro:  string | null
   motivo:      string
   quantidade:  number
   ultimaEm:    string
@@ -41,6 +45,7 @@ export type SaudeFiscal = {
   /** `false` quando a Focus não pôde ser lida: os itens dela vêm dos dados locais ou "desconhecido". */
   focusConsultada: boolean
   temNfce:         boolean
+  temNfse:         boolean
   itens:           ItemSaude[]
   rejeicoes:       RejeicaoAgrupada[]
 }
@@ -73,7 +78,8 @@ const nomeAmbiente = (a: number) => (a === PRODUCAO ? 'produção' : 'homologaç
 /** O que se tirou da Focus, já sem segredo nenhum. */
 type LeituraFocus =
   | { lida: true; empresaId: string; semIdNaFicha: boolean; cnpj: string; certificadoValidoAte: Date | null; certificadoCnpj: string | null;
-      habilitaNfe: boolean; habilitaNfce: boolean; cscProducao: boolean | null; cscHomologacao: boolean | null }
+      habilitaNfe: boolean; habilitaNfce: boolean; cscProducao: boolean | null; cscHomologacao: boolean | null
+      habilitaNfse: boolean; habilitaNfsenProducao: boolean; habilitaNfsenHomologacao: boolean }
   | { lida: false; item: ItemSaude }
 
 @Injectable()
@@ -96,10 +102,11 @@ export class FiscalSaudeService {
         chave: 'ficha', titulo: 'Ficha fiscal', estado: 'problema',
         detalhe: 'Cliente sem ficha fiscal: não emite. Configure o CNPJ em "Configuração Fiscal" ou peça ao lojista para ativar a emissão no ERP (com NFE/NFCE na licença a ficha nasce sozinha).',
       }]
-      return { ...base, geral: 'problema', ficha: null, focusConsultada: false, temNfce: false, itens, rejeicoes: [] }
+      return { ...base, geral: 'problema', ficha: null, focusConsultada: false, temNfce: false, temNfse: false, itens, rejeicoes: [] }
     }
 
-    const temNfce = await this.temModuloNfce(licencas)
+    const temNfce = await this.temModulo(licencas, MODULO_NFCE)
+    const temNfse = await this.temModulo(licencas, MODULO_NFSE)
     const focus = await this.lerFocus(ficha)
     const itens: ItemSaude[] = []
 
@@ -115,6 +122,7 @@ export class FiscalSaudeService {
 
     itens.push(this.itemCertificado(ficha, focus, agora))
     itens.push(this.itemHabilitacao(focus, temNfce))
+    if (temNfse) itens.push(await this.itemNfse(ficha, focus))
     itens.push(this.itemToken(ficha))
     if (temNfce) itens.push(this.itemCsc(ficha, focus))
 
@@ -124,6 +132,7 @@ export class FiscalSaudeService {
 
     const ids = licencas.map(l => l.id)
     itens.push(await this.itemUltimaNota(ids, ficha.ambiente))
+    if (temNfse) itens.push(await this.itemUltimaNota(ids, ficha.ambiente, MODULO_NFSE))
 
     const rejeicoes = await this.rejeicoesRecentes(ids, agora)
     const totalRejeicoes = rejeicoes.reduce((s, r) => s + r.quantidade, 0)
@@ -131,8 +140,8 @@ export class FiscalSaudeService {
       chave: 'rejeicoes', titulo: `Rejeições (${JANELA_REJEICOES_DIAS} dias)`,
       estado: totalRejeicoes ? 'atencao' : 'ok',
       detalhe: totalRejeicoes
-        ? `${totalRejeicoes} nota(s) recusada(s) pela SEFAZ. Os motivos estão logo abaixo.`
-        : 'Nenhuma recusa da SEFAZ registrada.',
+        ? `${totalRejeicoes} nota(s) recusada(s) (SEFAZ${temNfse ? ' ou NFS-e' : ''}). Os motivos estão logo abaixo.`
+        : `Nenhuma recusa registrada${temNfse ? ' (NF-e, NFC-e e NFS-e)' : ''}.`,
     })
 
     const geral = itens.reduce<EstadoItem>((pior, i) => (PESO[i.estado] > PESO[pior] ? i.estado : pior), 'ok')
@@ -143,27 +152,28 @@ export class FiscalSaudeService {
       ficha: { cnpj: ficha.cnpj, razaoSocial: ficha.razaoSocial, ambiente: ficha.ambiente },
       focusConsultada: focus.lida,
       temNfce,
+      temNfse,
       itens,
       rejeicoes,
     }
   }
 
   /**
-   * NFC-e contratada em alguma licença do cliente, pelo plano ou como extra.
+   * Módulo contratado em alguma licença do cliente, pelo plano ou como extra.
    *
-   * Decide se habilitação de NFC-e e CSC entram na conferência: cobrar CSC de
+   * Decide o que entra na conferência: cobrar CSC (NFC-e) ou rota da NFS-e de
    * quem só emite NF-e pintaria de vermelho um cliente que está perfeito.
    */
-  private async temModuloNfce(licencas: { id: string; planoId: string | null }[]): Promise<boolean> {
+  private async temModulo(licencas: { id: string; planoId: string | null }[], identificador: string): Promise<boolean> {
     for (const l of licencas) {
       const extra = await prisma.licencaModuloExtra.findFirst({
-        where:  { licencaId: l.id, modulo: { identificador: MODULO_NFCE } },
+        where:  { licencaId: l.id, modulo: { identificador } },
         select: { dataVencimento: true },
       })
       if (extra && (!extra.dataVencimento || extra.dataVencimento > new Date())) return true
       if (l.planoId) {
         const doPlano = await prisma.planoModulo.findFirst({
-          where:  { planoId: l.planoId, modulo: { identificador: MODULO_NFCE } },
+          where:  { planoId: l.planoId, modulo: { identificador } },
           select: { planoId: true },
         })
         if (doPlano) return true
@@ -220,6 +230,9 @@ export class FiscalSaudeService {
         // ausente é "não sei", não "não tem" — aí vale o marcador da ficha.
         cscProducao:    'csc_nfce_producao'    in (empresa ?? {}) ? !!empresa.csc_nfce_producao    : null,
         cscHomologacao: 'csc_nfce_homologacao' in (empresa ?? {}) ? !!empresa.csc_nfce_homologacao : null,
+        habilitaNfse:             empresa?.habilita_nfse === true,
+        habilitaNfsenProducao:    empresa?.habilita_nfsen_producao === true,
+        habilitaNfsenHomologacao: empresa?.habilita_nfsen_homologacao === true,
       }
 
       return leitura
@@ -307,25 +320,93 @@ export class FiscalSaudeService {
       : { chave: 'csc', titulo, estado: 'problema', detalhe: `Pendente para ${nomeAmbiente(ficha.ambiente)}${origem}: o cupom sai sem QR Code válido.` }
   }
 
-  private async itemUltimaNota(licencaIds: string[], ambienteDaFicha: number): Promise<ItemSaude> {
-    const titulo = 'Última nota autorizada'
+  /**
+   * A NFS-e (G7): por onde ela sai e se essa rota está de pé. Junta três
+   * fontes — a rota da ficha, a decisão do suporte para a cidade
+   * (`MunicipioNfse`) e as chaves de habilitação lidas na Focus.
+   */
+  private async itemNfse(
+    ficha: { ambiente: number; nfseRota?: string | null; nfseCodigoMunicipio?: string | null },
+    focus: LeituraFocus,
+  ): Promise<ItemSaude> {
+    const titulo = 'NFS-e'
+    const cidade = ficha.nfseCodigoMunicipio
+      ? await prisma.municipioNfse.findUnique({ where: { codigoIbge: ficha.nfseCodigoMunicipio } })
+      : null
+    const nomeCidade = cidade ? `${cidade.nome}/${cidade.uf}` : ficha.nfseCodigoMunicipio ? `IBGE ${ficha.nfseCodigoMunicipio}` : 'cidade não registrada'
+    const producao = ficha.ambiente === PRODUCAO
+
+    if (ficha.nfseRota === 'MUNICIPAL_PENDENTE') {
+      return { chave: 'nfse', titulo, estado: 'problema',
+        detalhe: `Não é MEI e ${nomeCidade} não tem rota decidida: a NFS-e não sai. Decida a cidade em Municípios NFS-e e troque a rota no perfil.` }
+    }
+
+    if (ficha.nfseRota === 'MUNICIPAL') {
+      if (focus.lida && !focus.habilitaNfse) {
+        return { chave: 'nfse', titulo, estado: 'problema',
+          detalhe: `Rota municipal (${nomeCidade}), mas a NFS-e municipal está desligada na Focus. Use "Passar para Municipal" no perfil para religar.` }
+      }
+      const status = cidade?.statusNfse ?? null
+      if (status && ['inativo', 'nao_implementado'].includes(status)) {
+        return { chave: 'nfse', titulo, estado: 'problema',
+          detalhe: `Rota municipal, mas a Focus diz que ${nomeCidade} está "${status}": a prefeitura não recebe nota por ela.` }
+      }
+      if (status && status !== 'ativo') {
+        return { chave: 'nfse', titulo, estado: 'atencao',
+          detalhe: `Rota municipal; o webservice de ${nomeCidade} está "${status}" na Focus. Notas podem atrasar ou ser recusadas.` }
+      }
+      if (!focus.lida) {
+        return { chave: 'nfse', titulo, estado: 'desconhecido', detalhe: `Rota municipal (${nomeCidade}). A habilitação só dá para conferir lendo a Focus.` }
+      }
+      return { chave: 'nfse', titulo, estado: 'ok',
+        detalhe: `Rota municipal (${nomeCidade}${cidade?.provedorNfse ? `, provedor ${cidade.provedorNfse}` : ''}), habilitada na Focus.` }
+    }
+
+    // NACIONAL ou null (ficha anterior à G6, que emite pela Nacional).
+    const semRota = !ficha.nfseRota
+    if (focus.lida) {
+      const ligada = producao ? focus.habilitaNfsenProducao : focus.habilitaNfsenHomologacao
+      if (!ligada) {
+        return { chave: 'nfse', titulo, estado: 'problema',
+          detalhe: `NFS-e Nacional desligada na Focus para ${nomeAmbiente(ficha.ambiente)}: a nota é recusada. Reenviar o certificado pelo ERP religa.` }
+      }
+    }
+    if (semRota) {
+      return { chave: 'nfse', titulo, estado: 'atencao',
+        detalhe: 'Sem rota gravada (ativação anterior à rota municipal): sai pela Nacional. Reenviar o certificado pelo ERP grava a rota e a cidade.' }
+    }
+    if (!focus.lida) {
+      return { chave: 'nfse', titulo, estado: 'desconhecido', detalhe: 'Rota Nacional. A habilitação só dá para conferir lendo a Focus.' }
+    }
+    return { chave: 'nfse', titulo, estado: 'ok', detalhe: `Rota Nacional (nfse.gov.br), habilitada para ${nomeAmbiente(ficha.ambiente)}.` }
+  }
+
+  private async itemUltimaNota(licencaIds: string[], ambienteDaFicha: number, tipoDocumento?: string): Promise<ItemSaude> {
+    const titulo = tipoDocumento === MODULO_NFSE ? 'Última NFS-e autorizada' : 'Última nota autorizada'
+    const chave = tipoDocumento === MODULO_NFSE ? 'ultima_nfse' : 'ultima_nota'
     const ultima = licencaIds.length
       ? await prisma.emissaoLog.findFirst({
-          where:   { licencaId: { in: licencaIds }, acao: 'EMISSAO', resultado: 'autorizado' },
+          where:   { licencaId: { in: licencaIds }, acao: 'EMISSAO', resultado: 'autorizado', ...(tipoDocumento ? { tipoDocumento } : {}) },
           orderBy: { criadoEm: 'desc' },
           select:  { criadoEm: true, ambiente: true, tipoDocumento: true },
         })
       : null
     if (!ultima) {
-      return { chave: 'ultima_nota', titulo, estado: 'atencao',
-        detalhe: 'Nenhuma registrada. (NF-e autorizada antes de 07/10/2026 pode não constar: a consulta não gravava o desfecho.)' }
+      return { chave, titulo, estado: 'atencao',
+        detalhe: tipoDocumento === MODULO_NFSE
+          ? 'Nenhuma NFS-e autorizada ainda.'
+          : 'Nenhuma registrada. (NF-e autorizada antes de 07/10/2026 pode não constar: a consulta não gravava o desfecho.)' }
     }
     const fora = ultima.ambiente !== ambienteDaFicha ? ` — em ${nomeAmbiente(ultima.ambiente)}, não no ambiente atual` : ''
-    return { chave: 'ultima_nota', titulo, estado: fora ? 'atencao' : 'ok',
+    return { chave, titulo, estado: fora ? 'atencao' : 'ok',
       detalhe: `${ultima.tipoDocumento} em ${quando(ultima.criadoEm)}${fora}.` }
   }
 
-  /** Recusas da SEFAZ dos últimos dias, agrupadas pelo cStat (ou pelo texto, nas linhas antigas sem código). */
+  /**
+   * Recusas dos últimos dias, agrupadas por documento e código: o cStat na
+   * NF-e/NFC-e; na NFS-e, o código alfanumérico que abre a mensagem ("E0312 -
+   * ...", montada pelo `mapResultadoNfse`). Sem código, pelo texto.
+   */
   private async rejeicoesRecentes(licencaIds: string[], agora: Date): Promise<RejeicaoAgrupada[]> {
     if (!licencaIds.length) return []
     const linhas = await prisma.emissaoLog.findMany({
@@ -336,17 +417,19 @@ export class FiscalSaudeService {
         criadoEm:  { gte: new Date(agora.getTime() - JANELA_REJEICOES_DIAS * DIA) },
       },
       orderBy: { criadoEm: 'desc' },
-      select:  { codigoSefaz: true, mensagem: true, criadoEm: true },
+      select:  { codigoSefaz: true, mensagem: true, criadoEm: true, tipoDocumento: true },
     })
 
     const grupos = new Map<string, RejeicaoAgrupada>()
     for (const l of linhas) {
+      const tipo = l.tipoDocumento ?? 'NFE'
       const motivo = (l.mensagem ?? 'sem mensagem').replace(/\[.*$/, '').slice(0, 120).trim()
-      const chave = l.codigoSefaz != null ? `c${l.codigoSefaz}` : `m${motivo}`
+      const codigoErro = tipo === MODULO_NFSE ? (motivo.match(/^([A-Z]{1,2}\d{1,4})\b/)?.[1] ?? null) : null
+      const chave = l.codigoSefaz != null ? `${tipo}:c${l.codigoSefaz}` : codigoErro ? `${tipo}:e${codigoErro}` : `${tipo}:m${motivo}`
       const g = grupos.get(chave)
       if (g) g.quantidade++
       // A primeira linha de cada grupo é a mais recente (orderBy desc).
-      else grupos.set(chave, { codigoSefaz: l.codigoSefaz ?? null, motivo, quantidade: 1, ultimaEm: quando(l.criadoEm) })
+      else grupos.set(chave, { tipoDocumento: tipo, codigoSefaz: l.codigoSefaz ?? null, codigoErro, motivo, quantidade: 1, ultimaEm: quando(l.criadoEm) })
     }
     return [...grupos.values()].sort((a, b) => b.quantidade - a.quantidade)
   }

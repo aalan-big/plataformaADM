@@ -209,6 +209,85 @@ describe('FiscalSaudeService — painel de saúde fiscal', () => {
   })
 })
 
+describe('FiscalSaudeService — NFS-e (G7)', () => {
+  const IGUATU = '2305506'
+  const nfseNoPlano = () => tabelas.planoModulo.push({ planoId: PLANO, identificador: 'NFSE' })
+  const NACIONAL_LIGADA = { ...EMPRESA_OK, habilita_nfsen_producao: true, habilita_nfsen_homologacao: true }
+
+  beforeEach(() => { process.env.FOCUS_NFE_PARTNER_TOKEN = 'token-conta' })
+  afterEach(() => { delete process.env.FOCUS_NFE_PARTNER_TOKEN })
+
+  it('sem o módulo NFSE: nada de NFS-e no quadro', async () => {
+    const { saude, focus } = montar()
+    focus.quando('consultarEmpresa', EMPRESA_OK)
+    const r = await saude.saudeDoCliente(CLIENTE, AGORA)
+    assert.equal(r.temNfse, false)
+    assert.equal(r.itens.some(i => i.chave === 'nfse' || i.chave === 'ultima_nfse'), false)
+  })
+
+  it('Nacional ligada: verde; desligada na Focus: vermelho', async () => {
+    let c = montar({ ...FICHA_OK, nfseRota: 'NACIONAL' })
+    nfseNoPlano()
+    c.focus.quando('consultarEmpresa', NACIONAL_LIGADA)
+    assert.equal((await c.item('nfse'))!.estado, 'ok')
+
+    c = montar({ ...FICHA_OK, nfseRota: 'NACIONAL' })
+    nfseNoPlano()
+    c.focus.quando('consultarEmpresa', { ...EMPRESA_OK, habilita_nfsen_producao: false })
+    assert.equal((await c.item('nfse'))!.estado, 'problema')
+  })
+
+  it('ficha sem rota (anterior à G6): atenção, sai pela Nacional', async () => {
+    const c = montar()
+    nfseNoPlano()
+    c.focus.quando('consultarEmpresa', NACIONAL_LIGADA)
+    const item = await c.item('nfse')
+    assert.equal(item!.estado, 'atencao')
+    assert.match(item!.detalhe, /Nacional/)
+  })
+
+  it('cidade sem decisão: vermelho com o nome da cidade', async () => {
+    const c = montar({ ...FICHA_OK, nfseRota: 'MUNICIPAL_PENDENTE', nfseCodigoMunicipio: IGUATU })
+    nfseNoPlano()
+    tabelas.municipioNfse.push({ codigoIbge: IGUATU, nome: 'Iguatu', uf: 'CE', rotaNaoMei: 'DESCONHECIDA' })
+    c.focus.quando('consultarEmpresa', EMPRESA_OK)
+    const item = await c.item('nfse')
+    assert.equal(item!.estado, 'problema')
+    assert.match(item!.detalhe, /Iguatu\/CE/)
+  })
+
+  it('municipal: status da cidade na Focus e habilitação decidem a cor', async () => {
+    const cenario = async (statusNfse: string, habilitaNfse = true) => {
+      const c = montar({ ...FICHA_OK, nfseRota: 'MUNICIPAL', nfseCodigoMunicipio: IGUATU })
+      nfseNoPlano()
+      tabelas.municipioNfse.push({ codigoIbge: IGUATU, nome: 'Iguatu', uf: 'CE', rotaNaoMei: 'MUNICIPAL', statusNfse, provedorNfse: 'ISSNet' })
+      c.focus.quando('consultarEmpresa', { ...EMPRESA_OK, habilita_nfse: habilitaNfse })
+      return (await c.item('nfse'))!.estado
+    }
+    assert.equal(await cenario('ativo'), 'ok')
+    assert.equal(await cenario('fora_do_ar'), 'atencao')
+    assert.equal(await cenario('nao_implementado'), 'problema')
+    assert.equal(await cenario('ativo', false), 'problema')
+  })
+
+  it('última NFS-e separada da última nota; rejeição da NFS-e agrupada pelo código alfanumérico', async () => {
+    const c = montar({ ...FICHA_OK, nfseRota: 'NACIONAL' })
+    nfseNoPlano()
+    c.focus.quando('consultarEmpresa', NACIONAL_LIGADA)
+    const log = (resultado: string, tipoDocumento: string, mensagem: string | null, criadoEm: Date) =>
+      tabelas.emissaoLog.push({ licencaId: LICENCA, ref: 'x', acao: 'EMISSAO', resultado, ambiente: 1, tipoDocumento, codigoSefaz: null, mensagem, criadoEm })
+    log('autorizado', 'NFE', null, dias(-1))
+    log('erro', 'NFSE', 'E0312 - Código de tributação nacional inexistente (Use a lista nacional)', dias(-1))
+    log('erro', 'NFSE', 'E0312 - Código de tributação nacional inexistente (Use a lista nacional)', dias(-2))
+
+    const r = await c.saude.saudeDoCliente(CLIENTE, AGORA)
+
+    assert.equal(r.itens.find(i => i.chave === 'ultima_nfse')!.estado, 'atencao')   // nenhuma NFS-e autorizada
+    assert.equal(r.itens.find(i => i.chave === 'ultima_nota')!.estado, 'ok')
+    assert.deepEqual(r.rejeicoes.map(g => [g.tipoDocumento, g.codigoErro, g.quantidade]), [['NFSE', 'E0312', 2]])
+  })
+})
+
 describe('Fiscal — a consulta grava o desfecho na EmissaoLog', () => {
   it('autorizada na consulta vira linha EMISSAO/autorizado com o cStat, uma vez só', async () => {
     const { emissao, focus } = prepararCenario({ focusEmpresaToken: 'tk' })

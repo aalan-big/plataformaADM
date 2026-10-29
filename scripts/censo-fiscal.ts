@@ -43,7 +43,11 @@ async function main() {
 
   console.log(`\nCenso fiscal — ${fichas.length} ficha(s) — ${quando(new Date())}\n`)
 
-  const resumo = { producao: 0, homologacao: 0, semToken: 0, semEmpresaFocus: 0, certificadoRuim: 0, semNotaAutorizada: 0 }
+  const resumo = {
+    producao: 0, homologacao: 0, semToken: 0, semEmpresaFocus: 0, certificadoRuim: 0, semNotaAutorizada: 0,
+    /** Fichas por rota da NFS-e (G7): NACIONAL, MUNICIPAL, MUNICIPAL_PENDENTE. */
+    nfse: {} as Record<string, number>,
+  }
 
   for (const f of fichas) {
     const licencas = await prisma.licenca.findMany({
@@ -60,13 +64,21 @@ async function main() {
         })
       : null
 
+    const ultimaNfse = ids.length && f.nfseRota
+      ? await prisma.emissaoLog.findFirst({
+          where:   { licencaId: { in: ids }, acao: 'EMISSAO', resultado: 'autorizado', tipoDocumento: 'NFSE' },
+          orderBy: { criadoEm: 'desc' },
+          select:  { criadoEm: true, ambiente: true },
+        })
+      : null
+
     const recusas = ids.length
       ? await prisma.emissaoLog.findMany({
           // Só 'erro' é recusa: 'processando' é nota a caminho da SEFAZ, e até
           // 07/10/2026 o censo a contava como recusada.
           where:   { licencaId: { in: ids }, acao: 'EMISSAO', resultado: 'erro', criadoEm: { gte: seteDiasAtras } },
           orderBy: { criadoEm: 'desc' },
-          select:  { mensagem: true, codigoSefaz: true },
+          select:  { mensagem: true, codigoSefaz: true, tipoDocumento: true },
         })
       : []
 
@@ -74,7 +86,7 @@ async function main() {
     const motivos = new Map<string, number>()
     for (const r of recusas) {
       const texto = (r.mensagem ?? 'sem mensagem').replace(/\[.*$/, '').slice(0, 70).trim()
-      const motivo = r.codigoSefaz != null ? `[${r.codigoSefaz}] ${texto}` : texto
+      const motivo = `${r.tipoDocumento ?? 'NFE'} ` + (r.codigoSefaz != null ? `[${r.codigoSefaz}] ${texto}` : texto)
       motivos.set(motivo, (motivos.get(motivo) ?? 0) + 1)
     }
 
@@ -86,18 +98,23 @@ async function main() {
     if (f.certificadoStatus !== 'ATIVO') alertas.push(`certificado ${f.certificadoStatus}`)
     if (f.certificadoVencimento && f.certificadoVencimento.getTime() - Date.now() < 30 * DIA) alertas.push('certificado vence em < 30 dias')
     if (!ultimaAutorizada) alertas.push('nenhuma nota autorizada ainda')
+    if (f.nfseRota === 'MUNICIPAL_PENDENTE') alertas.push('NFS-e: cidade sem rota decidida (não emite)')
 
     f.ambiente === 1 ? resumo.producao++ : resumo.homologacao++
     if (!temToken) resumo.semToken++
     if (!f.focusEmpresaId) resumo.semEmpresaFocus++
     if (f.certificadoStatus !== 'ATIVO') resumo.certificadoRuim++
     if (!ultimaAutorizada) resumo.semNotaAutorizada++
+    if (f.nfseRota) resumo.nfse[f.nfseRota] = (resumo.nfse[f.nfseRota] ?? 0) + 1
 
     console.log(`■ ${f.razaoSocial}  (CNPJ ${f.cnpj})  cliente ${f.clienteId}`)
     console.log(`  ambiente ${AMBIENTE(f.ambiente)} | token ${temToken ? (f.focusEmpresaToken ? 'sim' : 'sim (cifrado)') : 'NÃO'} | id Focus ${f.focusEmpresaId ?? '—'} | CSC ${f.cscConfigurado ? 'sim' : 'não'}`)
     console.log(`  certificado ${f.certificadoStatus}, vence ${quando(f.certificadoVencimento)} (${diasAte(f.certificadoVencimento)})`)
     console.log(`  licenças: ${licencas.map(l => `${l.id.slice(0, 8)}(${l.status})`).join(', ') || 'nenhuma'}`)
     console.log(`  última autorizada: ${ultimaAutorizada ? `${quando(ultimaAutorizada.criadoEm)} ${ultimaAutorizada.tipoDocumento} em ${AMBIENTE(ultimaAutorizada.ambiente)}` : '—'}`)
+    if (f.nfseRota) {
+      console.log(`  NFS-e: rota ${f.nfseRota}${f.nfseCodigoMunicipio ? `, cidade ${f.nfseCodigoMunicipio}` : ''} | última ${ultimaNfse ? `${quando(ultimaNfse.criadoEm)} em ${AMBIENTE(ultimaNfse.ambiente)}` : '—'}`)
+    }
     if (motivos.size) {
       console.log(`  recusas nos últimos 7 dias: ${recusas.length}`)
       for (const [m, n] of motivos) console.log(`    ${n}× ${m}`)

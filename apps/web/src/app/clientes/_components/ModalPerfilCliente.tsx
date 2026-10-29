@@ -834,7 +834,8 @@ type SaudeFiscal = {
   geral:           EstadoSaude
   focusConsultada: boolean
   itens:           { chave: string; titulo: string; estado: EstadoSaude; detalhe: string }[]
-  rejeicoes:       { codigoSefaz: number | null; motivo: string; quantidade: number; ultimaEm: string }[]
+  temNfse?:        boolean
+  rejeicoes:       { tipoDocumento?: string; codigoSefaz: number | null; codigoErro?: string | null; motivo: string; quantidade: number; ultimaEm: string }[]
 }
 
 const COR_SAUDE: Record<EstadoSaude, { ponto: string; texto: string; rotulo: string }> = {
@@ -929,8 +930,11 @@ function PainelSaudeFiscal({ clienteId }: { clienteId: string }) {
                   {saude.rejeicoes.map((r, idx) => (
                     <p key={idx} className="text-[10px] text-slate-400">
                       <span className="text-amber-400 font-semibold">{r.quantidade}×</span>{' '}
+                      {r.tipoDocumento && <span className="text-slate-500">{r.tipoDocumento} </span>}
                       {r.codigoSefaz != null && <span className="font-mono text-slate-300">[{r.codigoSefaz}] </span>}
-                      {r.motivo}
+                      {/* NFS-e: o código ("E0312") já abre o motivo; só o destaca. */}
+                      {r.codigoErro && <span className="font-mono text-slate-300">[{r.codigoErro}] </span>}
+                      {r.codigoErro ? r.motivo.replace(new RegExp(`^${r.codigoErro}\\s*-\\s*`), '') : r.motivo}
                       <span className="text-slate-600"> · última {r.ultimaEm}</span>
                     </p>
                   ))}
