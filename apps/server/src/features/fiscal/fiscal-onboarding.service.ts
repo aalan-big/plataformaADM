@@ -4,6 +4,7 @@ import { FocusNfeService } from '../../common/focus-nfe/focus-nfe.service'
 import { camposFaltandoParaCriar, emitenteParaCadastroFocus, EmitenteErp } from '../../common/focus-nfe/focus-empresa.mapper'
 import { cifraDisponivel, cifrar } from '../../common/cripto/segredo-fiscal'
 import { AMBIENTE_PRODUCAO, tokenDeEmissao, nomeAmbiente, buscarEmpresaConfig } from './fiscal-comum'
+import { FiscalMunicipioService } from './fiscal-municipio.service'
 
 /** O que o ERP manda para ativar a emissão (`POST /erp/fiscal/ativacao`). */
 export type DadosAtivacao = {
@@ -12,6 +13,12 @@ export type DadosAtivacao = {
   telefone?:      string | null
   arquivo_base64: string
   senha:          string
+  /**
+   * Login e senha da prefeitura (G6): só seguem para a Focus quando a rota é
+   * MUNICIPAL, e nunca entram em log.
+   */
+  nfse_login_prefeitura?: string | null
+  nfse_senha_prefeitura?: string | null
 }
 
 /**
@@ -22,26 +29,34 @@ export type DadosAtivacao = {
  * - MEI (`codigo_regime_tributario` 4): `NACIONAL`, sempre. É obrigação federal,
  *   e a Focus nem deixa ligar a municipal para MEI. O painel pede "eu aceito"
  *   para isso; a API não, e esta regra é o "eu aceito" (só MEI cai aqui).
- * - Os demais: `MUNICIPAL_PENDENTE`. Depende da cidade, e a rota municipal entra
- *   cidade por cidade; ligar a Nacional às cegas faria a nota ser recusada em
- *   município que não a aceita para todas as empresas (Iguatu é um deles).
+ * - Os demais: o que o suporte decidiu para a cidade (`MunicipioNfse.rotaNaoMei`,
+ *   G6). Cidade sem decisão (ou desconhecida): `MUNICIPAL_PENDENTE` — ligar a
+ *   Nacional às cegas faria a nota ser recusada em município que não a aceita
+ *   para todas as empresas (Iguatu é um deles).
  */
-export type RotaNfse = 'NACIONAL' | 'MUNICIPAL_PENDENTE' | null
+export type RotaNfse = 'NACIONAL' | 'MUNICIPAL' | 'MUNICIPAL_PENDENTE' | null
 
-export function rotaNfseDaAtivacao(modulosDaLicenca: string[] | undefined, emitente: Record<string, any>): RotaNfse {
+export function rotaNfseDaAtivacao(
+  modulosDaLicenca: string[] | undefined,
+  emitente: Record<string, any>,
+  rotaDaCidade?: string | null,
+): RotaNfse {
   if (!Array.isArray(modulosDaLicenca) || !modulosDaLicenca.includes(MODULO_NFSE)) return null
-  return Number(emitente?.codigo_regime_tributario) === 4 ? 'NACIONAL' : 'MUNICIPAL_PENDENTE'
+  if (Number(emitente?.codigo_regime_tributario) === 4) return 'NACIONAL'
+  if (rotaDaCidade === 'NACIONAL' || rotaDaCidade === 'MUNICIPAL') return rotaDaCidade
+  return 'MUNICIPAL_PENDENTE'
 }
 
 /**
- * As chaves da Focus para a rota. `habilita_nfse` (municipal) NUNCA vai junto:
- * a Focus recusa as duas ligadas em produção. Homologação vai sempre ligada com
- * a Nacional, para o teste não depender de outra ativação.
+ * As chaves da Focus para a rota. `habilita_nfse` (municipal) NUNCA vai junto
+ * com a Nacional de produção: a Focus recusa as duas ligadas. Homologação vai
+ * sempre ligada com a Nacional, para o teste não depender de outra ativação.
+ * A MUNICIPAL desliga a Nacional explicitamente (a empresa pode ter vindo dela).
  */
 function flagsNfse(rota: RotaNfse): Record<string, boolean> {
-  return rota === 'NACIONAL'
-    ? { habilita_nfsen_producao: true, habilita_nfsen_homologacao: true }
-    : {}
+  if (rota === 'NACIONAL') return { habilita_nfsen_producao: true, habilita_nfsen_homologacao: true }
+  if (rota === 'MUNICIPAL') return { habilita_nfse: true, habilita_nfsen_producao: false, habilita_nfsen_homologacao: false }
+  return {}
 }
 
 /**
@@ -52,7 +67,28 @@ function flagsNfse(rota: RotaNfse): Record<string, boolean> {
 export class FiscalOnboardingService {
   private readonly logger = new Logger(FiscalOnboardingService.name)
 
-  constructor(private readonly focusNfeService: FocusNfeService) {}
+  constructor(
+    private readonly focusNfeService: FocusNfeService,
+    private readonly municipios: FiscalMunicipioService,
+  ) {}
+
+  /**
+   * A cidade do emitente e a rota que o suporte decidiu para ela. Nunca derruba
+   * a ativação: sem cidade, ou com a Focus fora do ar, a rota fica pendente e o
+   * resto (NF-e, NFC-e, certificado) segue como antes.
+   */
+  private async cidadeDaNfse(emitente: Record<string, any>) {
+    try {
+      const codigo = await this.municipios.codigoDoEmitente(emitente)
+      if (!codigo) return { codigo: null, rotaNaoMei: null, exigeLogin: false }
+      const end = emitente?.endereco ?? {}
+      const cidade = await this.municipios.obter(codigo, { nome: end.cidade ?? end.municipio, uf: end.uf })
+      return { codigo, rotaNaoMei: cidade?.rotaNaoMei ?? null, exigeLogin: !!cidade?.exigeLoginPrefeitura }
+    } catch (erro) {
+      this.logger.warn(`Cidade da NFS-e não resolvida na ativação: ${erro instanceof Error ? erro.message : erro}`)
+      return { codigo: null, rotaNaoMei: null, exigeLogin: false }
+    }
+  }
 
   /**
    * O que o ERP pode mostrar na tela fiscal antes de tentar emitir.
@@ -349,7 +385,24 @@ export class FiscalOnboardingService {
       }
     }
 
-    const rotaNfse = rotaNfseDaAtivacao(modulosDaLicenca, emitente)
+    const temNfse = Array.isArray(modulosDaLicenca) && modulosDaLicenca.includes(MODULO_NFSE)
+    const cidade = temNfse ? await this.cidadeDaNfse(emitente) : null
+    const rotaCalculada = rotaNfseDaAtivacao(modulosDaLicenca, emitente, cidade?.rotaNaoMei)
+    // Cidade ainda sem decisão não desfaz a rota que a ficha já tem (o admin
+    // pode ter escolhido à mão): reativar para trocar o certificado não pode
+    // tirar a NFS-e de quem já emite.
+    const rotaNfse: RotaNfse =
+      rotaCalculada === 'MUNICIPAL_PENDENTE' && (ficha.nfseRota === 'NACIONAL' || ficha.nfseRota === 'MUNICIPAL')
+        ? ficha.nfseRota
+        : rotaCalculada
+
+    // Login da prefeitura: só na municipal, só se veio. Nunca em log.
+    const loginPrefeitura = rotaNfse === 'MUNICIPAL' && dados.nfse_login_prefeitura?.trim()
+      ? {
+          login_responsavel: dados.nfse_login_prefeitura.trim(),
+          ...(dados.nfse_senha_prefeitura ? { senha_responsavel: dados.nfse_senha_prefeitura } : {}),
+        }
+      : {}
 
     const corpo = {
       ...emitenteParaCadastroFocus(emitente, { email: dados.email, telefone: dados.telefone }),
@@ -359,6 +412,7 @@ export class FiscalOnboardingService {
       habilita_nfe:  true,
       habilita_nfce: true,
       ...flagsNfse(rotaNfse),
+      ...loginPrefeitura,
     }
 
     let empresa: any
@@ -428,6 +482,9 @@ export class FiscalOnboardingService {
         razaoSocial:       String(emitente.razao_social ?? emitente.nome ?? '').trim() || ficha.razaoSocial,
         inscricaoEstadual: emitente.inscricao_estadual || ficha.inscricaoEstadual,
         ...patchTokens,
+        // Sem NFSE, a ficha fica como estava (não apaga uma rota já decidida).
+        ...(rotaNfse ? { nfseRota: rotaNfse } : {}),
+        ...(cidade?.codigo ? { nfseCodigoMunicipio: cidade.codigo } : {}),
       },
     })
 
@@ -450,6 +507,7 @@ export class FiscalOnboardingService {
       tokenConfigurado: temToken,
       cscConfigurado:   !!atualizada?.cscConfigurado,
       nfse:             rotaNfse,
+      nfse_exige_login: !!cidade?.exigeLogin && rotaNfse === 'MUNICIPAL',
       mensagem: acao === 'CRIADA'
         ? 'Empresa cadastrada na emissora e certificado enviado. A emissão está ativa.'
         : 'Cadastro da empresa atualizado na emissora e certificado enviado. A emissão está ativa.',

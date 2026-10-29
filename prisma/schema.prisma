@@ -677,12 +677,64 @@ model EmpresaFiscalConfig {
   /// não vale mais aqui, e afirmar o contrário seria pior do que não saber.
   cscConfigurado Boolean @default(false)
 
+  /// Por onde a NFS-e desta empresa sai (G6 da NFS-e no ERP):
+  /// `NACIONAL` (`/nfsen`), `MUNICIPAL` (`/nfse`, o sistema da prefeitura via
+  /// Focus), `MUNICIPAL_PENDENTE` (não MEI numa cidade que o suporte ainda não
+  /// decidiu) ou null (sem NFSE, ou ficha anterior à G6 — emite pela Nacional,
+  /// como sempre emitiu). Gravada pela ativação; o admin pode trocar à mão.
+  nfseRota            String?
+  /// Código IBGE da cidade do prestador, guardado na ativação: é a chave do
+  /// `MunicipioNfse` que decide a rota e o que a cidade exige.
+  nfseCodigoMunicipio String?
+
   criadoEm     DateTime @default(now())
   atualizadoEm DateTime @updatedAt
 
   cliente Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
 
   @@map("empresas_fiscal_config")
+}
+
+// ── MunicipioNfse ─────────────────────────────────────────────────────────────
+/// O que sabemos de cada cidade para a NFS-e (G6 da NFS-e no ERP).
+///
+/// Duas metades. A da FOCUS (`GET /v2/municipios/{ibge}`) é cache, renovado
+/// uma vez por dia: status do webservice, provedor, homologação, cancelamento
+/// e os campos que a prefeitura exige. A NOSSA é decisão do suporte e nenhuma
+/// consulta sobrescreve: `rotaNaoMei` — por onde sai a nota de quem NÃO é MEI
+/// (MEI vai sempre pela Nacional) — e se a prefeitura pede login e senha.
+///
+/// Por que não decidir só pela Focus: Iguatu/CE tem a Nacional para MEI e a
+/// municipal para o resto, e a Focus só avisa isso no painel (o "eu aceito").
+/// Nada na API diz qual rota vale para quem; quem sabe é o suporte.
+model MunicipioNfse {
+  codigoIbge String @id
+  nome       String
+  uf         String
+
+  /// `NACIONAL` | `MUNICIPAL` | `DESCONHECIDA` (padrão: ninguém decidiu ainda).
+  rotaNaoMei           String  @default("DESCONHECIDA")
+  exigeLoginPrefeitura Boolean @default(false)
+  observacao           String?
+
+  // Cache da Focus. null = nunca consultado ou a Focus não sabe.
+  nfseHabilitada     Boolean?
+  statusNfse         String?
+  provedorNfse       String?
+  requerCertificado  Boolean?
+  possuiHomologacao  Boolean?
+  possuiCancelamento Boolean?
+  /// Os `*_obrigatorio_nfse` da Focus como vieram ({ "codigo_cnae": true, ... },
+  /// sem o sufixo). A Focus avisa que campos novos surgem sem aviso: guardar o
+  /// mapa inteiro evita uma coluna por campo.
+  obrigatorios       Json?
+  consultadoFocusEm  DateTime?
+
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  @@index([uf])
+  @@map("municipios_nfse")
 }
 
 // ── ConsumoFiscal ─────────────────────────────────────────────────────────────

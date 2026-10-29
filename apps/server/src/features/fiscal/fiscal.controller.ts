@@ -290,6 +290,8 @@ export class FiscalConfigController {
       telefone:       dados.telefone,
       arquivo_base64: dados.arquivo_base64,
       senha:          dados.senha,
+      nfse_login_prefeitura: dados.nfse_login_prefeitura,
+      nfse_senha_prefeitura: dados.nfse_senha_prefeitura,
     })
   }
 

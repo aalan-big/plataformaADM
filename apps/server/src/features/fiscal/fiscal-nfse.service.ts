@@ -70,9 +70,18 @@ export function mapResultadoNfse(data: any, ambiente: number): ResultadoNfse {
  * a mesma trilha (`EmissaoLog`), emprestada do `FiscalEmissaoService`. Fica num
  * serviço à parte para a NF-e não passar por nenhuma linha nova.
  *
- * Só a rota NACIONAL por enquanto: a municipal (`/nfse`) entra por cidade,
- * quando houver cliente (plano, §2).
+ * Duas rotas atrás da mesma porta (G6): a ficha diz qual (`nfseRota`).
+ * `MUNICIPAL` vai por `/nfse` (a DPS é traduzida na fronteira com a Focus);
+ * `NACIONAL` e null (ficha anterior à G6) vão por `/nfsen`, como sempre foram;
+ * `MUNICIPAL_PENDENTE` não emite — a cidade ainda não foi decidida, e mandar
+ * pela Nacional seria rejeição certa.
  */
+type Ficha = Awaited<ReturnType<typeof getEmpresaConfig>>
+
+export function ehMunicipal(config: { nfseRota?: string | null }): boolean {
+  return config.nfseRota === 'MUNICIPAL'
+}
+
 @Injectable()
 export class FiscalNfseService {
   private readonly logger = new Logger(FiscalNfseService.name)
@@ -84,8 +93,34 @@ export class FiscalNfseService {
     private readonly franquia: FiscalFranquiaService,
   ) {}
 
+  // Os três verbos da Focus pela rota da ficha.
+  private enviar(config: Ficha, ref: string, payload: any) {
+    return ehMunicipal(config)
+      ? this.focusNfeService.emitirNfseMunicipal(config.focusEmpresaToken, ref, payload, config.ambiente)
+      : this.focusNfeService.emitirNfsen(config.focusEmpresaToken, ref, payload, config.ambiente)
+  }
+
+  private buscar(config: Ficha, ref: string) {
+    return ehMunicipal(config)
+      ? this.focusNfeService.consultarNfseMunicipal(config.focusEmpresaToken, ref, config.ambiente)
+      : this.focusNfeService.consultarNfsen(config.focusEmpresaToken, ref, config.ambiente)
+  }
+
+  private desfazer(config: Ficha, ref: string, justificativa: string) {
+    return ehMunicipal(config)
+      ? this.focusNfeService.cancelarNfseMunicipal(config.focusEmpresaToken, ref, justificativa, config.ambiente)
+      : this.focusNfeService.cancelarNfsen(config.focusEmpresaToken, ref, justificativa, config.ambiente)
+  }
+
   async emitir(licencaId: string, ref: string, payload: any, chaveIdempotencia?: string, confirmarDuplicidade = false): Promise<ResultadoNfse> {
     const config = await getEmpresaConfig(licencaId)
+
+    if (config.nfseRota === 'MUNICIPAL_PENDENTE') {
+      throw new HttpException({
+        codigo:   'NFSE_ROTA_PENDENTE',
+        mensagem: 'A emissão de NFS-e da sua cidade ainda está sendo configurada pelo suporte StartBig. Nenhuma nota foi enviada.',
+      }, HttpStatus.UNPROCESSABLE_ENTITY)
+    }
 
     const jaRespondido = await this.trilha.consultarIdempotencia(licencaId, chaveIdempotencia, 'EMISSAO', ref)
     if (jaRespondido) return jaRespondido as ResultadoNfse
@@ -116,7 +151,7 @@ export class FiscalNfseService {
 
     // Idempotência por ref: a mesma da NF-e — na dúvida, não emite.
     try {
-      const existente = await this.focusNfeService.consultarNfsen(config.focusEmpresaToken, ref, config.ambiente)
+      const existente = await this.buscar(config, ref)
       if (existente?.status && existente.status !== 'nao_encontrado') {
         this.logger.log(`NFS-e ref "${ref}" já enviada anteriormente. Retornando status existente.`)
         const jaEmitida = mapResultadoNfse(existente, config.ambiente)
@@ -134,7 +169,7 @@ export class FiscalNfseService {
       }
     }
 
-    const res = await this.focusNfeService.emitirNfsen(config.focusEmpresaToken, ref, payload, config.ambiente)
+    const res = await this.enviar(config, ref, payload)
     const resultado = mapResultadoNfse(res, config.ambiente)
     this.logarDesfecho(ref, resultado, 'emissão')
 
@@ -157,7 +192,7 @@ export class FiscalNfseService {
     const config = await getEmpresaConfig(licencaId)
     let res: any
     try {
-      res = await this.focusNfeService.consultarNfsen(config.focusEmpresaToken, ref, config.ambiente)
+      res = await this.buscar(config, ref)
     } catch (erro) {
       // Mesmo código da NF-e: só ele autoriza o ERP a concluir que a nota não chegou.
       if (erro instanceof HttpException && erro.getStatus() === 404) {
@@ -182,7 +217,7 @@ export class FiscalNfseService {
       throw new BadRequestException('A justificativa de cancelamento deve conter no mínimo 15 caracteres.')
     }
     const config = await getEmpresaConfig(licencaId)
-    const res = await this.focusNfeService.cancelarNfsen(config.focusEmpresaToken, ref, justificativa, config.ambiente)
+    const res = await this.desfazer(config, ref, justificativa)
     const resultado = mapResultadoNfse(res, config.ambiente)
 
     // Cancelar não devolve cota (a nota existiu), como na NF-e.
@@ -200,7 +235,7 @@ export class FiscalNfseService {
     if (r.status === 'autorizado') {
       this.logger.log(`NFSE ref "${ref}" AUTORIZADA (${momento}): número ${r.numero ?? '?'}, verificação ${r.codigo_verificacao ?? '?'}.`)
     } else if (r.status === 'processando') {
-      this.logger.log(`NFSE ref "${ref}" em processamento no Sistema Nacional.`)
+      this.logger.log(`NFSE ref "${ref}" em processamento na emissora.`)
     } else {
       this.logger.warn(`NFSE ref "${ref}" com status "${r.status_focus}" (${momento}): ${r.mensagem_sefaz ?? 'sem mensagem'}`)
     }

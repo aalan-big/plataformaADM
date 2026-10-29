@@ -5,6 +5,7 @@ import { MODULO_NFSE } from '@startbig/database'
 import { refNotaSchema, chaveIdempotenciaSchema, emitirNfseSchema, cancelarNotaSchema } from '@startbig/schemas'
 import { FiscalNfseService } from './fiscal-nfse.service'
 import { FiscalCotaService } from './fiscal-cota.service'
+import { FiscalMunicipioService } from './fiscal-municipio.service'
 import { confirmouDuplicidade } from './fiscal.controller'
 import { ErpLicencaGuard } from '../../core/guards/erp-licenca.guard'
 import { ModuloGuard } from '../../core/guards/modulo.guard'
@@ -30,6 +31,7 @@ export class FiscalNfseController {
   constructor(
     private readonly nfse: FiscalNfseService,
     private readonly cota: FiscalCotaService,
+    private readonly municipios: FiscalMunicipioService,
   ) {}
 
   /** Mesma validação da NF-e: devolve o campo e a mensagem, nunca o valor. */
@@ -72,6 +74,15 @@ export class FiscalNfseController {
   cancelar(@Req() req: ReqErp, @Body() body: unknown) {
     const dados = this.parse(cancelarNotaSchema, body)
     return this.nfse.cancelar(req.erp.licencaId, dados.ref, dados.justificativa)
+  }
+
+  /**
+   * A rota da NFS-e desta empresa e o que a cidade exige (G6). O ERP usa na
+   * completude, com cache local; sem resposta, ele cai nas regras da Nacional.
+   */
+  @Get('municipio')
+  municipio(@Req() req: ReqErp) {
+    return this.municipios.exigenciasDaLicenca(req.erp.licencaId)
   }
 
   @Get('consumo')

@@ -25,6 +25,9 @@ const selectConfiguracaoFiscal = {
   certificadoNome:       true,
   certificadoVencimento: true,
   certificadoStatus:     true,
+  /// Rota da NFS-e (G6) e a cidade que a decide: nenhum segredo.
+  nfseRota:              true,
+  nfseCodigoMunicipio:   true,
   criadoEm:              true,
   atualizadoEm:          true,
 }

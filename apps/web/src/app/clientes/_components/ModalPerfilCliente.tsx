@@ -65,6 +65,8 @@ export type ClienteCompleto = {
     certificadoNome?:      string | null
     certificadoVencimento?:string | null
     certificadoStatus:     string
+    nfseRota?:             string | null
+    nfseCodigoMunicipio?:  string | null
   } | null
 }
 
@@ -745,6 +747,80 @@ function PainelCotaFiscal({ licencaId }: { licencaId: string }) {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Rota da NFS-e (G6) ───────────────────────────────────────────────────────
+
+const ROTA_NFSE: Record<string, { label: string; cls: string; motivo: string }> = {
+  NACIONAL:           { label: 'NACIONAL',          cls: 'bg-emerald-500/15 text-emerald-400', motivo: 'Emite pelo nfse.gov.br (MEI sempre; demais quando a cidade aceita).' },
+  MUNICIPAL:          { label: 'MUNICIPAL',         cls: 'bg-blue-500/15 text-blue-400',       motivo: 'Emite pelo sistema da prefeitura, via Focus.' },
+  MUNICIPAL_PENDENTE: { label: 'ESPERANDO DECISÃO', cls: 'bg-amber-500/15 text-amber-400',     motivo: 'Não é MEI e a cidade ainda não foi decidida em Municípios NFS-e. A NFS-e não sai até lá.' },
+}
+
+/**
+ * Por onde sai a NFS-e deste cliente e o porquê, com a troca manual. Trocar
+ * reconfigura a empresa na Focus (liga uma rota e desliga a outra), por isso
+ * pede confirmação.
+ */
+function PainelRotaNfse({ clienteId, rota, codigoMunicipio, temEmpresaNaFocus }: {
+  clienteId: string
+  rota: string | null
+  codigoMunicipio: string | null
+  temEmpresaNaFocus: boolean
+}) {
+  const [atual, setAtual]     = useState(rota)
+  const [trocando, setTrocando] = useState(false)
+  const [erro, setErro]       = useState('')
+
+  async function trocar(nova: 'NACIONAL' | 'MUNICIPAL') {
+    if (!window.confirm(`Trocar a rota da NFS-e para ${nova}? A empresa será reconfigurada na Focus agora.`)) return
+    setTrocando(true); setErro('')
+    try {
+      const res  = await fetch(`/api/fiscal/clientes/${clienteId}/nfse-rota`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rota: nova }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json.mensagem ?? json.message?.mensagem ?? json.message ?? `Erro ${res.status}.`)
+      setAtual(json.nfseRota)
+    } catch (e: any) {
+      setErro(typeof e.message === 'string' ? e.message : 'Falha ao trocar a rota.')
+    } finally {
+      setTrocando(false)
+    }
+  }
+
+  const info = atual ? ROTA_NFSE[atual] : null
+  return (
+    <div className="mt-3 rounded-xl border border-slate-700/50 bg-slate-800/30 p-3 space-y-2 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">NFS-e</p>
+        <span className={`inline-block font-semibold px-1.5 py-0.5 rounded text-[10px] ${info?.cls ?? 'bg-slate-500/15 text-slate-400'}`}>
+          {info?.label ?? 'SEM ROTA'}
+        </span>
+      </div>
+      <p className="text-slate-400">
+        {info?.motivo ?? 'Sem NFS-e ativada (ou ativada antes da escolha de rota — emite pela Nacional).'}
+        {codigoMunicipio && <> Cidade: <a href="/fiscal/municipios" className="text-blue-400 hover:underline">IBGE {codigoMunicipio}</a>.</>}
+      </p>
+      {temEmpresaNaFocus && (
+        <div className="flex gap-2">
+          {(['NACIONAL', 'MUNICIPAL'] as const).filter(r => r !== atual).map(r => (
+            <button
+              key={r}
+              onClick={() => trocar(r)}
+              disabled={trocando}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-slate-700 text-slate-300 hover:border-blue-500/50 hover:text-blue-400 disabled:opacity-40 transition-all"
+            >
+              {trocando ? 'Trocando…' : `Passar para ${r === 'NACIONAL' ? 'Nacional' : 'Municipal'}`}
+            </button>
+          ))}
+        </div>
+      )}
+      {erro && <p className="text-red-400">{erro}</p>}
     </div>
   )
 }
@@ -1685,6 +1761,14 @@ export default function ModalPerfilCliente({ clienteId, onClose, onEditar, onDes
                       </div>
                     )}
                   </div>
+                )}
+                {!editandoFiscal && cliente.configuracaoFiscal && (
+                  <PainelRotaNfse
+                    clienteId={clienteId}
+                    rota={cliente.configuracaoFiscal.nfseRota ?? null}
+                    codigoMunicipio={cliente.configuracaoFiscal.nfseCodigoMunicipio ?? null}
+                    temEmpresaNaFocus={!!cliente.configuracaoFiscal.focusEmpresaId}
+                  />
                 )}
                 {!editandoFiscal && <PainelSaudeFiscal clienteId={clienteId} />}
               </div>

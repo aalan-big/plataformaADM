@@ -217,6 +217,9 @@ export const ativarEmissaoSchema = z.object({
     .min(1, 'O arquivo do certificado é obrigatório.')
     .max(200_000, 'Arquivo de certificado acima do tamanho aceito.'),
   senha: z.string().min(1, 'A senha do certificado é obrigatória.'),
+  // G6: login da prefeitura, para a NFS-e municipal das cidades que pedem.
+  nfse_login_prefeitura: z.string().trim().max(120).optional().nullable(),
+  nfse_senha_prefeitura: z.string().max(120).optional().nullable(),
 })
 
 /**

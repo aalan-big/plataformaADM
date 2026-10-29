@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter, usePathname } from 'next/navigation'
-import { LayoutDashboard, Users, Cpu, Layers, Boxes, Handshake, DollarSign, Mail, HardDriveDownload, LogOut } from 'lucide-react'
+import { LayoutDashboard, Users, Cpu, Layers, Boxes, Handshake, DollarSign, Mail, HardDriveDownload, MapPinned, LogOut } from 'lucide-react'
 
 const itens = [
   { label: 'Dashboard',    href: '/dashboard',    Icone: LayoutDashboard    },
@@ -13,6 +13,7 @@ const itens = [
   { label: 'Parceiros',    href: '/parceiros',    Icone: Handshake          },
   { label: 'Financeiro',   href: '/financeiro',   Icone: DollarSign         },
   { label: 'E-mails',      href: '/email',        Icone: Mail               },
+  { label: 'Municípios NFS-e', href: '/fiscal/municipios', Icone: MapPinned },
 ]
 
 export function Sidebar({ aberta, onFechar }: { aberta: boolean; onFechar: () => void }) {

@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Body, Param, Query, BadRequestException } from '@nestjs/common'
+import { Controller, Get, Post, Patch, Body, Param, Query, BadRequestException } from '@nestjs/common'
 import { FiscalCotaService } from './fiscal-cota.service'
 import { FiscalSaudeService } from './fiscal-saude.service'
 import { FiscalFranquiaService } from './fiscal-franquia.service'
 import { FiscalExcedenteService, competenciaAnterior } from './fiscal-excedente.service'
+import { FiscalMunicipioService, ROTAS_NAO_MEI, ROTAS_DA_FICHA } from './fiscal-municipio.service'
 import { prisma } from '@startbig/database'
 import { MODULO_NFE, MODULO_NFCE, MODULO_NFSE } from '@startbig/database'
 import { z, ZodError } from 'zod'
@@ -111,5 +112,68 @@ export class FiscalSaudeController {
   @Get(':id/saude')
   saude(@Param('id') id: string) {
     return this.saudeService.saudeDoCliente(id)
+  }
+}
+
+function parseOu400<T>(schema: { parse: (x: unknown) => T }, valor: unknown): T {
+  try {
+    return schema.parse(valor)
+  } catch (e) {
+    if (e instanceof ZodError) {
+      throw new BadRequestException({
+        erro: 'Dados inválidos',
+        detalhes: e.issues.map(i => ({ campo: i.path.join('.'), mensagem: i.message })),
+      })
+    }
+    throw e
+  }
+}
+
+const codigoIbgeSchema = z.string().regex(/^\d{7}$/, 'Código IBGE com 7 dígitos.')
+
+const decisaoMunicipioSchema = z.object({
+  rotaNaoMei:           z.enum(ROTAS_NAO_MEI).optional(),
+  exigeLoginPrefeitura: z.boolean().optional(),
+  observacao:           z.string().max(500).nullable().optional(),
+})
+
+const trocarRotaSchema = z.object({ rota: z.enum(ROTAS_DA_FICHA) })
+
+/**
+ * "Municípios NFS-e" do painel (G6): o que a Focus diz de cada cidade e o que
+ * o suporte decidiu. É aqui que se registra "Iguatu: não MEI vai pela municipal".
+ */
+@Controller('fiscal/municipios')
+export class FiscalMunicipioController {
+  constructor(private readonly municipios: FiscalMunicipioService) {}
+
+  @Get()
+  listar() {
+    return this.municipios.listar()
+  }
+
+  /** Cadastra (ou renova) uma cidade pelo código, direto da Focus. */
+  @Post(':ibge/atualizar')
+  atualizar(@Param('ibge') ibge: string) {
+    return this.municipios.obter(parseOu400(codigoIbgeSchema, ibge), { forcar: true })
+  }
+
+  @Patch(':ibge')
+  decidir(@Param('ibge') ibge: string, @Body() body: unknown) {
+    return this.municipios.decidir(parseOu400(codigoIbgeSchema, ibge), parseOu400(decisaoMunicipioSchema, body))
+  }
+}
+
+/**
+ * Troca manual da rota da NFS-e de um cliente. Reconfigura a empresa na Focus
+ * (liga uma rota e desliga a outra) — o painel pede confirmação antes.
+ */
+@Controller('fiscal/clientes')
+export class FiscalRotaNfseController {
+  constructor(private readonly municipios: FiscalMunicipioService) {}
+
+  @Post(':id/nfse-rota')
+  trocar(@Param('id') id: string, @Body() body: unknown) {
+    return this.municipios.trocarRotaDaFicha(id, parseOu400(trocarRotaSchema, body).rota)
   }
 }

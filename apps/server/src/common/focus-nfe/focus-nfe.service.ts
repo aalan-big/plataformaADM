@@ -1,5 +1,6 @@
 import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common'
 import { traduzirPayloadParaFocus } from './focus-payload.mapper'
+import { dpsParaNfseMunicipal, normalizarNome, semExtensaoMunicipal } from './focus-nfse-municipal.mapper'
 
 /**
  * Teto de espera por resposta da Focus. O `fetch` do Node não tem timeout
@@ -192,12 +193,15 @@ export class FocusNfeService {
    * - o cancelamento é `DELETE /nfsen/{ref}`, síncrono, e não um POST em
    *   `/cancelamento`.
    * Não há carta de correção nem inutilização na NFS-e Nacional.
+   *
+   * Única poda: o `_municipal{}` (extensão do ERP que só a rota municipal lê,
+   * G6) não segue — a Nacional não conhece o campo.
    */
   async emitirNfsen(token: string, ref: string, payload: any, ambiente: number): Promise<any> {
     this.logger.log(`Enviando NFSE (nacional) ref "${ref}" para a Focus NFe (ambiente: ${ambiente})`)
     return this.requisitar(
       `${this.getBaseUrl(ambiente)}/nfsen?ref=${this.encodeRef(ref)}`,
-      { method: 'POST', headers: this.getHeaders(token), body: JSON.stringify(payload) },
+      { method: 'POST', headers: this.getHeaders(token), body: JSON.stringify(semExtensaoMunicipal(payload)) },
       `emissão nfsen ref "${ref}"`,
     )
   }
@@ -222,6 +226,86 @@ export class FocusNfeService {
       { method: 'DELETE', headers: this.getHeaders(token), body: JSON.stringify({ justificativa }) },
       `cancelamento nfsen ref "${ref}"`,
     )
+  }
+
+  /**
+   * NFS-e MUNICIPAL (RPS pelo webservice da prefeitura) — `/nfse`. Doc:
+   * doc.focusnfe.com.br/reference/emitir_nfse (G6 da NFS-e no ERP).
+   *
+   * O ERP manda a MESMA DPS da Nacional, e a tradução para o formato municipal
+   * (`prestador{}`, `tomador{}`, `servico{}`) mora aqui, na fronteira com a
+   * Focus — a regra da NF-e: nenhum caminho de emissão passa por fora dela, e o
+   * ERP não precisa saber que rota a cidade usa.
+   *
+   * Consulta e cancelamento têm o formato da Nacional: `GET /nfse/{ref}` e
+   * `DELETE /nfse/{ref}` com `{justificativa}`, síncrono.
+   */
+  async emitirNfseMunicipal(token: string, ref: string, dps: any, ambiente: number): Promise<any> {
+    this.logger.log(`Enviando NFSE (municipal) ref "${ref}" para a Focus NFe (ambiente: ${ambiente})`)
+    return this.requisitar(
+      `${this.getBaseUrl(ambiente)}/nfse?ref=${this.encodeRef(ref)}`,
+      { method: 'POST', headers: this.getHeaders(token), body: JSON.stringify(dpsParaNfseMunicipal(dps)) },
+      `emissão nfse ref "${ref}"`,
+    )
+  }
+
+  async consultarNfseMunicipal(token: string, ref: string, ambiente: number): Promise<any> {
+    this.logger.log(`Consultando status da NFSE (municipal) ref "${ref}" (ambiente: ${ambiente})`)
+    return this.requisitar(
+      `${this.getBaseUrl(ambiente)}/nfse/${this.encodeRef(ref)}`,
+      { method: 'GET', headers: this.getHeaders(token) },
+      `consulta nfse ref "${ref}"`,
+    )
+  }
+
+  async cancelarNfseMunicipal(token: string, ref: string, justificativa: string, ambiente: number): Promise<any> {
+    this.logger.log(`Cancelando NFSE (municipal) ref "${ref}" (ambiente: ${ambiente})`)
+    return this.requisitar(
+      `${this.getBaseUrl(ambiente)}/nfse/${this.encodeRef(ref)}`,
+      { method: 'DELETE', headers: this.getHeaders(token), body: JSON.stringify({ justificativa }) },
+      `cancelamento nfse ref "${ref}"`,
+    )
+  }
+
+  /**
+   * O que a Focus sabe de uma cidade para a NFS-e (`GET /v2/municipios/{ibge}`):
+   * status do webservice, provedor, homologação, cancelamento e os
+   * `*_obrigatorio_nfse`. Devolve `null` no 404 (código que a Focus não conhece).
+   *
+   * Token da CONTA e host de produção, como o cadastro de empresas: a cidade é
+   * a mesma nos dois ambientes.
+   */
+  async consultarMunicipio(tokenDaConta: string, codigoIbge: string): Promise<any | null> {
+    try {
+      return await this.requisitar(
+        `https://api.focusnfe.com.br/v2/municipios/${encodeURIComponent(codigoIbge)}`,
+        { method: 'GET', headers: this.getHeaders(tokenDaConta) },
+        `consulta do município ${codigoIbge}`,
+      )
+    } catch (erro) {
+      if (erro instanceof HttpException && erro.getStatus() === 404) return null
+      throw erro
+    }
+  }
+
+  /**
+   * Acha a cidade pelo nome + UF, para emitente que chega sem código IBGE (ERP
+   * anterior à G6). A Focus filtra por `nome_municipio` exato; o nome é
+   * conferido de novo aqui sem acento nem caixa, pela mesma razão da busca de
+   * empresa por CNPJ: o que volta decide a rota da nota.
+   */
+  async buscarMunicipioPorNome(tokenDaConta: string, nome: string, uf: string): Promise<any | null> {
+    const params = new URLSearchParams({ sigla_uf: uf.toUpperCase(), nome_municipio: nome })
+    const resposta = await this.requisitar(
+      `https://api.focusnfe.com.br/v2/municipios?${params.toString()}`,
+      { method: 'GET', headers: this.getHeaders(tokenDaConta) },
+      `busca do município ${nome}/${uf}`,
+    )
+    const lista = Array.isArray(resposta) ? resposta : resposta ? [resposta] : []
+    const alvo = normalizarNome(nome)
+    return lista.find((m: any) =>
+      normalizarNome(m?.nome_municipio) === alvo && String(m?.sigla_uf ?? '').toUpperCase() === uf.toUpperCase(),
+    ) ?? null
   }
 
   /**

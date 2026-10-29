@@ -29,6 +29,7 @@ export const tabelas = {
   emailLog:            [] as Linha[],
   faturaExcedenteFiscal: [] as Linha[],
   avisoFiscal:         [] as Linha[],
+  municipioNfse:       [] as Linha[],
 }
 
 export function reiniciarBanco() {
@@ -207,6 +208,8 @@ export const prismaFalso = {
   empresaFiscalConfig: {
     findUnique: async ({ where }: Linha) =>
       copia(tabelas.empresaFiscalConfig.find(c => c.clienteId === where.clienteId)),
+    findMany: async ({ where }: Linha) =>
+      tabelas.empresaFiscalConfig.filter(c => casa(c, where)).map(copia),
     create: async ({ data }: Linha) => {
       // `cnpj` e `clienteId` são únicos no schema: o Prisma estoura P2002.
       if (tabelas.empresaFiscalConfig.some(c => c.cnpj === data.cnpj || c.clienteId === data.clienteId)) {
@@ -311,6 +314,30 @@ export const prismaFalso = {
       }
       tabelas.avisoFiscal.push({ criadoEm: new Date(), ...data })
       return { ...data }
+    },
+  },
+
+  /** Chave: `codigoIbge`. */
+  municipioNfse: {
+    findUnique: async ({ where }: Linha) =>
+      copia(tabelas.municipioNfse.find(m => m.codigoIbge === where.codigoIbge)),
+    findMany: async ({ orderBy }: Linha = {}) =>
+      ordenar(tabelas.municipioNfse, orderBy).map(copia),
+    upsert: async ({ where, update, create }: Linha) => {
+      const linha = tabelas.municipioNfse.find(m => m.codigoIbge === where.codigoIbge)
+      if (linha) {
+        aplicarDados(linha, update)
+        return copia(linha)
+      }
+      const nova = { rotaNaoMei: 'DESCONHECIDA', exigeLoginPrefeitura: false, observacao: null, consultadoFocusEm: null, ...create }
+      tabelas.municipioNfse.push(nova)
+      return copia(nova)
+    },
+    update: async ({ where, data }: Linha) => {
+      const linha = tabelas.municipioNfse.find(m => m.codigoIbge === where.codigoIbge)
+      if (!linha) throw new Error(`municipioNfse ${where.codigoIbge} não existe`)
+      aplicarDados(linha, data)
+      return copia(linha)
     },
   },
 

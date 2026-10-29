@@ -8,6 +8,7 @@ import { FiscalEmissaoService } from '../../src/features/fiscal/fiscal-emissao.s
 import { FiscalCotaService } from '../../src/features/fiscal/fiscal-cota.service'
 import { FiscalNfseService } from '../../src/features/fiscal/fiscal-nfse.service'
 import { FiscalFranquiaService } from '../../src/features/fiscal/fiscal-franquia.service'
+import { FiscalMunicipioService } from '../../src/features/fiscal/fiscal-municipio.service'
 import { reiniciarBanco, tabelas } from './prisma-falso'
 
 export const LICENCA = 'lic-1'
@@ -56,6 +57,11 @@ export class FocusFalsa {
   emitirNfsen(...a: any[])          { return this.responder('emitirNfsen', a) }
   consultarNfsen(...a: any[])       { return this.responder('consultarNfsen', a) }
   cancelarNfsen(...a: any[])        { return this.responder('cancelarNfsen', a) }
+  emitirNfseMunicipal(...a: any[])    { return this.responder('emitirNfseMunicipal', a) }
+  consultarNfseMunicipal(...a: any[]) { return this.responder('consultarNfseMunicipal', a) }
+  cancelarNfseMunicipal(...a: any[])  { return this.responder('cancelarNfseMunicipal', a) }
+  consultarMunicipio(...a: any[])     { return this.responder('consultarMunicipio', a) }
+  buscarMunicipioPorNome(...a: any[]) { return this.responder('buscarMunicipioPorNome', a) }
 }
 
 /**
@@ -81,6 +87,8 @@ export function prepararCenario(ficha: Record<string, any> | null = {}) {
       focusTokenProducao: null,
       focusTokenHomologacao: null,
       cscConfigurado: false,
+      nfseRota: null,
+      nfseCodigoMunicipio: null,
       ...ficha,
     })
   }
@@ -89,9 +97,10 @@ export function prepararCenario(ficha: Record<string, any> | null = {}) {
   // Sem EmailService: os avisos são gravados em `avisoFiscal` e nada é enviado.
   const franquia = new FiscalFranquiaService()
   const emissao = new FiscalEmissaoService(focus as any, cota, franquia)
-  const onboarding = new FiscalOnboardingService(focus as any)
+  const municipios = new FiscalMunicipioService(focus as any)
+  const onboarding = new FiscalOnboardingService(focus as any, municipios)
   const nfse = new FiscalNfseService(focus as any, cota, emissao, franquia)
-  return { focus, onboarding, emissao, nfse, cota, franquia, ficha: () => tabelas.empresaFiscalConfig[0] }
+  return { focus, onboarding, emissao, nfse, cota, franquia, municipios, ficha: () => tabelas.empresaFiscalConfig[0] }
 }
 
 /** Confere status e `codigo` do corpo de uma HttpException. */
