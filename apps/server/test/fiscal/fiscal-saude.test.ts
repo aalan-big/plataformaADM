@@ -320,3 +320,32 @@ describe('Fiscal — a consulta grava o desfecho na EmissaoLog', () => {
     assert.equal(tabelas.emissaoLog.length, 0)
   })
 })
+
+describe('FiscalSaudeService.nfseDaLicenca — a NFS-e para o ERP (O3)', () => {
+  beforeEach(() => { process.env.FOCUS_NFE_PARTNER_TOKEN = 'token-conta' })
+  afterEach(() => { delete process.env.FOCUS_NFE_PARTNER_TOKEN })
+
+  it('Nacional ligada: ok, com a rota', async () => {
+    const { saude, focus } = montar({ ...FICHA_OK, nfseRota: 'NACIONAL' })
+    focus.quando('consultarEmpresa', { ...EMPRESA_OK, habilita_nfsen_producao: true, habilita_nfsen_homologacao: true })
+    const r = await saude.nfseDaLicenca(LICENCA)
+    assert.equal(r.estado, 'ok')
+    assert.equal(r.rota, 'NACIONAL')
+  })
+
+  it('o caso de 29/10: só a homologação ligada e a ficha em produção → problema', async () => {
+    const { saude, focus } = montar({ ...FICHA_OK, nfseRota: 'NACIONAL' })
+    focus.quando('consultarEmpresa', { ...EMPRESA_OK, habilita_nfsen_producao: false, habilita_nfsen_homologacao: true })
+    const r = await saude.nfseDaLicenca(LICENCA)
+    assert.equal(r.estado, 'problema')
+    assert.match(r.detalhe, /desligada/)
+    assert.ok(!JSON.stringify(r).includes('SEGREDO'), 'segredo da Focus vazou')
+  })
+
+  it('sem ficha ou licença desconhecida: problema, sem chamar a Focus', async () => {
+    const { saude, focus } = montar(null)
+    assert.equal((await saude.nfseDaLicenca(LICENCA)).estado, 'problema')
+    assert.equal((await saude.nfseDaLicenca('lic-que-nao-existe')).estado, 'problema')
+    assert.equal(focus.chamadas.length, 0)
+  })
+})

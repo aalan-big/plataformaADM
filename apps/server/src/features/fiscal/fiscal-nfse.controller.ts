@@ -6,6 +6,7 @@ import { refNotaSchema, chaveIdempotenciaSchema, emitirNfseSchema, cancelarNotaS
 import { FiscalNfseService } from './fiscal-nfse.service'
 import { FiscalCotaService } from './fiscal-cota.service'
 import { FiscalMunicipioService } from './fiscal-municipio.service'
+import { FiscalSaudeService } from './fiscal-saude.service'
 import { confirmouDuplicidade } from './fiscal.controller'
 import { ErpLicencaGuard } from '../../core/guards/erp-licenca.guard'
 import { ModuloGuard } from '../../core/guards/modulo.guard'
@@ -32,6 +33,7 @@ export class FiscalNfseController {
     private readonly nfse: FiscalNfseService,
     private readonly cota: FiscalCotaService,
     private readonly municipios: FiscalMunicipioService,
+    private readonly saude: FiscalSaudeService,
   ) {}
 
   /** Mesma validação da NF-e: devolve o campo e a mensagem, nunca o valor. */
@@ -83,6 +85,16 @@ export class FiscalNfseController {
   @Get('municipio')
   municipio(@Req() req: ReqErp) {
     return this.municipios.exigenciasDaLicenca(req.erp.licencaId)
+  }
+
+  /**
+   * Se a NFS-e desta empresa está de pé na Focus (rota, cidade e habilitação).
+   * A Saúde Fiscal do ERP mostra; ERP antigo não chama, e ERP novo com
+   * plataforma velha recebe 404 e mostra "não dá para saber".
+   */
+  @Get('habilitacao')
+  habilitacao(@Req() req: ReqErp) {
+    return this.saude.nfseDaLicenca(req.erp.licencaId)
   }
 
   @Get('consumo')

@@ -159,6 +159,28 @@ export class FiscalSaudeService {
   }
 
   /**
+   * A NFS-e desta licença, para a Saúde Fiscal do ERP (O3 do plano do ERP,
+   * docs/nfe-cfop-e-notas-da-os-plano.md). É o mesmo item `nfse` do painel do
+   * suporte — rota, cidade e habilitação lidas na Focus —, reduzido ao estado
+   * e ao detalhe. O caso real (29/10): a NFS-e saía NAO_TRANSMITIDA porque a
+   * Focus só tinha a homologação ligada, e o ERP não tinha como saber.
+   *
+   * Só leitura, como o resto do arquivo, e sem segredo: o detalhe é o texto
+   * do item, que já não leva token nem CSC.
+   */
+  async nfseDaLicenca(licencaId: string): Promise<{ estado: EstadoItem; detalhe: string; rota: string | null }> {
+    const licenca = await prisma.licenca.findUnique({ where: { id: licencaId }, select: { clienteId: true } })
+    const ficha = licenca
+      ? await prisma.empresaFiscalConfig.findUnique({ where: { clienteId: licenca.clienteId } })
+      : null
+    if (!ficha) {
+      return { estado: 'problema', detalhe: 'Cliente sem ficha fiscal: não emite.', rota: null }
+    }
+    const item = await this.itemNfse(ficha, await this.lerFocus(ficha))
+    return { estado: item.estado, detalhe: item.detalhe, rota: ficha.nfseRota ?? null }
+  }
+
+  /**
    * Módulo contratado em alguma licença do cliente, pelo plano ou como extra.
    *
    * Decide o que entra na conferência: cobrar CSC (NFC-e) ou rota da NFS-e de
